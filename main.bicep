@@ -7,6 +7,7 @@ param adminUsername string
 @secure()
 param adminPassword string
 
+param enablePublicIp bool
 param vmSize string
 param osDisk object
 
@@ -29,6 +30,10 @@ param ubuntuImage object
 
 param externalAccessPrefixes array = []
 param dcIps object
+
+var regionIndexMap = {
+  for (region, i) in items(regions): region.key => i
+}
 
 var finalTags = union(tags, {
   project: prefix
@@ -412,23 +417,21 @@ module peering_region5_region4 'modules/peering/peering.bicep' = {
 //
 // DOMAIN CONTROLLERS
 //
+
 module dc01 'modules/compute/vm-windows.bicep' = {
   name: 'dc01'
   scope: resourceGroup('${prefix}-rg-${dc01RegionKey}')
-  dependsOn: [
-    vnets
-  ]
   params: {
     vmName: '${prefix}-dc01'
     vnetName: '${prefix}-vnet-${dc01RegionKey}'
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
+    subnetId: vnets[regionIndexMap[dc01RegionKey]].outputs.subnetId
     privateIp: dcIps.dc01
+    enablePublicIp: enablePublicIp
     testTargets: dcIpArray
-    location: regions[dc01RegionKey].location
     tags: finalTags
-   
     image: windowsServerImage     
     osDisk: osDisk                
   }
@@ -437,9 +440,6 @@ module dc01 'modules/compute/vm-windows.bicep' = {
 module dc02 'modules/compute/vm-windows.bicep' = {
   name: 'dc02'
   scope: resourceGroup('${prefix}-rg-${dc02RegionKey}')
-  dependsOn: [
-    vnets
-  ]
   params: {
     vmName: '${prefix}-dc02'
     vnetName: '${prefix}-vnet-${dc02RegionKey}'
@@ -447,9 +447,9 @@ module dc02 'modules/compute/vm-windows.bicep' = {
     adminUsername: adminUsername
     adminPassword: adminPassword
     privateIp: dcIps.dc02
+    enablePublicIp: enablePublicIp
     testTargets: dcIpArray
     tags: finalTags
-    location: regions[dc02RegionKey].location
     image: windowsServerImage     
     osDisk: osDisk                
   }
@@ -458,9 +458,6 @@ module dc02 'modules/compute/vm-windows.bicep' = {
 module dc03 'modules/compute/vm-windows.bicep' = {
   name: 'dc03'
   scope: resourceGroup('${prefix}-rg-${dc03RegionKey}')
-  dependsOn: [
-    vnets
-  ]
   params: {
     vmName: '${prefix}-dc03'
     vnetName: '${prefix}-vnet-${dc03RegionKey}'
@@ -468,8 +465,8 @@ module dc03 'modules/compute/vm-windows.bicep' = {
     adminUsername: adminUsername
     adminPassword: adminPassword
     privateIp: dcIps.dc03
+    enablePublicIp: enablePublicIp
     testTargets: dcIpArray
-    location: regions[dc03RegionKey].location
     tags: finalTags
 
     image: windowsServerImage     
@@ -480,9 +477,6 @@ module dc03 'modules/compute/vm-windows.bicep' = {
 module dc04 'modules/compute/vm-windows.bicep' = {
   name: 'dc04'
   scope: resourceGroup('${prefix}-rg-${dc04RegionKey}')
-  dependsOn: [
-    vnets
-  ]
   params: {
     vmName: '${prefix}-dc04'
     vnetName: '${prefix}-vnet-${dc04RegionKey}'
@@ -490,8 +484,8 @@ module dc04 'modules/compute/vm-windows.bicep' = {
     adminUsername: adminUsername
     adminPassword: adminPassword
     privateIp: dcIps.dc04
+    enablePublicIp: enablePublicIp
     testTargets: dcIpArray
-    location: regions[dc04RegionKey].location
     tags: finalTags
 
     image: windowsServerImage     
@@ -502,9 +496,6 @@ module dc04 'modules/compute/vm-windows.bicep' = {
 module dc05 'modules/compute/vm-windows.bicep' = {
   name: 'dc05'
   scope: resourceGroup('${prefix}-rg-${dc05RegionKey}')
-  dependsOn: [
-    vnets
-  ]
   params: {
     vmName: '${prefix}-dc05'
     vnetName: '${prefix}-vnet-${dc05RegionKey}'
@@ -512,8 +503,8 @@ module dc05 'modules/compute/vm-windows.bicep' = {
     adminUsername: adminUsername
     adminPassword: adminPassword
     privateIp: dcIps.dc05
+    enablePublicIp: enablePublicIp
     testTargets: dcIpArray
-    location: regions[dc05RegionKey].location
     tags: finalTags
 
     image: windowsServerImage     
@@ -527,18 +518,14 @@ module dc05 'modules/compute/vm-windows.bicep' = {
 module win01 'modules/compute/vm-windows.bicep' = {
   name: 'win01'
   scope: resourceGroup('${prefix}-rg-${windowsClient01RegionKey}')
-  dependsOn: [
-    vnets
-  ]
   params: {
     vmName: '${prefix}-win01'
     vnetName: '${prefix}-vnet-${windowsClient01RegionKey}'
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    privateIp: ''
+    enablePublicIp: enablePublicIp
     testTargets: []
-    location: regions[windowsClient01RegionKey].location
     tags: finalTags
 
     image: windowsClientImage     
@@ -549,20 +536,15 @@ module win01 'modules/compute/vm-windows.bicep' = {
 module win02 'modules/compute/vm-windows.bicep' = {
   name: 'win02'
   scope: resourceGroup('${prefix}-rg-${windowsClient02RegionKey}')
-  dependsOn: [
-    vnets
-  ]
   params: {
     vmName: '${prefix}-win02'
     vnetName: '${prefix}-vnet-${windowsClient02RegionKey}'
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    privateIp: ''
+    enablePublicIp: enablePublicIp
     testTargets: []
-    location: regions[windowsClient02RegionKey].location
     tags: finalTags
-
     image: windowsClientImage     
     osDisk: osDisk                
   }
@@ -575,20 +557,14 @@ module win02 'modules/compute/vm-windows.bicep' = {
 module ubu01 'modules/compute/vm-linux.bicep' = {
   name: 'ubu01'
   scope: resourceGroup('${prefix}-rg-${ubuntu01RegionKey}')
-  dependsOn: [
-    vnets
-  ]
   params: {
     vmName: '${prefix}-ubu01'
     vnetName: '${prefix}-vnet-${ubuntu01RegionKey}'
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    privateIp: ''
-    testTargets: []
-    location: regions[ubuntu01RegionKey].location
+    enablePublicIp: enablePublicIp
     tags: finalTags
-
     image: ubuntuImage               
     osDisk: osDisk                 
   }
@@ -597,20 +573,14 @@ module ubu01 'modules/compute/vm-linux.bicep' = {
 module ubu02 'modules/compute/vm-linux.bicep' = {
   name: 'ubu02'
   scope: resourceGroup('${prefix}-rg-${ubuntu02RegionKey}')
-  dependsOn: [
-    vnets
-  ]
   params: {
     vmName: '${prefix}-ubu02'
     vnetName: '${prefix}-vnet-${ubuntu02RegionKey}'
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    privateIp: ''
-    testTargets: []
-    location: regions[ubuntu02RegionKey].location
+    enablePublicIp: enablePublicIp
     tags: finalTags
-
     image: ubuntuImage               
     osDisk: osDisk                 
   }
@@ -619,20 +589,14 @@ module ubu02 'modules/compute/vm-linux.bicep' = {
 module ubu03 'modules/compute/vm-linux.bicep' = {
   name: 'ubu03'
   scope: resourceGroup('${prefix}-rg-${ubuntu03RegionKey}')
-  dependsOn: [
-    vnets
-  ]
   params: {
     vmName: '${prefix}-ubu03'
     vnetName: '${prefix}-vnet-${ubuntu03RegionKey}'
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    privateIp: ''
-    testTargets: []
-    location: regions[ubuntu03RegionKey].location
+    enablePublicIp: enablePublicIp
     tags: finalTags
-
     image: ubuntuImage               
     osDisk: osDisk                 
   }

@@ -1,5 +1,6 @@
 param vmName string
 param vnetName string
+param subnetId string
 param vmSize string
 param adminUsername string
 @secure()
@@ -7,7 +8,8 @@ param adminPassword string
 param tags object = {}
 param image object
 param osDisk object
-param privateIp string
+param privateIp string?
+param enablePublicIp bool
 
 resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
   name: '${vmName}-nic'
@@ -18,14 +20,14 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
       {
         name: 'ipconfig1'
         properties: {
-          privateIPAllocationMethod: empty(privateIp) ? 'Dynamic' : 'Static'
-          privateIPAddress: empty(privateIp) ? null : privateIp
           subnet: {
-            id: resourceId(
-              'Microsoft.Network/virtualNetworks/subnets',
-               vnetName,
-                '${vnetName}-subnet-default')
+            id: subnetId
           }
+          privateIPAllocationMethod: empty(privateIp) ? 'Dynamic' : 'Static'
+          privateIPAddress: privateIp
+          publicIPAddress: enablePublicIp ? {
+            id: publicIp.id
+          } : null
         }
       }
     ]
@@ -65,5 +67,16 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
         }
       ]
     }
+  }
+}
+
+resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (enablePublicIp) {
+  name: '${vmName}-pip'
+  location: resourceGroup().location
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    publicIPAllocationMethod: 'Static'
   }
 }

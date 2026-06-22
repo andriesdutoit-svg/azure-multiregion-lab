@@ -27,6 +27,9 @@
     "adminPassword": {
       "value": "1234!@#$qwerQWER"
     },
+    "enablePublicIp": {
+      "value": true
+    },
     "vmSize": {
       "value": "Standard_B2ls_v2"
     },
@@ -60,7 +63,7 @@
         }
       }
     },
-
+    
     "dc01RegionKey": { "value": "region1" },
     "dc02RegionKey": { "value": "region2" },
     "dc03RegionKey": { "value": "region3" },

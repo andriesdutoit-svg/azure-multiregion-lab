@@ -1,0 +1,29 @@
+"regions": {
+      "value": {
+        "region1": {
+          "location": "southafricanorth",
+          "addressPrefix": "10.0.0.0/16",
+          "subnetPrefix": "10.0.0.0/24"
+        },
+        "region2": {
+          "location": "canadaeast",
+          "addressPrefix": "10.1.0.0/16",
+          "subnetPrefix": "10.1.0.0/24"
+        },
+        "region3": {
+          "location": "southindia",
+          "addressPrefix": "10.2.0.0/16",
+          "subnetPrefix": "10.2.0.0/24"
+        },
+        "region4": {
+          "location": "japanwest",
+          "addressPrefix": "10.3.0.0/16",
+          "subnetPrefix": "10.3.0.0/24"
+        },
+        "region5": {
+          "location": "israelcentral",
+          "addressPrefix": "10.4.0.0/16",
+          "subnetPrefix": "10.4.0.0/24"
+        }
+      }
+    },

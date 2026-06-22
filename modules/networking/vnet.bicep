@@ -67,3 +67,9 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
 }
 
 output vnetId string = vnet.id
+
+output subnetId string = resourceId(
+  'Microsoft.Network/virtualNetworks/subnets',
+  vnet.name,
+  '${vnetName}-subnet-default'
+)

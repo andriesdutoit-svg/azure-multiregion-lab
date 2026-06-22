@@ -14,7 +14,7 @@
       ]
     },
     "prefix": {
-      "value": "lab3"
+      "value": "AMRL"
     },
     "tags": {
       "value": {
@@ -27,6 +27,9 @@
     "adminPassword": {
       "value": "1234!@#$qwerQWER"
     },
+    "enablePublicIp": {
+      "value": true
+    },
     "vmSize": {
       "value": "Standard_B2ls_v2"
     },
@@ -34,7 +37,7 @@
     "regions": {
       "value": {
         "region1": {
-          "location": "southindia",
+          "location": "southafricanorth",
           "addressPrefix": "10.0.0.0/16",
           "subnetPrefix": "10.0.0.0/24"
         },
@@ -44,7 +47,7 @@
           "subnetPrefix": "10.1.0.0/24"
         },
         "region3": {
-          "location": "southafricanorth",
+          "location": "southindia",
           "addressPrefix": "10.2.0.0/16",
           "subnetPrefix": "10.2.0.0/24"
         },
@@ -60,7 +63,7 @@
         }
       }
     },
-
+    
     "dc01RegionKey": { "value": "region1" },
     "dc02RegionKey": { "value": "region2" },
     "dc03RegionKey": { "value": "region3" },
