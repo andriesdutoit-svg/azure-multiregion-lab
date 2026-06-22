@@ -72,7 +72,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
 
 var targetList = join(testTargets, ',')
 
-resource vmScript 'Microsoft.Compute/virtualMachines/extensions@2023-03-01' = {
+resource vmScript 'Microsoft.Compute/virtualMachines/extensions@2023-03-01' = if (length(testTargets) > 0) {
   name: '${vmName}/vmScript'
   location: location
   dependsOn: [
