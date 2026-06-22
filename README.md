@@ -85,7 +85,7 @@ Non-DC VMs:
 ## Project Structure
 
 ```
-lab2/
+azure-multiregion-lab/
 │
 ├── main.bicep
 ├── main.parameters.json
