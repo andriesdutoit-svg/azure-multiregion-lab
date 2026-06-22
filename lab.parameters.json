@@ -1,0 +1,115 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    
+    "externalAccessPrefixes": {
+      "value": [
+        "168.210.156.0/24",
+        "137.158.0.0/16",
+        "197.239.0.0/16",
+        "196.24.0.0/16",
+        "196.42.0.0/16",
+        "196.47.0.0/16"
+      ]
+    },
+    "prefix": {
+      "value": "lab3"
+    },
+    "tags": {
+      "value": {
+        "environment": "lab"
+      }
+    },
+    "adminUsername": {
+      "value": "azureadmin"
+    },
+    "adminPassword": {
+      "value": "1234!@#$qwerQWER"
+    },
+    "vmSize": {
+      "value": "Standard_B2ls_v2"
+    },
+
+    "regions": {
+      "value": {
+        "region1": {
+          "location": "southindia",
+          "addressPrefix": "10.0.0.0/16",
+          "subnetPrefix": "10.0.0.0/24"
+        },
+        "region2": {
+          "location": "canadaeast",
+          "addressPrefix": "10.1.0.0/16",
+          "subnetPrefix": "10.1.0.0/24"
+        },
+        "region3": {
+          "location": "southafricanorth",
+          "addressPrefix": "10.2.0.0/16",
+          "subnetPrefix": "10.2.0.0/24"
+        },
+        "region4": {
+          "location": "japanwest",
+          "addressPrefix": "10.3.0.0/16",
+          "subnetPrefix": "10.3.0.0/24"
+        },
+        "region5": {
+          "location": "israelcentral",
+          "addressPrefix": "10.4.0.0/16",
+          "subnetPrefix": "10.4.0.0/24"
+        }
+      }
+    },
+
+    "dc01RegionKey": { "value": "region1" },
+    "dc02RegionKey": { "value": "region2" },
+    "dc03RegionKey": { "value": "region3" },
+    "dc04RegionKey": { "value": "region4" },
+    "dc05RegionKey": { "value": "region5" },
+    "windowsClient01RegionKey": { "value": "region1" },
+    "windowsClient02RegionKey": { "value": "region2" },
+    "ubuntu01RegionKey": { "value": "region3" },
+    "ubuntu02RegionKey": { "value": "region4" },
+    "ubuntu03RegionKey": { "value": "region5" },
+
+    "dcIps": {
+      "value": {
+        "dc01": "10.0.0.10",
+        "dc02": "10.1.0.10",
+        "dc03": "10.2.0.10",
+        "dc04": "10.3.0.10",
+        "dc05": "10.4.0.10"
+      }
+    },
+
+    "windowsServerImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsServer",
+        "offer": "WindowsServer",
+        "sku": "2019-Datacenter",
+        "version": "latest"
+      }
+    },
+    "windowsClientImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsDesktop",
+        "offer": "windows-10",
+        "sku": "win10-22h2-ent-g2",
+        "version": "latest"
+      }
+    },
+    "ubuntuImage": {
+      "value": {
+        "publisher": "Canonical",
+        "offer": "ubuntu-24_04-lts",
+        "sku": "server",
+        "version": "latest"
+      }
+    },
+    "osDisk": {
+      "value": {
+        "storageAccountType": "Standard_LRS"
+      }
+    }
+  }
+}
