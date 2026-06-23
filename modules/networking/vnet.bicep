@@ -27,6 +27,7 @@ resource nsg 'Microsoft.Network/networkSecurityGroups@2022-07-01' = {
           sourcePortRange: '*'
           destinationAddressPrefix: '*'
           destinationPortRanges: [
+            '22'
             '53'
             '88'
             '389'
@@ -86,8 +87,20 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
 
 output vnetId string = vnet.id
 
-output subnetId string = resourceId(
-  'Microsoft.Network/virtualNetworks/subnets',
-  vnet.name,
-  '${vnetName}-subnet-default'
-)
+output subnetIds object = {
+  dc: resourceId(
+    'Microsoft.Network/virtualNetworks/subnets',
+    vnet.name,
+    '${vnetName}-subnet-dc'
+  )
+  server: resourceId(
+    'Microsoft.Network/virtualNetworks/subnets',
+    vnet.name,
+    '${vnetName}-subnet-server'
+  )
+  client: resourceId(
+    'Microsoft.Network/virtualNetworks/subnets',
+    vnet.name,
+    '${vnetName}-subnet-client'
+  )
+}

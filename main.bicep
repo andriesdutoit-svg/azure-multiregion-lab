@@ -435,7 +435,7 @@ module dcs 'modules/compute/vm-windows.bicep' = [
       vmSize: vmSize
       adminUsername: adminUsername
       adminPassword: adminPassword
-      subnetId: vnets[indexOf(regionKeys, dcRegionKey)].outputs.subnetId
+      subnetId: vnets[indexOf(regionKeys, dcRegionKey)].outputs.subnetIds.dc
       privateIp: dcIpArray[i]
       enablePublicIp: enablePublicIp
       testTargets: dcIpArray
@@ -458,7 +458,7 @@ module win01 'modules/compute/vm-windows.bicep' = {
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, windowsClient01RegionKey)].outputs.subnetId
+    subnetId: vnets[indexOf(regionKeys, windowsClient01RegionKey)].outputs.subnetIds.client
     enablePublicIp: enablePublicIp
     testTargets: []
     tags: finalTags
@@ -476,7 +476,7 @@ module win02 'modules/compute/vm-windows.bicep' = {
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, windowsClient02RegionKey)].outputs.subnetId
+    subnetId: vnets[indexOf(regionKeys, windowsClient02RegionKey)].outputs.subnetIds.client
     enablePublicIp: enablePublicIp
     testTargets: []
     tags: finalTags
@@ -498,7 +498,7 @@ module ubu01 'modules/compute/vm-linux.bicep' = {
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, ubuntu01RegionKey)].outputs.subnetId
+    subnetId: vnets[indexOf(regionKeys, ubuntu01RegionKey)].outputs.subnetIds.server
     enablePublicIp: enablePublicIp
     tags: finalTags
     image: ubuntuImage               
@@ -515,7 +515,7 @@ module ubu02 'modules/compute/vm-linux.bicep' = {
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, ubuntu02RegionKey)].outputs.subnetId
+    subnetId: vnets[indexOf(regionKeys, ubuntu02RegionKey)].outputs.subnetIds.server
     enablePublicIp: enablePublicIp
     tags: finalTags
     image: ubuntuImage               
@@ -532,7 +532,7 @@ module ubu03 'modules/compute/vm-linux.bicep' = {
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, ubuntu03RegionKey)].outputs.subnetId
+    subnetId: vnets[indexOf(regionKeys, ubuntu03RegionKey)].outputs.subnetIds.client
     enablePublicIp: enablePublicIp
     tags: finalTags
     image: ubuntuImage               
