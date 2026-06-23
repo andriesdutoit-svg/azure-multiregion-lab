@@ -39,27 +39,46 @@
         "region1": {
           "location": "westus2",
           "addressPrefix": "10.0.0.0/16",
-          "subnetPrefix": "10.0.0.0/24"
+          "subnetPrefix": {
+            "dc": "10.0.0.0/26",
+            "server": "10.0.0.64/26",
+            "client": "10.0.0.128/26"
         },
         "region2": {
           "location": "koreacentral",
           "addressPrefix": "10.1.0.0/16",
-          "subnetPrefix": "10.1.0.0/24"
+          "subnetPrefix": {
+            "dc": "10.1.0.0/26",
+            "server": "10.1.0.64/26",
+            "client": "10.1.0.128/26"
+          }
         },
         "region3": {
           "location": "swedencentral",
           "addressPrefix": "10.2.0.0/16",
-          "subnetPrefix": "10.2.0.0/24"
+          "subnetPrefix": {
+            "dc": "10.2.0.0/26",
+            "server": "10.2.0.64/26",
+            "client": "10.2.0.128/26"
+          }
         },
         "region4": {
           "location": "westeurope",
           "addressPrefix": "10.3.0.0/16",
-          "subnetPrefix": "10.3.0.0/24"
+          "subnetPrefix": {
+            "dc": "10.3.0.0/26",
+            "server": "10.3.0.64/26",
+            "client": "10.3.0.128/26"
+          }
         },
         "region5": {
           "location": "australiaeast",
           "addressPrefix": "10.4.0.0/16",
-          "subnetPrefix": "10.4.0.0/24"
+          "subnetPrefix": {
+            "dc": "10.4.0.0/26",
+            "server": "10.4.0.64/26",
+            "client": "10.4.0.128/26"
+          }
         }
       }
     },

@@ -1,7 +1,7 @@
 param vnetName string
 param location string
 param addressPrefix string
-param subnetPrefix string
+param subnetPrefix object
 param dnsServers array = []
 param tags object = {}
 param externalAccessPrefixes array = []
@@ -54,9 +54,27 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
     }
     subnets: [
       {
-        name: '${vnetName}-subnet-default'
+        name: '${vnetName}-subnet-dc'
         properties: {
-          addressPrefix: subnetPrefix
+          addressPrefix: subnetPrefix.dc
+          networkSecurityGroup: {
+            id: nsg.id
+          }
+        }
+      }
+      {
+        name: '${vnetName}-subnet-server'
+        properties: {
+          addressPrefix: subnetPrefix.server
+          networkSecurityGroup: {
+            id: nsg.id
+          }
+        }
+      }
+      {
+        name: '${vnetName}-subnet-client'
+        properties: {
+          addressPrefix: subnetPrefix.client
           networkSecurityGroup: {
             id: nsg.id
           }
