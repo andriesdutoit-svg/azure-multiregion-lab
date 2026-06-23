@@ -1,5 +1,4 @@
 param vmName string
-param vnetName string
 param subnetId string
 param vmSize string
 param adminUsername string

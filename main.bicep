@@ -31,7 +31,6 @@ param ubuntuImage object
 param externalAccessPrefixes array = []
 param dcIps object
 
-
 var finalTags = union(tags, {
   project: prefix
 })
@@ -81,12 +80,22 @@ module vnets 'modules/networking/vnet.bicep' = [
       location: region.value.location
       addressPrefix: region.value.addressPrefix
       subnetPrefix: region.value.subnetPrefix
-      dnsServers: []
+      dnsServers: [
+        dcIps.dc01
+        dcIps.dc02
+        dcIps.dc03
+        dcIps.dc04
+        dcIps.dc05
+        '168.63.129.16'
+    ]
       tags: finalTags
       externalAccessPrefixes: externalAccessPrefixes
     }
   }
 ]
+
+// NOTE: Azure DNS fallback intentionally included for lab convenience.
+// This is NOT recommended for production AD environments.
 
 //
 // PEERING (explicit)
