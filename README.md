@@ -1,170 +1,57 @@
-# Azure Multi-Region Lab (Bicep) – Lab v1.5.1
+# Azure Multi-Region Lab (v1.6)
 
 ## Overview
-This project deploys a multi-region Azure environment using Bicep, including:
+This project implements a multi-region Azure infrastructure using Bicep. Version 1.6 focuses on building a stable, segmented, and DNS-enabled platform that is ready for Active Directory deployment.
 
-- Multiple resource groups across regions
-- Virtual networks with deterministic address spaces
-- Full mesh VNet peering
-- Windows and Linux virtual machines
-- Static IP assignment for Domain Controllers
-- Automated connectivity validation using Custom Script Extensions
+## Key Features (v1.6)
 
----
+- Multi-region deployment (5 regions)
+- VNet per region
+- Subnet segmentation per VNet:
+  - Domain Controller subnet
+  - Server subnet
+  - Client subnet
+- Loop-based VM deployment
+- Role-based subnet assignment
+- Public IP support
+- DNS configuration with DC + Azure fallback (lab design)
 
-## Key Features
+## Architecture
 
-### Deterministic Network Design
-Each region is explicitly defined with its own address space and subnet:
+Each region contains:
 
-```
-region1 → 10.0.0.0/24  
-region2 → 10.1.0.0/24  
-region3 → 10.2.0.0/24  
-region4 → 10.3.0.0/24  
-region5 → 10.4.0.0/24  
-```
+- VNet
+- 3 Subnets (dc, server, client)
+- Domain Controller VM
+- Optional client and Linux VMs
 
-- No dependency on loop ordering  
-- Predictable addressing  
-- Repeatable deployments  
+## Next Steps (v1.7)
 
----
+- NSG per subnet
+- Role-based NSG rules
+- Security segmentation improvements
 
-### Static IP Assignment (Domain Controllers)
-Domain Controllers are assigned fixed IP addresses:
+## Repository Structure
 
-```
-dc01 → 10.0.0.10  
-dc02 → 10.1.0.10  
-dc03 → 10.2.0.10  
-dc04 → 10.3.0.10  
-dc05 → 10.4.0.10  
-```
+- main.bicep
+- modules/
+  - networking/
+  - compute/
+  - peering/
+- scripts/
+- main.parameters.json
 
-- Ensures consistent identity  
-- Eliminates randomness  
-- Supports reliable connectivity testing  
+## Regional parameters
 
----
-
-### Externalised Script Execution
-Connectivity testing is implemented using an external PowerShell script:
-
-```
-scripts/network-test.ps1
-```
-
-Benefits:
-
-- Avoids Bicep string escaping issues  
-- Improves maintainability  
-- Separates logic from infrastructure  
-- Aligns with production practices  
-
----
-
-### Automated Connectivity Validation
-Each Domain Controller:
-
-- Receives a list of all DC IPs  
-- Tests TCP connectivity (Port 3389)  
-- Logs results to:
-
-```
-C:\temp\network-test.txt
-```
-
-Non-DC VMs:
-
-- Receive an empty target list  
-- Exit immediately (no unnecessary execution)  
-
----
-
-## Project Structure
-
-```
-azure-multiregion-lab/
-│
-├── main.bicep
-├── main.parameters.json
-├── test.parameters.json
-│
-├── modules/
-│   ├── compute/
-│   ├── networking/
-│   └── peering/
-│
-└── scripts/
-    └── network-test.ps1
-```
-
----
+main.parameters.json and lab.parameters.json are identical except that they use different sets of regions. This allows more than one deployment per subscription (Azure free trials only allows 4 cores per region)
 
 ## Deployment
 
-### Prerequisites
-
-- Azure CLI installed  
-- Logged in to Azure (`az login`)  
-- Sufficient subscription permissions  
-
----
-
-### Deploy
-
 ```powershell
-az deployment sub create `
-  --name lab-deploy `
-  --location westeurope `
-  --template-file main.bicep `
-  --parameters "@main.parameters.json"
+az deployment sub create   --name v16-final   --location westeurope   --template-file main.bicep   --parameters "@main.parameters.json"
 ```
 
----
+## Version
 
-## Validation
-
-Log into any Domain Controller and run:
-
-```powershell
-type C:\temp\network-test.txt
-```
-
-Expected output:
-
-```
-Starting network test
-
-ComputerName     : 10.x.x.x
-TcpTestSucceeded : True
-```
-
----
-
-## Versioning
-
-### v1.5
-- Initial working version  
-- Inline PowerShell in Bicep  
-- Functional but fragile scripting  
-
-### v1.5.1
-- Moved connectivity test to external PowerShell script  
-- Fixed Bicep string parsing and escaping issues  
-- Improved reliability of Custom Script Extension  
-- Implemented production-style script execution  
-
----
-
-## Design Principles
-
-- Infrastructure as Code (IaC)  
-- Parameter-driven configuration  
-- Deterministic networking  
-- Separation of concerns (infrastructure vs scripts)  
-- Reproducible deployments  
-
----
+Current version: v1.6 (finalised)
 

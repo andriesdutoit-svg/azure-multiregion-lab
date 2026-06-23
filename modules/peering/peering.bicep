@@ -9,7 +9,8 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
 }
 
 resource peering 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2022-07-01' = {
-  name: '${vnet.name}/${vnet.name}-to-${remoteVnetName}'
+  parent: vnet
+  name: '${vnet.name}-to-${remoteVnetName}'
 
   properties: {
     remoteVirtualNetwork: {

@@ -84,11 +84,9 @@ resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (enableP
 var targetList = join(testTargets, ',')
 
 resource vmScript 'Microsoft.Compute/virtualMachines/extensions@2023-03-01' = if (length(testTargets) > 0) {
-  name: '${vmName}/vmScript'
+  parent: vm
+  name: 'vmScript'
   location: resourceGroup().location
-  dependsOn: [
-    vm
-  ]
   properties: {
     publisher: 'Microsoft.Compute'
     type: 'CustomScriptExtension'

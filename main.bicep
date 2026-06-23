@@ -53,6 +53,20 @@ var dcIpArray = [
   dcIps.dc05
 ]
 
+var dnsServers = [
+  dcIps.dc01
+  dcIps.dc02
+  dcIps.dc03
+  dcIps.dc04
+  dcIps.dc05
+  '168.63.129.16'
+]
+
+// NOTE:
+// Azure DNS fallback (168.63.129.16) is intentionally included for lab use.
+// This allows internet name resolution before AD DNS is installed.
+// In production AD environments, clients should only use Domain Controllers for DNS.
+
 //
 // RESOURCE GROUPS
 //
@@ -80,22 +94,12 @@ module vnets 'modules/networking/vnet.bicep' = [
       location: region.value.location
       addressPrefix: region.value.addressPrefix
       subnetPrefix: region.value.subnetPrefix
-      dnsServers: [
-        dcIps.dc01
-        dcIps.dc02
-        dcIps.dc03
-        dcIps.dc04
-        dcIps.dc05
-        '168.63.129.16'
-    ]
+      dnsServers: dnsServers
       tags: finalTags
       externalAccessPrefixes: externalAccessPrefixes
     }
   }
 ]
-
-// NOTE: Azure DNS fallback intentionally included for lab convenience.
-// This is NOT recommended for production AD environments.
 
 //
 // PEERING (explicit)
@@ -440,7 +444,6 @@ module dcs 'modules/compute/vm-windows.bicep' = [
     scope: resourceGroup('${prefix}-rg-${dcRegionKey}')
     params: {
       vmName: '${prefix}-dc0${i + 1}'
-      vnetName: '${prefix}-vnet-${dcRegionKey}'
       vmSize: vmSize
       adminUsername: adminUsername
       adminPassword: adminPassword
@@ -448,7 +451,9 @@ module dcs 'modules/compute/vm-windows.bicep' = [
       privateIp: dcIpArray[i]
       enablePublicIp: enablePublicIp
       testTargets: dcIpArray
-      tags: finalTags
+      tags: union(finalTags, {
+        role: 'domain-controller'
+      })
       image: windowsServerImage
       osDisk: osDisk
     }
@@ -463,14 +468,15 @@ module win01 'modules/compute/vm-windows.bicep' = {
   scope: resourceGroup('${prefix}-rg-${windowsClient01RegionKey}')
   params: {
     vmName: '${prefix}-win01'
-    vnetName: '${prefix}-vnet-${windowsClient01RegionKey}'
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
     subnetId: vnets[indexOf(regionKeys, windowsClient01RegionKey)].outputs.subnetIds.client
     enablePublicIp: enablePublicIp
     testTargets: []
-    tags: finalTags
+      tags: union(finalTags, {
+        role: 'client'
+      })
     image: windowsClientImage     
     osDisk: osDisk                
   }
@@ -481,14 +487,15 @@ module win02 'modules/compute/vm-windows.bicep' = {
   scope: resourceGroup('${prefix}-rg-${windowsClient02RegionKey}')
   params: {
     vmName: '${prefix}-win02'
-    vnetName: '${prefix}-vnet-${windowsClient02RegionKey}'
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
     subnetId: vnets[indexOf(regionKeys, windowsClient02RegionKey)].outputs.subnetIds.client
     enablePublicIp: enablePublicIp
     testTargets: []
-    tags: finalTags
+      tags: union(finalTags, {
+        role: 'client'
+      })
     image: windowsClientImage     
     osDisk: osDisk                
   }
@@ -503,13 +510,14 @@ module ubu01 'modules/compute/vm-linux.bicep' = {
   scope: resourceGroup('${prefix}-rg-${ubuntu01RegionKey}')
   params: {
     vmName: '${prefix}-ubu01'
-    vnetName: '${prefix}-vnet-${ubuntu01RegionKey}'
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
     subnetId: vnets[indexOf(regionKeys, ubuntu01RegionKey)].outputs.subnetIds.server
     enablePublicIp: enablePublicIp
-    tags: finalTags
+         tags: union(finalTags, {
+        role: 'server'
+      })
     image: ubuntuImage               
     osDisk: osDisk                 
   }
@@ -520,13 +528,14 @@ module ubu02 'modules/compute/vm-linux.bicep' = {
   scope: resourceGroup('${prefix}-rg-${ubuntu02RegionKey}')
   params: {
     vmName: '${prefix}-ubu02'
-    vnetName: '${prefix}-vnet-${ubuntu02RegionKey}'
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
     subnetId: vnets[indexOf(regionKeys, ubuntu02RegionKey)].outputs.subnetIds.server
     enablePublicIp: enablePublicIp
-    tags: finalTags
+      tags: union(finalTags, {
+        role: 'server'
+      })
     image: ubuntuImage               
     osDisk: osDisk                 
   }
@@ -537,13 +546,14 @@ module ubu03 'modules/compute/vm-linux.bicep' = {
   scope: resourceGroup('${prefix}-rg-${ubuntu03RegionKey}')
   params: {
     vmName: '${prefix}-ubu03'
-    vnetName: '${prefix}-vnet-${ubuntu03RegionKey}'
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
     subnetId: vnets[indexOf(regionKeys, ubuntu03RegionKey)].outputs.subnetIds.client
     enablePublicIp: enablePublicIp
-    tags: finalTags
+        tags: union(finalTags, {
+        role: 'client'
+      })
     image: ubuntuImage               
     osDisk: osDisk                 
   }
