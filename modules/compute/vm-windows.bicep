@@ -8,10 +8,10 @@ param tags object = {}
 param image object
 param osDisk object
 param privateIp string?
-param testTargets array
 param enablePublicIp bool
 
-param forceUpdateTag string = utcNow()
+// param testTargets array
+// param forceUpdateTag string = utcNow()
 
 resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
   name: '${vmName}-nic'
@@ -81,23 +81,23 @@ resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (enableP
 
 // Test network connectivity between DCs using Custom Script Extension
 
-var targetList = join(testTargets, ',')
+// var targetList = join(testTargets, ',')
 
-resource vmScript 'Microsoft.Compute/virtualMachines/extensions@2023-03-01' = if (length(testTargets) > 0) {
-  parent: vm
-  name: 'vmScript'
-  location: resourceGroup().location
-  properties: {
-    publisher: 'Microsoft.Compute'
-    type: 'CustomScriptExtension'
-    typeHandlerVersion: '1.10'
+// resource vmScript 'Microsoft.Compute/virtualMachines/extensions@2023-03-01' = if (length(testTargets) > 0) {
+//   parent: vm
+//   name: 'vmScript'
+//   location: resourceGroup().location
+//   properties: {
+//     publisher: 'Microsoft.Compute'
+//     type: 'CustomScriptExtension'
+//     typeHandlerVersion: '1.10'
     
-    settings: {
-      fileUris: [
-        'https://raw.githubusercontent.com/andriesdutoit-svg/Bicep/master/azure-multiregion-lab/scripts/network-test.ps1'
-      ]
-      commandToExecute: 'powershell -ExecutionPolicy Bypass -File network-test.ps1 -targets "${targetList}" -selfIp "${privateIp}"'
-  }
-    forceUpdateTag: forceUpdateTag
-  }
-}
+//     settings: {
+//       fileUris: [
+//         'https://raw.githubusercontent.com/andriesdutoit-svg/Bicep/master/azure-multiregion-lab/scripts/network-test.ps1'
+//       ]
+//       commandToExecute: 'powershell -ExecutionPolicy Bypass -File network-test.ps1 -targets "${targetList}" -selfIp "${privateIp}"'
+//   }
+//     forceUpdateTag: forceUpdateTag
+//   }
+// }

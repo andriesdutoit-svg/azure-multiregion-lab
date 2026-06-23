@@ -2,19 +2,9 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    
-    "externalAccessPrefixes": {
-      "value": [
-        "168.210.156.0/24",
-        "137.158.0.0/16",
-        "197.239.0.0/16",
-        "196.24.0.0/16",
-        "196.42.0.0/16",
-        "196.47.0.0/16"
-      ]
-    },
+      
     "prefix": {
-      "value": "LAB"
+      "value": "AMRL"
     },
     "tags": {
       "value": {

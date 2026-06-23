@@ -28,7 +28,6 @@ param windowsServerImage object
 param windowsClientImage object
 param ubuntuImage object
 
-param externalAccessPrefixes array = []
 param dcIps object
 
 var finalTags = union(tags, {
@@ -59,13 +58,7 @@ var dnsServers = [
   dcIps.dc03
   dcIps.dc04
   dcIps.dc05
-  '168.63.129.16'
 ]
-
-// NOTE:
-// Azure DNS fallback (168.63.129.16) is intentionally included for lab use.
-// This allows internet name resolution before AD DNS is installed.
-// In production AD environments, clients should only use Domain Controllers for DNS.
 
 //
 // RESOURCE GROUPS
@@ -96,7 +89,6 @@ module vnets 'modules/networking/vnet.bicep' = [
       subnetPrefix: region.value.subnetPrefix
       dnsServers: dnsServers
       tags: finalTags
-      externalAccessPrefixes: externalAccessPrefixes
     }
   }
 ]
@@ -450,7 +442,7 @@ module dcs 'modules/compute/vm-windows.bicep' = [
       subnetId: vnets[indexOf(regionKeys, dcRegionKey)].outputs.subnetIds.dc
       privateIp: dcIpArray[i]
       enablePublicIp: enablePublicIp
-      testTargets: dcIpArray
+//      testTargets: dcIpArray
       tags: union(finalTags, {
         role: 'domain-controller'
       })
@@ -473,7 +465,7 @@ module win01 'modules/compute/vm-windows.bicep' = {
     adminPassword: adminPassword
     subnetId: vnets[indexOf(regionKeys, windowsClient01RegionKey)].outputs.subnetIds.client
     enablePublicIp: enablePublicIp
-    testTargets: []
+//    testTargets: []
       tags: union(finalTags, {
         role: 'client'
       })
@@ -492,7 +484,7 @@ module win02 'modules/compute/vm-windows.bicep' = {
     adminPassword: adminPassword
     subnetId: vnets[indexOf(regionKeys, windowsClient02RegionKey)].outputs.subnetIds.client
     enablePublicIp: enablePublicIp
-    testTargets: []
+//    testTargets: []
       tags: union(finalTags, {
         role: 'client'
       })

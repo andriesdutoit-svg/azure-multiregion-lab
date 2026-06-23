@@ -4,38 +4,103 @@ param addressPrefix string
 param subnetPrefix object
 param dnsServers array = []
 param tags object = {}
-param externalAccessPrefixes array = []
 
-resource nsg 'Microsoft.Network/networkSecurityGroups@2022-07-01' = {
-  name: '${vnetName}-subnet-default-nsg'
+var dcRules = [
+  {
+    name: 'Allow-DNS'
+    port: '53'
+  }
+  {
+    name: 'Allow-Kerberos'
+    port: '88'
+  }
+  {
+    name: 'Allow-LDAP'
+    port: '389'
+  }
+  {
+    name: 'Allow-RDP'
+    port: '3389'
+  }
+]
+
+var serverRules = [
+  {
+    name: 'Allow-SSH'
+    port: '22'
+  }
+]
+
+var clientRules = [
+  {
+    name: 'Allow-RDP'
+    port: '3389'
+  }
+]
+
+resource nsgDc 'Microsoft.Network/networkSecurityGroups@2022-09-01' = {
+  name: '${vnetName}-nsg-dc'
   location: location
   tags: tags
   properties: {
     securityRules: [
-      {
-        name: 'Allow-AD-Internal-And-Parameter-External'
+      for (rule, index) in dcRules: {
+        name: rule.name
         properties: {
-          priority: 100
-          direction: 'Inbound'
+          priority: 1000 + index
           access: 'Allow'
-          protocol: '*'
-          sourceAddressPrefixes: concat(
-            ['10.0.0.0/8'],
-            externalAccessPrefixes
-          )
-
+          direction: 'Inbound'
+          protocol: 'Tcp'
           sourcePortRange: '*'
+          destinationPortRange: rule.port
+          sourceAddressPrefix: '*'
           destinationAddressPrefix: '*'
-          destinationPortRanges: [
-            '22'
-            '53'
-            '88'
-            '389'
-            '445'
-            '135'
-            '3389'
-            '49152-65535'
-          ]
+        }
+      }
+    ]
+  }
+}
+
+resource nsgServer 'Microsoft.Network/networkSecurityGroups@2022-09-01' = {
+  name: '${vnetName}-nsg-server'
+  location: location
+  tags: tags
+  properties: {
+    securityRules: [
+      for (rule, index) in serverRules: {
+        name: rule.name
+        properties: {
+          priority: 1000 + index
+          access: 'Allow'
+          direction: 'Inbound'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: rule.port
+          sourceAddressPrefix: '*'
+          destinationAddressPrefix: '*'
+        }
+      }
+    ]
+  }
+}
+
+resource nsgClient 'Microsoft.Network/networkSecurityGroups@2022-09-01' = {
+  name: '${vnetName}-nsg-client'
+  location: location
+  tags: tags
+  properties: {
+    securityRules: [
+      for (rule, index) in clientRules: {
+        name: rule.name
+        properties: {
+          priority: 1000 + index
+          access: 'Allow'
+          direction: 'Inbound'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: rule.port
+          sourceAddressPrefix: '*'
+          destinationAddressPrefix: '*'
         }
       }
     ]
@@ -59,7 +124,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
         properties: {
           addressPrefix: subnetPrefix.dc
           networkSecurityGroup: {
-            id: nsg.id
+            id: nsgDc.id
           }
         }
       }
@@ -68,7 +133,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
         properties: {
           addressPrefix: subnetPrefix.server
           networkSecurityGroup: {
-            id: nsg.id
+            id: nsgServer.id
           }
         }
       }
@@ -77,7 +142,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
         properties: {
           addressPrefix: subnetPrefix.client
           networkSecurityGroup: {
-            id: nsg.id
+            id: nsgClient.id
           }
         }
       }
