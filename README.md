@@ -2,31 +2,25 @@
 
 ## Overview
 
-This project deploys a multi-region Azure infrastructure using Bicep.
+This project deploys a modular, multi-region Azure infrastructure using Bicep.
 
-Version: **v1.7**
+Version: **v1.8**
 
-This version introduces:
-- Network security segmentation (NSGs)
-- Full mesh VNet peering using loops
-- Secure secret management using Azure Key Vault
+This version introduces full modularisation of networking components, improving reusability, maintainability, and alignment with enterprise Infrastructure-as-Code practices.
 
 ---
 
-## Key Features (v1.7)
+## Key Features (v1.8)
 
 - Multi-region deployment (5 regions)
 - Resource group per region
 - VNet per region
-- Subnet segmentation:
-  - Domain Controller (dc)
-  - Server
-  - Client
-- NSG per subnet (role-based security)
+- Subnet modularisation (dc, server, client)
+- NSG modularisation with role-based rule sets
 - Full mesh VNet peering (loop-driven)
-- Loop-based deployment logic
-- Modular infrastructure design
-- Secure credential storage using Key Vault
+- Clean dependency handling to avoid Azure concurrency issues
+- Loop-based orchestration for scalable deployments
+- Secure credential storage using Azure Key Vault (foundation layer)
 
 ---
 
@@ -34,14 +28,14 @@ This version introduces:
 
 ### Foundation Layer (Persistent)
 
-This layer is NOT part of the main deployment and must exist beforehand.
+This layer is NOT part of the main deployment and must exist before deploying the lab.
 
 - Resource Group: `traininglab-rg-foundation`
 - Key Vault: `traininglab-kv`
-- Contains:
-  - adminPassword secret
+- Secrets:
+  - adminPassword
 
-This layer is independent and is not deleted during lab redeployments.
+This layer is stable and should not be deleted during greenfield redeployments.
 
 ---
 
@@ -50,127 +44,123 @@ This layer is independent and is not deleted during lab redeployments.
 Each region contains:
 
 - Resource Group: `AMRL-rg-regionX`
-- VNet
-- 3 subnets:
+- Virtual Network
+- Subnets (modular):
   - dc
   - server
   - client
-- 3 Network Security Groups:
+- Network Security Groups (modular):
   - nsg-dc
   - nsg-server
   - nsg-client
 - Domain Controller VM
-- Optional Windows client and Linux VMs
+- Windows client VMs (optional)
+- Linux VMs (optional)
 
 ---
 
-## Networking
+## Module Structure
 
-### VNet Peering
-
-- Full mesh topology
-- Automatically created using loops
-- Each VNet peers with every other VNet
-- All peerings are fully synchronized
+```
+main.bicep
+main.parameters.json
+alt.parameters.json   # alternative region parameters
+README.md
+modules/
+  networking/
+    vnet.bicep        # composition layer
+    subnet.bicep      # subnet resource module
+    nsg.bicep         # NSG resource module
+  compute/
+    vm-windows.bicep
+    vm-linux.bicep
+  scripts/
+    network-test.ps1
+```
 
 ---
 
-## Security
+## Networking Design
 
-### Network Security
+Azure DNS fallback (168.63.129.16) is used alongside domain controllers for name resolution.
 
-NSG per subnet with role-based rules:
+### Subnets
 
-**DC subnet:**
-- DNS (53)
-- Kerberos (88)
-- LDAP (389)
-- RDP (3389)
+Subnets are deployed as independent resources via modules and attached to the VNet sequentially to avoid Azure concurrency issues.
 
-**Server subnet:**
-- SSH (22)
+### NSGs
 
-**Client subnet:**
-- RDP (3389)
+NSGs are modular and rule-driven. Rules are grouped by role:
+
+- dc rules (DNS, Kerberos, LDAP, RDP)
+- server rules (SSH)
+- client rules (RDP)
 
 Inbound traffic restricted to:
+
 ```
 10.0.0.0/8
 ```
 
 ---
 
-### Secrets Management
+## Outputs
 
-- Admin password is stored in Azure Key Vault
-- Retrieved at deployment time using secure reference
-- No secrets are stored in code or parameter files
+The VNet module exposes structured outputs for reuse:
 
----
+- vnetId
+- vnetName
+- subnets:
+  - id
+  - name
 
-## Modules
-
-| Module | Purpose |
-|--------|--------|
-| main.bicep | Subscription-level orchestration |
-| vnet.bicep | VNets, subnets, NSGs |
-| peering.bicep | VNet peering logic |
-| vm-windows.bicep | Windows VM deployment |
-| vm-linux.bicep | Linux VM deployment |
+These outputs allow easy integration with future modules (e.g., domain join, monitoring, firewalls).
 
 ---
 
 ## Deployment
 
-### Prerequisite (Foundation Setup)
+### Prerequisites
 
-Key Vault must exist before deployment.
-
-### Then deploy:
-
-```powershell
-az deployment sub create   --name v17   --location westeurope   --template-file main.bicep   --parameters "@lab.parameters.json"
-```
+- Key Vault must exist in the foundation resource group
+- Secret `adminPassword` must be present
+- Key Vault must have `enabledForTemplateDeployment = true`
 
 ---
 
-## Greenfield Deployment
+### Deploy
 
-To rebuild the lab:
-
-1. Delete all regional resource groups:
-   ```
-   AMRL-rg-region1
-   AMRL-rg-region2
-   ...
-   ```
-2. DO NOT delete:
-   ```
-   traininglab-rg-foundation
-   ```
-3. Redeploy template
+```powershell
+az deployment sub create   --name v18   --location westeurope   --template-file main.bicep   --parameters "@main.parameters.json"
+```
 
 ---
 
 ## Known Limitations
 
-- NSG rules are not least-privilege (basic lab rules)
-- No Azure Firewall or custom routing
+- NSG rules are simplified (not least-privilege)
+- No Azure Firewall or advanced routing
 - Public IPs enabled for simplicity
-- No Active Directory configuration yet
+- Active Directory not yet configured
 
 ---
 
 ## Roadmap
 
-### v1.8
-
-- Subnet module
-- NSG module
-- Improved modularisation
-
-### v1.9+
+### v1.9
 
 - Active Directory deployment
 - Domain join automation
 - DNS forwarding improvements
+
+### v2.0 (future)
+
+- Firewall integration
+- Route tables
+- Private endpoints
+
+---
+
+## Version
+
+Current version: **v1.8**
