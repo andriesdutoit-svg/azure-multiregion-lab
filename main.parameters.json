@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "AMRL"
+      "value": "1A"
     },
     "tags": {
       "value": {
@@ -32,7 +32,7 @@
     "regions": {
       "value": {
         "region1": {
-          "location": "westus2",
+          "location": "uaenorth",
           "addressPrefix": "10.0.0.0/16",
           "subnetPrefix": {
             "dc": "10.0.0.0/24",
@@ -50,7 +50,7 @@
           }
         },
         "region3": {
-          "location": "swedencentral",
+          "location": "chilecentral",
           "addressPrefix": "10.2.0.0/16",
           "subnetPrefix": {
             "dc": "10.2.0.0/24",
@@ -59,7 +59,7 @@
           }
         },
         "region4": {
-          "location": "westeurope",
+          "location": "mexicocentral",
           "addressPrefix": "10.3.0.0/16",
           "subnetPrefix": {
             "dc": "10.3.0.0/24",

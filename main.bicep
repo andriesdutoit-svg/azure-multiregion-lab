@@ -57,6 +57,7 @@ var dnsServers = [
   dcIps.dc02
   dcIps.dc03
   dcIps.dc04
+  '168.63.129.16'
   dcIps.dc05
 ]
 
@@ -128,7 +129,7 @@ module dcs 'modules/compute/vm-windows.bicep' = [
       subnetId: vnets[indexOf(regionKeys, dcRegionKey)].outputs.subnetIds.dc
       privateIp: dcIpArray[i]
       enablePublicIp: enablePublicIp
-      testTargets: dcIpArray
+//      testTargets: dcIpArray
       tags: union(finalTags, {
         role: 'domain-controller'
       })
@@ -151,7 +152,7 @@ module win01 'modules/compute/vm-windows.bicep' = {
     adminPassword: adminPassword
     subnetId: vnets[indexOf(regionKeys, windowsClient01RegionKey)].outputs.subnetIds.client
     enablePublicIp: enablePublicIp
-    testTargets: []
+//      testTargets: []
       tags: union(finalTags, {
         role: 'client'
       })
@@ -170,7 +171,7 @@ module win02 'modules/compute/vm-windows.bicep' = {
     adminPassword: adminPassword
     subnetId: vnets[indexOf(regionKeys, windowsClient02RegionKey)].outputs.subnetIds.client
     enablePublicIp: enablePublicIp
-    testTargets: []
+//      testTargets: []
       tags: union(finalTags, {
         role: 'client'
       })
