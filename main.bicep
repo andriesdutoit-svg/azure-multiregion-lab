@@ -126,7 +126,7 @@ module dcs 'modules/compute/vm-windows.bicep' = [
       vmSize: vmSize
       adminUsername: adminUsername
       adminPassword: adminPassword
-      subnetId: vnets[indexOf(regionKeys, dcRegionKey)].outputs.subnetIds.dc
+      subnetId: vnets[indexOf(regionKeys, dcRegionKey)].outputs.subnets.dc.id
       privateIp: dcIpArray[i]
       enablePublicIp: enablePublicIp
 //      testTargets: dcIpArray
@@ -150,7 +150,7 @@ module win01 'modules/compute/vm-windows.bicep' = {
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, windowsClient01RegionKey)].outputs.subnetIds.client
+    subnetId: vnets[indexOf(regionKeys, windowsClient01RegionKey)].outputs.subnets.client.id
     enablePublicIp: enablePublicIp
 //      testTargets: []
       tags: union(finalTags, {
@@ -169,7 +169,7 @@ module win02 'modules/compute/vm-windows.bicep' = {
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, windowsClient02RegionKey)].outputs.subnetIds.client
+    subnetId: vnets[indexOf(regionKeys, windowsClient02RegionKey)].outputs.subnets.client.id
     enablePublicIp: enablePublicIp
 //      testTargets: []
       tags: union(finalTags, {
@@ -192,7 +192,7 @@ module ubu01 'modules/compute/vm-linux.bicep' = {
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, ubuntu01RegionKey)].outputs.subnetIds.server
+    subnetId: vnets[indexOf(regionKeys, ubuntu01RegionKey)].outputs.subnets.server.id
     enablePublicIp: enablePublicIp
          tags: union(finalTags, {
         role: 'server'
@@ -210,7 +210,7 @@ module ubu02 'modules/compute/vm-linux.bicep' = {
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, ubuntu02RegionKey)].outputs.subnetIds.server
+    subnetId: vnets[indexOf(regionKeys, ubuntu02RegionKey)].outputs.subnets.server.id
     enablePublicIp: enablePublicIp
       tags: union(finalTags, {
         role: 'server'
@@ -228,7 +228,7 @@ module ubu03 'modules/compute/vm-linux.bicep' = {
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, ubuntu03RegionKey)].outputs.subnetIds.client
+    subnetId: vnets[indexOf(regionKeys, ubuntu03RegionKey)].outputs.subnets.client.id
     enablePublicIp: enablePublicIp
         tags: union(finalTags, {
         role: 'client'
