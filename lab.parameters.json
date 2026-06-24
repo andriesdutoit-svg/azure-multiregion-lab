@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "AMRL"
+      "value": "AMRL2"
     },
     "tags": {
       "value": {
@@ -15,7 +15,12 @@
       "value": "azureadmin"
     },
     "adminPassword": {
-      "value": "1234!@#$qwerQWER"
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/1f3e6e09-53d2-487c-bca6-e9f60495d521/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
+        },
+        "secretName": "adminPassword"
+      }
     },
     "enablePublicIp": {
       "value": true
@@ -54,7 +59,7 @@
           }
         },
         "region4": {
-          "location": "japanwest",
+          "location": "israelcentral",
           "addressPrefix": "10.3.0.0/16",
           "subnetPrefix": {
             "dc": "10.3.0.0/24",
@@ -63,7 +68,7 @@
           }
         },
         "region5": {
-          "location": "israelcentral",
+          "location": "japanwest",
           "addressPrefix": "10.4.0.0/16",
           "subnetPrefix": {
             "dc": "10.4.0.0/24",

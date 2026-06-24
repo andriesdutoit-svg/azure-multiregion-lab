@@ -15,7 +15,12 @@
       "value": "azureadmin"
     },
     "adminPassword": {
-      "value": "1234!@#$qwerQWER"
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/1f3e6e09-53d2-487c-bca6-e9f60495d521/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
+        },
+        "secretName": "adminPassword"
+      }
     },
     "enablePublicIp": {
       "value": true
