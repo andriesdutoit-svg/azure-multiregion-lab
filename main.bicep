@@ -52,14 +52,7 @@ var dcIpArray = [
   dcIps.dc05
 ]
 
-var dnsServers = [
-  dcIps.dc01
-  dcIps.dc02
-  dcIps.dc03
-  dcIps.dc04
-  '168.63.129.16'
-  dcIps.dc05
-]
+var dnsServers = dcIpArray
 
 //
 // RESOURCE GROUPS

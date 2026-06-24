@@ -5,34 +5,53 @@ param subnetPrefix object
 param dnsServers array = []
 param tags object = {}
 
+// var internalSubnets = [
+//   subnetPrefix.dc
+//   subnetPrefix.jumpbox
+//   subnetPrefix.server
+//   subnetPrefix.client
+// ]
+
 var nsgRules = {
   dc: [
     {
       name: 'Allow-DNS'
       port: '53'
       source: [
-        '10.0.0.0/8'
+        subnetPrefix.dc
+        subnetPrefix.jumpbox
+        subnetPrefix.server
+        subnetPrefix.client
       ]
     }
     {
       name: 'Allow-Kerberos'
       port: '88'
       source: [
-        '10.0.0.0/8'
+        subnetPrefix.dc
+        subnetPrefix.jumpbox
+        subnetPrefix.server
+        subnetPrefix.client
       ]
     }
     {
       name: 'Allow-LDAP'
       port: '389'
       source: [
-        '10.0.0.0/8'
+        subnetPrefix.dc
+        subnetPrefix.jumpbox
+        subnetPrefix.server
+        subnetPrefix.client
       ]
     }
     {
       name: 'Allow-RDP'
       port: '3389'
       source: [
-        '10.0.0.0/8'
+        subnetPrefix.dc
+        subnetPrefix.jumpbox
+        subnetPrefix.server
+        subnetPrefix.client
       ]
     }
   ]
@@ -41,7 +60,7 @@ var nsgRules = {
       name: 'Allow-RDP-From-Approved-Internet'
       port: '3389'
       source: [
-        '168.210.156.0/24'
+        '168.210.156.45' // Home
         '137.158.0.0/16'
         '197.239.0.0/16'
         '196.24.0.0/16'
@@ -55,7 +74,10 @@ var nsgRules = {
       name: 'Allow-SSH'
       port: '22'
       source: [
-        '10.0.0.0/8'
+        subnetPrefix.dc
+        subnetPrefix.jumpbox
+        subnetPrefix.server
+        subnetPrefix.client
       ]
     }
   ]
@@ -65,6 +87,16 @@ var nsgRules = {
       port: '3389'
       source: [
         subnetPrefix.jumpbox
+      ]
+    }
+    {
+      name: 'Deny-RDP-From-Others' // Only allow RDP from jumpbox subnet, deny all other RDP traffic
+      port: '3389'
+      source: [
+        subnetPrefix.dc
+        subnetPrefix.jumpbox
+        subnetPrefix.server
+        subnetPrefix.client
       ]
     }
   ]
