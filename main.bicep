@@ -22,7 +22,7 @@ param windowsClient01RegionKey string
 param windowsClient02RegionKey string
 param ubuntu01RegionKey string
 param ubuntu02RegionKey string
-param ubuntu03RegionKey string
+param jumpboxRegionKey string
 
 param windowsServerImage object
 param windowsClientImage object
@@ -140,8 +140,31 @@ module dcs 'modules/compute/vm-windows.bicep' = [
 ]
 
 //
-// CLIENT
+// JUMPBOX
 //
+
+module jumpbox 'modules/compute/vm-windows.bicep' = {
+  name: 'jumpbox'
+  scope: resourceGroup('${prefix}-rg-${jumpboxRegionKey}')
+  params: {
+    vmName: '${prefix}-jumpbox'
+    vmSize: vmSize
+    adminUsername: adminUsername
+    adminPassword: adminPassword
+    subnetId: vnets[indexOf(regionKeys, jumpboxRegionKey)].outputs.subnets.jumpbox.id
+    enablePublicIp: true
+    tags: union(finalTags, {
+      role: 'jumpbox'
+    })
+    image: windowsServerImage
+    osDisk: osDisk
+  }
+}
+
+//
+// WINDOWS CLIENT
+//
+
 module win01 'modules/compute/vm-windows.bicep' = {
   name: 'win01'
   scope: resourceGroup('${prefix}-rg-${windowsClient01RegionKey}')
@@ -180,7 +203,6 @@ module win02 'modules/compute/vm-windows.bicep' = {
   }
 }
 
-
 //
 // LINUX VM
 //
@@ -210,28 +232,10 @@ module ubu02 'modules/compute/vm-linux.bicep' = {
     vmSize: vmSize
     adminUsername: adminUsername
     adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, ubuntu02RegionKey)].outputs.subnets.server.id
+    subnetId: vnets[indexOf(regionKeys, ubuntu02RegionKey)].outputs.subnets.client.id
     enablePublicIp: enablePublicIp
       tags: union(finalTags, {
         role: 'server'
-      })
-    image: ubuntuImage               
-    osDisk: osDisk                 
-  }
-}
-
-module ubu03 'modules/compute/vm-linux.bicep' = {
-  name: 'ubu03'
-  scope: resourceGroup('${prefix}-rg-${ubuntu03RegionKey}')
-  params: {
-    vmName: '${prefix}-ubu03'
-    vmSize: vmSize
-    adminUsername: adminUsername
-    adminPassword: adminPassword
-    subnetId: vnets[indexOf(regionKeys, ubuntu03RegionKey)].outputs.subnets.client.id
-    enablePublicIp: enablePublicIp
-        tags: union(finalTags, {
-        role: 'client'
       })
     image: ubuntuImage               
     osDisk: osDisk                 

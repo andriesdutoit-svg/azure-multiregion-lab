@@ -38,6 +38,13 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
   location: resourceGroup().location
   tags: tags
   properties: {
+    securityProfile: {
+      securityType: 'TrustedLaunch'
+      uefiSettings: {
+        secureBootEnabled: true
+        vTpmEnabled: true
+      }
+    }
     hardwareProfile: {
       vmSize: vmSize
     }

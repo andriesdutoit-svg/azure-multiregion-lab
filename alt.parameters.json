@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "AMRL2"
+      "value": "2A"
     },
     "tags": {
       "value": {
@@ -28,7 +28,7 @@
     "vmSize": {
       "value": "Standard_B2ls_v2"
     },
-
+ 
     "regions": {
       "value": {
         "region1": {
@@ -79,16 +79,19 @@
       }
     },
     
-    "dc01RegionKey": { "value": "region1" },
-    "dc02RegionKey": { "value": "region2" },
-    "dc03RegionKey": { "value": "region3" },
-    "dc04RegionKey": { "value": "region4" },
-    "dc05RegionKey": { "value": "region5" },
-    "windowsClient01RegionKey": { "value": "region1" },
-    "windowsClient02RegionKey": { "value": "region2" },
-    "ubuntu01RegionKey": { "value": "region3" },
-    "ubuntu02RegionKey": { "value": "region4" },
-    "ubuntu03RegionKey": { "value": "region5" },
+"dc01RegionKey": { "value": "region1" },
+"dc02RegionKey": { "value": "region2" },
+"dc03RegionKey": { "value": "region3" },
+"dc04RegionKey": { "value": "region4" },
+"dc05RegionKey": { "value": "region5" },
+
+"jumpboxRegionKey": { "value": "region1" },
+
+"windowsClient01RegionKey": { "value": "region2" },
+"windowsClient02RegionKey": { "value": "region3" },
+
+"ubuntu01RegionKey": { "value": "region4" },
+"ubuntu02RegionKey": { "value": "region5" },
 
     "dcIps": {
       "value": {
@@ -104,7 +107,7 @@
       "value": {
         "publisher": "MicrosoftWindowsServer",
         "offer": "WindowsServer",
-        "sku": "2019-Datacenter",
+        "sku": "2022-datacenter-azure-edition",
         "version": "latest"
       }
     },
@@ -119,8 +122,8 @@
     "ubuntuImage": {
       "value": {
         "publisher": "Canonical",
-        "offer": "ubuntu-24_04-lts",
-        "sku": "server",
+        "offer": "0001-com-ubuntu-server-jammy",
+        "sku": "22_04-lts-gen2",
         "version": "latest"
       }
     },

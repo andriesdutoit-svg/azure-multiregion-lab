@@ -39,8 +39,15 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
 resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
   name: vmName
   location: resourceGroup().location
-  tags: tags
+    tags: tags
   properties: {
+    securityProfile: {
+      securityType: 'TrustedLaunch'
+      uefiSettings: {
+        secureBootEnabled: true
+        vTpmEnabled: true
+      }
+    }
     hardwareProfile: {
       vmSize: vmSize
     }

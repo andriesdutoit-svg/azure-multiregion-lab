@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "AMRL"
+      "value": "1A"
     },
     "tags": {
       "value": {
@@ -36,8 +36,9 @@
           "addressPrefix": "10.0.0.0/16",
           "subnetPrefix": {
             "dc": "10.0.0.0/24",
-            "server": "10.0.1.0/24",
-            "client": "10.0.2.0/24"
+            "jumpbox": "10.0.1.0/24",
+            "server": "10.0.2.0/24",
+            "client": "10.0.3.0/24"
           }
         },
         "region2": {
@@ -45,8 +46,9 @@
           "addressPrefix": "10.1.0.0/16",
           "subnetPrefix": {
             "dc": "10.1.0.0/24",
-            "server": "10.1.1.0/24",
-            "client": "10.1.2.0/24"
+            "jumpbox": "10.1.1.0/24",
+            "server": "10.1.2.0/24",
+            "client": "10.1.3.0/24"
           }
         },
         "region3": {
@@ -54,8 +56,9 @@
           "addressPrefix": "10.2.0.0/16",
           "subnetPrefix": {
             "dc": "10.2.0.0/24",
-            "server": "10.2.1.0/24",
-            "client": "10.2.2.0/24"
+            "jumpbox": "10.2.1.0/24",
+            "server": "10.2.2.0/24",
+            "client": "10.2.3.0/24"
           }
         },
         "region4": {
@@ -63,8 +66,9 @@
           "addressPrefix": "10.3.0.0/16",
           "subnetPrefix": {
             "dc": "10.3.0.0/24",
-            "server": "10.3.1.0/24",
-            "client": "10.3.2.0/24"
+            "jumpbox": "10.3.1.0/24",
+            "server": "10.3.2.0/24",
+            "client": "10.3.3.0/24"
           }
         },
         "region5": {
@@ -72,23 +76,27 @@
           "addressPrefix": "10.4.0.0/16",
           "subnetPrefix": {
             "dc": "10.4.0.0/24",
-            "server": "10.4.1.0/24",
-            "client": "10.4.2.0/24"
+            "jumpbox": "10.4.1.0/24",
+            "server": "10.4.2.0/24",
+            "client": "10.4.3.0/24"
           }
         }
       }
     },
-    
-    "dc01RegionKey": { "value": "region1" },
-    "dc02RegionKey": { "value": "region2" },
-    "dc03RegionKey": { "value": "region3" },
-    "dc04RegionKey": { "value": "region4" },
-    "dc05RegionKey": { "value": "region5" },
-    "windowsClient01RegionKey": { "value": "region1" },
-    "windowsClient02RegionKey": { "value": "region2" },
-    "ubuntu01RegionKey": { "value": "region3" },
-    "ubuntu02RegionKey": { "value": "region4" },
-    "ubuntu03RegionKey": { "value": "region5" },
+
+"dc01RegionKey": { "value": "region1" },
+"dc02RegionKey": { "value": "region2" },
+"dc03RegionKey": { "value": "region3" },
+"dc04RegionKey": { "value": "region4" },
+"dc05RegionKey": { "value": "region5" },
+
+"jumpboxRegionKey": { "value": "region1" },
+
+"windowsClient01RegionKey": { "value": "region2" },
+"windowsClient02RegionKey": { "value": "region3" },
+
+"ubuntu01RegionKey": { "value": "region4" },
+"ubuntu02RegionKey": { "value": "region5" },
 
     "dcIps": {
       "value": {
@@ -104,7 +112,7 @@
       "value": {
         "publisher": "MicrosoftWindowsServer",
         "offer": "WindowsServer",
-        "sku": "2019-Datacenter",
+        "sku": "2022-datacenter-azure-edition",
         "version": "latest"
       }
     },
@@ -119,8 +127,8 @@
     "ubuntuImage": {
       "value": {
         "publisher": "Canonical",
-        "offer": "ubuntu-24_04-lts",
-        "sku": "server",
+        "offer": "0001-com-ubuntu-server-jammy",
+        "sku": "22_04-lts-gen2",
         "version": "latest"
       }
     },
