@@ -10,22 +10,30 @@ var nsgRules = {
     {
       name: 'Allow-DNS'
       port: '53'
-      source: '10.0.0.0/8'
+      source: [
+        '10.0.0.0/8'
+      ]
     }
     {
       name: 'Allow-Kerberos'
       port: '88'
-      source: '10.0.0.0/8'
+      source: [
+        '10.0.0.0/8'
+      ]
     }
     {
       name: 'Allow-LDAP'
       port: '389'
-      source: '10.0.0.0/8'
+      source: [
+        '10.0.0.0/8'
+      ]
     }
     {
       name: 'Allow-RDP'
       port: '3389'
-      source: '10.0.0.0/8'
+      source: [
+        '10.0.0.0/8'
+      ]
     }
   ]
   jumpbox: [
@@ -46,14 +54,18 @@ var nsgRules = {
     {
       name: 'Allow-SSH'
       port: '22'
-      source: '10.0.0.0/8'
+      source: [
+        '10.0.0.0/8'
+      ]
     }
   ]
   client: [
     {
       name: 'Allow-RDP'
       port: '3389'
-      source: subnetPrefix.jumpbox
+      source: [
+        subnetPrefix.jumpbox
+      ]
     }
   ]
 }
