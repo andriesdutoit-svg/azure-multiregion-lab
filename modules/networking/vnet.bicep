@@ -5,44 +5,50 @@ param subnetPrefix object
 param dnsServers array = []
 param tags object = {}
 
-var dcRules = [
-  {
-    name: 'Allow-DNS'
-    port: '53'
-    source: '10.0.0.0/8'
-  }
-  {
-    name: 'Allow-Kerberos'
-    port: '88'
-    source: '10.0.0.0/8'
-  }
-  {
-    name: 'Allow-LDAP'
-    port: '389'
-    source: '10.0.0.0/8'
-  }
-  {
-    name: 'Allow-RDP'
-    port: '3389'
-    source: '10.0.0.0/8'
-  }
-]
+var nsgRules = {
+  dc: [
+    {
+      name: 'Allow-DNS'
+      port: '53'
+      source: '10.0.0.0/8'
+    }
+    {
+      name: 'Allow-Kerberos'
+      port: '88'
+      source: '10.0.0.0/8'
+    }
+    {
+      name: 'Allow-LDAP'
+      port: '389'
+      source: '10.0.0.0/8'
+    }
+    {
+      name: 'Allow-RDP'
+      port: '3389'
+      source: '10.0.0.0/8'
+    }
+  ]
+  server: [
+    {
+      name: 'Allow-SSH'
+      port: '22'
+      source: '10.0.0.0/8'
+    }
+  ]
+  client: [
+    {
+      name: 'Allow-RDP'
+      port: '3389'
+      source: '10.0.0.0/8'
+    }
+  ]
+}
 
-var serverRules = [
-  {
-    name: 'Allow-SSH'
-    port: '22'
-    source: '10.0.0.0/8'
-  }
-]
-
-var clientRules = [
-  {
-    name: 'Allow-RDP'
-    port: '3389'
-    source: '10.0.0.0/8'
-  }
-]
+var subnetNames = {
+  dc: '${vnetName}-subnet-dc'
+  server: '${vnetName}-subnet-server'
+  client: '${vnetName}-subnet-client'
+}
 
 module nsgDc 'nsg.bicep' = {
   name: '${vnetName}-nsg-dc'
@@ -50,7 +56,7 @@ module nsgDc 'nsg.bicep' = {
     nsgName: '${vnetName}-nsg-dc'
     location: location
     tags: tags
-    rules: dcRules
+    rules: nsgRules.dc
   }
 }
 
@@ -60,7 +66,7 @@ module nsgServer 'nsg.bicep' = {
     nsgName: '${vnetName}-nsg-server'
     location: location
     tags: tags
-    rules: serverRules
+    rules: nsgRules.server
   }
 }
 
@@ -70,7 +76,7 @@ module nsgClient 'nsg.bicep' = {
     nsgName: '${vnetName}-nsg-client'
     location: location
     tags: tags
-    rules: clientRules
+    rules: nsgRules.client
   }
 }
 
@@ -81,7 +87,7 @@ module subnetDc 'subnet.bicep' = {
   ]
   params: {
     vnetName: vnetName
-    subnetName: '${vnetName}-subnet-dc'
+    subnetName: subnetNames.dc
     addressPrefix: subnetPrefix.dc
     nsgId: nsgDc.outputs.nsgId
   }
@@ -94,7 +100,7 @@ module subnetServer 'subnet.bicep' = {
   ]
   params: {
     vnetName: vnetName
-    subnetName: '${vnetName}-subnet-server'
+    subnetName: subnetNames.server
     addressPrefix: subnetPrefix.server
     nsgId: nsgServer.outputs.nsgId
   }
@@ -107,7 +113,7 @@ module subnetClient 'subnet.bicep' = {
   ]
   params: {
     vnetName: vnetName
-    subnetName: '${vnetName}-subnet-client'
+    subnetName: subnetNames.client
     addressPrefix: subnetPrefix.client
     nsgId: nsgClient.outputs.nsgId
   }
@@ -128,9 +134,19 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
 }
 
 output vnetId string = vnet.id
+output vnetName string = vnet.name
 
-output subnetIds object = {
-  dc: subnetDc.outputs.subnetId
-  server: subnetServer.outputs.subnetId
-  client: subnetClient.outputs.subnetId
+output subnets object = {
+  dc: {
+    id: subnetDc.outputs.subnetId
+    name: subnetNames.dc
+  }
+  server: {
+    id: subnetServer.outputs.subnetId
+    name: subnetNames.server
+  }
+  client: {
+    id: subnetClient.outputs.subnetId
+    name: subnetNames.client
+  }
 }
