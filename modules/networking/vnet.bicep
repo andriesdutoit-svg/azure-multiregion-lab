@@ -3,55 +3,71 @@ param location string
 param addressPrefix string
 param subnetPrefix object
 param dnsServers array = []
+param jumpboxSubnets array
 param tags object = {}
-
-// var internalSubnets = [
-//   subnetPrefix.dc
-//   subnetPrefix.jumpbox
-//   subnetPrefix.server
-//   subnetPrefix.client
-// ]
 
 var nsgRules = {
   dc: [
     {
       name: 'Allow-DNS'
       port: '53'
+      access: 'Allow'
       source: [
-        subnetPrefix.dc
-        subnetPrefix.jumpbox
-        subnetPrefix.server
-        subnetPrefix.client
+        '10.0.0.0/8'
       ]
     }
     {
       name: 'Allow-Kerberos'
       port: '88'
+      access: 'Allow'
       source: [
-        subnetPrefix.dc
-        subnetPrefix.jumpbox
-        subnetPrefix.server
-        subnetPrefix.client
+        '10.0.0.0/8'
       ]
     }
     {
       name: 'Allow-LDAP'
       port: '389'
+      access: 'Allow'
       source: [
-        subnetPrefix.dc
-        subnetPrefix.jumpbox
-        subnetPrefix.server
-        subnetPrefix.client
+        '10.0.0.0/8'
       ]
     }
     {
-      name: 'Allow-RDP'
-      port: '3389'
+      name: 'Allow-LDAPS'
+      port: '636'
+      access: 'Allow'
       source: [
-        subnetPrefix.dc
-        subnetPrefix.jumpbox
-        subnetPrefix.server
-        subnetPrefix.client
+        '10.0.0.0/8'
+      ]
+    }
+    {
+      name: 'Allow-RPC-Endpoint-Mapper'
+      port: '135'
+      access: 'Allow'
+      source: [
+        '10.0.0.0/8'
+      ]
+    }
+    {
+      name: 'Allow-RPC-Dynamic'
+      port: '49152-65535'
+      access: 'Allow'
+      source: [
+        '10.0.0.0/8'
+      ]
+    }
+    {
+      name: 'Allow-RDP-From-Jumpbox'
+      port: '3389'
+      access: 'Allow'
+      source: jumpboxSubnets
+    }
+    {
+      name: 'Deny-RDP-From-Others'
+      port: '3389'
+      access: 'Deny'
+      source: [
+        '10.0.0.0/8'
       ]
     }
   ]
@@ -59,6 +75,7 @@ var nsgRules = {
     {
       name: 'Allow-RDP-From-Approved-Internet'
       port: '3389'
+      access: 'Allow'
       source: [
         '168.210.156.45' // Home
         '137.158.0.0/16'
@@ -69,34 +86,88 @@ var nsgRules = {
       ]
     }
   ]
+  // server includes Windows servers and Linux servers, need to allow SSH and RDP from jumpbox and DCs, but deny all other SSH and RDP traffic
   server: [
     {
-      name: 'Allow-SSH'
+      name: 'Allow-SSH-From-Jumpbox'
       port: '22'
+      access: 'Allow'
+      source: jumpboxSubnets
+    }
+    {
+      name: 'Deny-SSH-From-Others'
+      port: '22'
+      access: 'Deny'
       source: [
-        subnetPrefix.dc
-        subnetPrefix.jumpbox
-        subnetPrefix.server
-        subnetPrefix.client
+        '10.0.0.0/8'
       ]
     }
-  ]
+    {
+      name: 'Allow-DNS'
+      port: '53'
+      access: 'Allow'
+      source: [
+        '10.0.0.0/8'
+      ]
+    }
+    {
+      name: 'Allow-Kerberos'
+      port: '88'
+      access: 'Allow'
+      source: [
+        '10.0.0.0/8'
+      ]
+    }
+    {
+      name: 'Allow-LDAP'
+      port: '389'
+      access: 'Allow'
+      source: [
+        '10.0.0.0/8'
+      ]
+    }
+    {
+      name: 'Allow-RDP-From-Jumpbox'
+      port: '3389'
+      access: 'Allow'
+      source: jumpboxSubnets
+    }
+    {
+      name: 'Deny-RDP-From-Others'
+      port: '3389'
+      access: 'Deny'
+      source: [
+        '10.0.0.0/8'
+      ]
+    }
+  ]  
   client: [
     {
-      name: 'Allow-RDP'
-      port: '3389'
+      name: 'Allow-SSH-From-Jumpbox'
+      port: '22'
+      access: 'Allow'
+      source: jumpboxSubnets
+    }
+    {
+      name: 'Deny-SSH-From-Others'
+      port: '22'
+      access: 'Deny'
       source: [
-        subnetPrefix.jumpbox
+        '10.0.0.0/8'
       ]
+    }
+    {
+      name: 'Allow-RDP-From-Jumpbox'
+      port: '3389'
+      access: 'Allow'
+      source: jumpboxSubnets
     }
     {
       name: 'Deny-RDP-From-Others' // Only allow RDP from jumpbox subnet, deny all other RDP traffic
       port: '3389'
+      access: 'Deny'
       source: [
-        subnetPrefix.dc
-        subnetPrefix.jumpbox
-        subnetPrefix.server
-        subnetPrefix.client
+        '10.0.0.0/8'
       ]
     }
   ]

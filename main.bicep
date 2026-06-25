@@ -54,6 +54,10 @@ var dcIpArray = [
 
 var dnsServers = dcIpArray
 
+var jumpboxSubnets = [
+  for r in items(regions): r.value.subnetPrefix.jumpbox
+]
+
 //
 // RESOURCE GROUPS
 //
@@ -83,6 +87,7 @@ module vnets 'modules/networking/vnet.bicep' = [
       addressPrefix: region.value.addressPrefix
       subnetPrefix: region.value.subnetPrefix
       dnsServers: dnsServers
+      jumpboxSubnets: jumpboxSubnets
       tags: finalTags
     }
   }
