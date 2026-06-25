@@ -10,71 +10,100 @@ param tags object = {}
 
 var internalNetworkRange = '10.0.0.0/8'
 
+var adRules = [
+  {
+    name: 'Allow-DNS'
+    port: '53'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-Kerberos'
+    port: '88'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-LDAP'
+    port: '389'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+]
+
+var adAdvancedRules = [
+  {
+    name: 'Allow-LDAPS'
+    port: '636'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-RPC-Endpoint-Mapper'
+    port: '135'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-RPC-Dynamic'
+    port: '49152-65535'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+]
+
+var rdpRules = [
+  {
+    name: 'Allow-RDP-From-Jumpbox'
+    port: '3389'
+    access: 'Allow'
+    source: jumpboxSubnets
+  }
+  {
+    name: 'Deny-RDP-From-Others'
+    port: '3389'
+    access: 'Deny'
+    source: [
+      internalNetworkRange
+    ]
+  }
+]
+
+var sshRules = [
+  {
+    name: 'Allow-SSH-From-Jumpbox'
+    port: '22'
+    access: 'Allow'
+    source: jumpboxSubnets
+  }
+  {
+    name: 'Deny-SSH-From-Others'
+    port: '22'
+    access: 'Deny'
+    source: [
+      internalNetworkRange
+    ]
+  }
+]
+
 var nsgRules = {
-  dc: [
-    {
-      name: 'Allow-DNS'
-      port: '53'
-      access: 'Allow'
-      source: [
-        internalNetworkRange
-      ]
-    }
-    {
-      name: 'Allow-Kerberos'
-      port: '88'
-      access: 'Allow'
-      source: [
-        internalNetworkRange
-      ]
-    }
-    {
-      name: 'Allow-LDAP'
-      port: '389'
-      access: 'Allow'
-      source: [
-        internalNetworkRange
-      ]
-    }
-    {
-      name: 'Allow-LDAPS'
-      port: '636'
-      access: 'Allow'
-      source: [
-        internalNetworkRange
-      ]
-    }
-    {
-      name: 'Allow-RPC-Endpoint-Mapper'
-      port: '135'
-      access: 'Allow'
-      source: [
-        internalNetworkRange
-      ]
-    }
-    {
-      name: 'Allow-RPC-Dynamic'
-      port: '49152-65535'
-      access: 'Allow'
-      source: [
-        internalNetworkRange
-      ]
-    }
-    {
-      name: 'Allow-RDP-From-Jumpbox'
-      port: '3389'
-      access: 'Allow'
-      source: jumpboxSubnets
-    }
-    {
-      name: 'Deny-RDP-From-Others'
-      port: '3389'
-      access: 'Deny'
-      source: [
-        internalNetworkRange
-      ]
-    }
-  ]
+  dc: concat(
+    adRules,
+    adAdvancedRules,
+    rdpRules
+)
   jumpbox: [
     {
       name: 'Allow-RDP-From-Approved-Internet'
@@ -83,94 +112,14 @@ var nsgRules = {
       source: jumpboxAllowedSources
     }
   ]
-  // server includes Windows servers and Linux servers, need to allow SSH and RDP from jumpbox and DCs, but deny all other SSH and RDP traffic
-  server: [
-    {
-      name: 'Allow-SSH-From-Jumpbox'
-      port: '22'
-      access: 'Allow'
-      source: jumpboxSubnets
-    }
-    {
-      name: 'Deny-SSH-From-Others'
-      port: '22'
-      access: 'Deny'
-      source: [
-        internalNetworkRange
-      ]
-    }
-    {
-      name: 'Allow-DNS'
-      port: '53'
-      access: 'Allow'
-      source: [
-        internalNetworkRange
-      ]
-    }
-    {
-      name: 'Allow-Kerberos'
-      port: '88'
-      access: 'Allow'
-      source: [
-        internalNetworkRange
-      ]
-    }
-    {
-      name: 'Allow-LDAP'
-      port: '389'
-      access: 'Allow'
-      source: [
-        internalNetworkRange
-      ]
-    }
-    {
-      name: 'Allow-RDP-From-Jumpbox'
-      port: '3389'
-      access: 'Allow'
-      source: jumpboxSubnets
-    }
-    {
-      name: 'Deny-RDP-From-Others'
-      port: '3389'
-      access: 'Deny'
-      source: [
-        internalNetworkRange
-      ]
-    }
-  ]  
+  server: concat(
+    sshRules,
+    rdpRules,
+    adRules
+  )  
   client: concat(
-    enableClientSsh ? [
-      {
-        name: 'Allow-SSH-From-Jumpbox'
-        port: '22'
-        access: 'Allow'
-        source: jumpboxSubnets
-      }
-      {
-        name: 'Deny-SSH-From-Others'
-        port: '22'
-        access: 'Deny'
-        source: [
-          internalNetworkRange
-        ]
-      }
-    ] : [],
-    [
-      {
-        name: 'Allow-RDP-From-Jumpbox'
-        port: '3389'
-        access: 'Allow'
-        source: jumpboxSubnets
-      }
-      {
-        name: 'Deny-RDP-From-Others'
-        port: '3389'
-        access: 'Deny'
-        source: [
-          internalNetworkRange
-        ]
-      }
-    ]
+    enableClientSsh ? sshRules : [],
+    rdpRules
   )
 }
 
