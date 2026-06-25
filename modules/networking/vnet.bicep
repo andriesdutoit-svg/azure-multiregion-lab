@@ -4,7 +4,11 @@ param addressPrefix string
 param subnetPrefix object
 param dnsServers array = []
 param jumpboxSubnets array
+param jumpboxAllowedSources array
+param enableClientSsh bool
 param tags object = {}
+
+var internalNetworkRange = '10.0.0.0/8'
 
 var nsgRules = {
   dc: [
@@ -13,7 +17,7 @@ var nsgRules = {
       port: '53'
       access: 'Allow'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
     {
@@ -21,7 +25,7 @@ var nsgRules = {
       port: '88'
       access: 'Allow'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
     {
@@ -29,7 +33,7 @@ var nsgRules = {
       port: '389'
       access: 'Allow'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
     {
@@ -37,7 +41,7 @@ var nsgRules = {
       port: '636'
       access: 'Allow'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
     {
@@ -45,7 +49,7 @@ var nsgRules = {
       port: '135'
       access: 'Allow'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
     {
@@ -53,7 +57,7 @@ var nsgRules = {
       port: '49152-65535'
       access: 'Allow'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
     {
@@ -67,7 +71,7 @@ var nsgRules = {
       port: '3389'
       access: 'Deny'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
   ]
@@ -76,14 +80,7 @@ var nsgRules = {
       name: 'Allow-RDP-From-Approved-Internet'
       port: '3389'
       access: 'Allow'
-      source: [
-        '168.210.156.45' // Home
-        '137.158.0.0/16'
-        '197.239.0.0/16'
-        '196.24.0.0/16'
-        '196.42.0.0/16'
-        '196.47.0.0/16'
-      ]
+      source: jumpboxAllowedSources
     }
   ]
   // server includes Windows servers and Linux servers, need to allow SSH and RDP from jumpbox and DCs, but deny all other SSH and RDP traffic
@@ -99,7 +96,7 @@ var nsgRules = {
       port: '22'
       access: 'Deny'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
     {
@@ -107,7 +104,7 @@ var nsgRules = {
       port: '53'
       access: 'Allow'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
     {
@@ -115,7 +112,7 @@ var nsgRules = {
       port: '88'
       access: 'Allow'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
     {
@@ -123,7 +120,7 @@ var nsgRules = {
       port: '389'
       access: 'Allow'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
     {
@@ -137,40 +134,44 @@ var nsgRules = {
       port: '3389'
       access: 'Deny'
       source: [
-        '10.0.0.0/8'
+        internalNetworkRange
       ]
     }
   ]  
-  client: [
-    {
-      name: 'Allow-SSH-From-Jumpbox'
-      port: '22'
-      access: 'Allow'
-      source: jumpboxSubnets
-    }
-    {
-      name: 'Deny-SSH-From-Others'
-      port: '22'
-      access: 'Deny'
-      source: [
-        '10.0.0.0/8'
-      ]
-    }
-    {
-      name: 'Allow-RDP-From-Jumpbox'
-      port: '3389'
-      access: 'Allow'
-      source: jumpboxSubnets
-    }
-    {
-      name: 'Deny-RDP-From-Others' // Only allow RDP from jumpbox subnet, deny all other RDP traffic
-      port: '3389'
-      access: 'Deny'
-      source: [
-        '10.0.0.0/8'
-      ]
-    }
-  ]
+  client: concat(
+    enableClientSsh ? [
+      {
+        name: 'Allow-SSH-From-Jumpbox'
+        port: '22'
+        access: 'Allow'
+        source: jumpboxSubnets
+      }
+      {
+        name: 'Deny-SSH-From-Others'
+        port: '22'
+        access: 'Deny'
+        source: [
+          internalNetworkRange
+        ]
+      }
+    ] : [],
+    [
+      {
+        name: 'Allow-RDP-From-Jumpbox'
+        port: '3389'
+        access: 'Allow'
+        source: jumpboxSubnets
+      }
+      {
+        name: 'Deny-RDP-From-Others'
+        port: '3389'
+        access: 'Deny'
+        source: [
+          internalNetworkRange
+        ]
+      }
+    ]
+  )
 }
 
 var subnetNames = {

@@ -8,7 +8,7 @@ param tags object = {}
 param image object
 param osDisk object
 param privateIp string?
-param enablePublicIp bool
+param assignPublicIp bool
 
 // param testTargets array
 // param forceUpdateTag string = utcNow()
@@ -27,7 +27,7 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
           }
           privateIPAllocationMethod: empty(privateIp) ? 'Dynamic' : 'Static'
           privateIPAddress: privateIp
-          publicIPAddress: enablePublicIp ? {
+          publicIPAddress: assignPublicIp ? {
             id: publicIp.id
           } : null
         }
@@ -75,7 +75,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
   }
 }
 
-resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (enablePublicIp) {
+resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (assignPublicIp) {
   name: '${vmName}-pip'
   location: resourceGroup().location
   sku: {

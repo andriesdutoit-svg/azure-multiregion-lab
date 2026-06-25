@@ -22,9 +22,6 @@
         "secretName": "adminPassword"
       }
     },
-    "enablePublicIp": {
-      "value": true
-    },
     "vmSize": {
       "value": "Standard_B2ls_v2"
     },
@@ -79,10 +76,25 @@
             "jumpbox": "10.4.1.0/24",
             "server": "10.4.2.0/24",
             "client": "10.4.3.0/24"
-          }
         }
       }
-    },
+    }
+  },
+
+"jumpboxAllowedSources": {
+  "value": [
+    "168.210.156.45",
+    "137.158.0.0/16",
+    "197.239.0.0/16",
+    "196.24.0.0/16",
+    "196.42.0.0/16",
+    "196.47.0.0/16"
+  ]
+},
+
+"enableClientSsh": {
+  "value": true
+},
 
 "dc01RegionKey": { "value": "region1" },
 "dc02RegionKey": { "value": "region2" },
