@@ -11,15 +11,37 @@
         "environment": "lab"
       }
     },
-    "adminUsername": {
+    "jumpboxAdminUsername": {
       "value": "azureadmin"
     },
-    "adminPassword": {
+    "jumpboxAdminPassword": {
       "reference": {
         "keyVault": {
           "id": "/subscriptions/1f3e6e09-53d2-487c-bca6-e9f60495d521/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
         },
-        "secretName": "adminPassword"
+        "secretName": "jumpboxAdminPassword"
+      }
+    },
+    "serverAdminUsername": {
+      "value": "azureadmin"
+    },
+    "serverAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/1f3e6e09-53d2-487c-bca6-e9f60495d521/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
+        },
+        "secretName": "serverAdminPassword"
+      }
+    },
+    "clientAdminUsername": {
+      "value": "azureadmin"
+    },
+    "clientAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/1f3e6e09-53d2-487c-bca6-e9f60495d521/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
+        },
+        "secretName": "clientAdminPassword"
       }
     },
     "vmSize": {

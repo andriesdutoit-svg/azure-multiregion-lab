@@ -3,9 +3,16 @@ targetScope = 'subscription'
 param prefix string
 param tags object
 
-param adminUsername string
+
+param jumpboxAdminUsername string
 @secure()
-param adminPassword string
+param jumpboxAdminPassword string
+param serverAdminUsername string
+@secure()
+param serverAdminPassword string
+param clientAdminUsername string
+@secure()
+param clientAdminPassword string
 
 param vmSize string
 param osDisk object
@@ -125,8 +132,8 @@ module dcs 'modules/compute/vm-windows.bicep' = [
     params: {
       vmName: '${prefix}-dc0${i + 1}'
       vmSize: vmSize
-      adminUsername: adminUsername
-      adminPassword: adminPassword
+      adminUsername: serverAdminUsername
+      adminPassword: serverAdminPassword
       subnetId: vnets[indexOf(regionKeys, dcRegionKey)].outputs.subnets.dc.id
       privateIp: dcIpArray[i]
       enablePublicIp: false
@@ -150,8 +157,8 @@ module jumpbox 'modules/compute/vm-windows.bicep' = {
   params: {
     vmName: '${prefix}-jumpbox'
     vmSize: vmSize
-    adminUsername: adminUsername
-    adminPassword: adminPassword
+    adminUsername: jumpboxAdminUsername
+    adminPassword: jumpboxAdminPassword
     subnetId: vnets[indexOf(regionKeys, jumpboxRegionKey)].outputs.subnets.jumpbox.id
     enablePublicIp: true
     tags: union(finalTags, {
@@ -172,8 +179,8 @@ module win01 'modules/compute/vm-windows.bicep' = {
   params: {
     vmName: '${prefix}-win01'
     vmSize: vmSize
-    adminUsername: adminUsername
-    adminPassword: adminPassword
+    adminUsername: clientAdminUsername
+    adminPassword: clientAdminPassword
     subnetId: vnets[indexOf(regionKeys, windowsClient01RegionKey)].outputs.subnets.client.id
     enablePublicIp: false
 //      testTargets: []
@@ -191,8 +198,8 @@ module win02 'modules/compute/vm-windows.bicep' = {
   params: {
     vmName: '${prefix}-win02'
     vmSize: vmSize
-    adminUsername: adminUsername
-    adminPassword: adminPassword
+    adminUsername: clientAdminUsername
+    adminPassword: clientAdminPassword
     subnetId: vnets[indexOf(regionKeys, windowsClient02RegionKey)].outputs.subnets.client.id
     enablePublicIp: false
 //      testTargets: []
@@ -213,8 +220,8 @@ module ubu01 'modules/compute/vm-linux.bicep' = {
   params: {
     vmName: '${prefix}-ubu01'
     vmSize: vmSize
-    adminUsername: adminUsername
-    adminPassword: adminPassword
+    adminUsername: serverAdminUsername
+    adminPassword: serverAdminPassword
     subnetId: vnets[indexOf(regionKeys, ubuntu01RegionKey)].outputs.subnets.server.id
     enablePublicIp: false
          tags: union(finalTags, {
@@ -231,8 +238,8 @@ module ubu02 'modules/compute/vm-linux.bicep' = {
   params: {
     vmName: '${prefix}-ubu02'
     vmSize: vmSize
-    adminUsername: adminUsername
-    adminPassword: adminPassword
+    adminUsername: clientAdminUsername
+    adminPassword: clientAdminPassword
     subnetId: vnets[indexOf(regionKeys, ubuntu02RegionKey)].outputs.subnets.client.id
     enablePublicIp: false
       tags: union(finalTags, {
