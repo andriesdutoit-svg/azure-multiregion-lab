@@ -14,6 +14,8 @@ param clientAdminUsername string
 @secure()
 param clientAdminPassword string
 
+param adminPublicKey string
+
 param vmSize string
 param osDisk object
 
@@ -130,7 +132,7 @@ module dcs 'modules/compute/vm-windows.bicep' = [
     name: 'dc${(i + 1) < 10 ? '0${i + 1}' : i + 1}'
     scope: resourceGroup('${prefix}-rg-${dcRegionKey}')
     params: {
-      vmName: 'dc${(i + 1) < 10 ? '0${i + 1}' : i + 1}'
+      vmName: '${prefix}-dc${(i + 1) < 10 ? '0${i + 1}' : i + 1}'
       vmSize: vmSize
       adminUsername: serverAdminUsername
       adminPassword: serverAdminPassword
@@ -226,7 +228,7 @@ module srvlin01 'modules/compute/vm-linux.bicep' = {
     vmName: '${prefix}-srvlin01'
     vmSize: vmSize
     adminUsername: serverAdminUsername
-    adminPassword: serverAdminPassword
+    adminPublicKey: adminPublicKey
     subnetId: vnets[indexOf(regionKeys, serverLinux01RegionKey)].outputs.subnets.server.id
     assignPublicIp: false
          tags: union(finalTags, {
@@ -248,7 +250,7 @@ module clilin01 'modules/compute/vm-linux.bicep' = {
     vmName: '${prefix}-clilin01'
     vmSize: vmSize
     adminUsername: clientAdminUsername
-    adminPassword: clientAdminPassword
+    adminPublicKey: adminPublicKey
     subnetId: vnets[indexOf(regionKeys, clientLinux01RegionKey)].outputs.subnets.client.id
     assignPublicIp: false
       tags: union(finalTags, {

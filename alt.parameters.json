@@ -4,12 +4,15 @@
   "parameters": {
       
     "prefix": {
-      "value": "1A"
+      "value": "2A"
     },
     "tags": {
       "value": {
         "environment": "lab"
       }
+    },
+    "adminPublicKey": {
+      "value": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMEl315I5OPpIh30xEnLQBcubCnxefAFUUCJe+OF0X0n" //jmp01
     },
     "jumpboxAdminUsername": {
       "value": "azureadmin"
@@ -124,13 +127,13 @@
 "dc04RegionKey": { "value": "region4" },
 "dc05RegionKey": { "value": "region5" },
 
-"jumpboxRegionKey": { "value": "region1" },
+"jumpbox01RegionKey": { "value": "region1" },
 
-"windowsClient01RegionKey": { "value": "region2" },
-"windowsClient02RegionKey": { "value": "region3" },
+"serverWindows01RegionKey": { "value": "region2" },
+"clientWindows01RegionKey": { "value": "region3" },
 
-"ubuntu01RegionKey": { "value": "region4" },
-"ubuntu02RegionKey": { "value": "region5" },
+"serverLinux01RegionKey": { "value": "region4" },
+"clientLinux01RegionKey": { "value": "region5" },
 
     "dcIps": {
       "value": {

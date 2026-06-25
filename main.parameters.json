@@ -11,6 +11,9 @@
         "environment": "lab"
       }
     },
+    "adminPublicKey": {
+      "value": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMEl315I5OPpIh30xEnLQBcubCnxefAFUUCJe+OF0X0n" //jmp01
+    },
     "jumpboxAdminUsername": {
       "value": "azureadmin"
     },

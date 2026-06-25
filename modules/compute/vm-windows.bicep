@@ -39,8 +39,16 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
 resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
   name: vmName
   location: resourceGroup().location
-    tags: tags
+  identity: {
+    type: 'SystemAssigned'
+  }
+  tags: tags
   properties: {
+    diagnosticsProfile: {
+      bootDiagnostics: {
+        enabled: true
+      }
+    }
     securityProfile: {
       securityType: 'TrustedLaunch'
       uefiSettings: {
@@ -55,6 +63,9 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
       computerName: vmName
       adminUsername: adminUsername
       adminPassword: adminPassword
+      windowsConfiguration: {
+        provisionVMAgent: true
+      }
     }
     storageProfile: {
       imageReference: image

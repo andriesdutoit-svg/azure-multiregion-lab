@@ -2,8 +2,7 @@ param vmName string
 param subnetId string
 param vmSize string
 param adminUsername string
-@secure()
-param adminPassword string
+param adminPublicKey string
 param tags object = {}
 param image object
 param osDisk object
@@ -36,8 +35,16 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
 resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
   name: vmName
   location: resourceGroup().location
+  identity: {
+    type: 'SystemAssigned'
+  }
   tags: tags
   properties: {
+    diagnosticsProfile: {
+      bootDiagnostics: {
+        enabled: true
+      }
+    }
     securityProfile: {
       securityType: 'TrustedLaunch'
       uefiSettings: {
@@ -51,9 +58,16 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
     osProfile: {
       computerName: vmName
       adminUsername: adminUsername
-      adminPassword: adminPassword
       linuxConfiguration: {
-        disablePasswordAuthentication: false
+        disablePasswordAuthentication: true
+        ssh: {
+          publicKeys: [
+            {
+              path: '/home/${adminUsername}/.ssh/authorized_keys'
+              keyData: adminPublicKey
+            }
+          ]
+        }
         provisionVMAgent: true
       }
     }
