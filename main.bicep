@@ -26,11 +26,11 @@ param dc02RegionKey string
 param dc03RegionKey string
 param dc04RegionKey string
 param dc05RegionKey string
-param windowsClient01RegionKey string
-param windowsClient02RegionKey string
-param ubuntu01RegionKey string
-param ubuntu02RegionKey string
-param jumpboxRegionKey string
+param jumpbox01RegionKey string
+param serverWindows01RegionKey string
+param clientWindows01RegionKey string
+param serverLinux01RegionKey string
+param clientLinux01RegionKey string
 
 param windowsServerImage object
 param windowsClientImage object
@@ -127,16 +127,16 @@ module peerings 'modules/peering/peering.bicep' = [
 
 module dcs 'modules/compute/vm-windows.bicep' = [
   for (dcRegionKey, i) in dcRegionKeys: {
-    name: 'dc0${i + 1}'
+    name: 'dc${(i + 1) < 10 ? '0${i + 1}' : i + 1}'
     scope: resourceGroup('${prefix}-rg-${dcRegionKey}')
     params: {
-      vmName: '${prefix}-dc0${i + 1}'
+      vmName: 'dc${(i + 1) < 10 ? '0${i + 1}' : i + 1}'
       vmSize: vmSize
       adminUsername: serverAdminUsername
       adminPassword: serverAdminPassword
       subnetId: vnets[indexOf(regionKeys, dcRegionKey)].outputs.subnets.dc.id
       privateIp: dcIpArray[i]
-      enablePublicIp: false
+      assignPublicIp: false
 //      testTargets: dcIpArray
       tags: union(finalTags, {
         role: 'domain-controller'
@@ -153,14 +153,14 @@ module dcs 'modules/compute/vm-windows.bicep' = [
 
 module jumpbox 'modules/compute/vm-windows.bicep' = {
   name: 'jumpbox'
-  scope: resourceGroup('${prefix}-rg-${jumpboxRegionKey}')
+  scope: resourceGroup('${prefix}-rg-${jumpbox01RegionKey}')
   params: {
-    vmName: '${prefix}-jumpbox'
+    vmName: '${prefix}-jmp01'
     vmSize: vmSize
     adminUsername: jumpboxAdminUsername
     adminPassword: jumpboxAdminPassword
-    subnetId: vnets[indexOf(regionKeys, jumpboxRegionKey)].outputs.subnets.jumpbox.id
-    enablePublicIp: true
+    subnetId: vnets[indexOf(regionKeys, jumpbox01RegionKey)].outputs.subnets.jumpbox.id
+    assignPublicIp: true
     tags: union(finalTags, {
       role: 'jumpbox'
     })
@@ -170,60 +170,65 @@ module jumpbox 'modules/compute/vm-windows.bicep' = {
 }
 
 //
-// WINDOWS CLIENT
+// WINDOWS SERVER
 //
 
-module win01 'modules/compute/vm-windows.bicep' = {
-  name: 'win01'
-  scope: resourceGroup('${prefix}-rg-${windowsClient01RegionKey}')
+module srvwin01 'modules/compute/vm-windows.bicep' = {
+  name: 'srvwin01'
+  scope: resourceGroup('${prefix}-rg-${serverWindows01RegionKey}')
   params: {
-    vmName: '${prefix}-win01'
-    vmSize: vmSize
-    adminUsername: clientAdminUsername
-    adminPassword: clientAdminPassword
-    subnetId: vnets[indexOf(regionKeys, windowsClient01RegionKey)].outputs.subnets.client.id
-    enablePublicIp: false
-//      testTargets: []
-      tags: union(finalTags, {
-        role: 'client'
-      })
-    image: windowsClientImage     
-    osDisk: osDisk                
-  }
-}
-
-module win02 'modules/compute/vm-windows.bicep' = {
-  name: 'win02'
-  scope: resourceGroup('${prefix}-rg-${windowsClient02RegionKey}')
-  params: {
-    vmName: '${prefix}-win02'
-    vmSize: vmSize
-    adminUsername: clientAdminUsername
-    adminPassword: clientAdminPassword
-    subnetId: vnets[indexOf(regionKeys, windowsClient02RegionKey)].outputs.subnets.client.id
-    enablePublicIp: false
-//      testTargets: []
-      tags: union(finalTags, {
-        role: 'client'
-      })
-    image: windowsClientImage     
-    osDisk: osDisk                
-  }
-}
-
-//
-// LINUX VM
-//
-module ubu01 'modules/compute/vm-linux.bicep' = {
-  name: 'ubu01'
-  scope: resourceGroup('${prefix}-rg-${ubuntu01RegionKey}')
-  params: {
-    vmName: '${prefix}-ubu01'
+    vmName: '${prefix}-srvwin01'
     vmSize: vmSize
     adminUsername: serverAdminUsername
     adminPassword: serverAdminPassword
-    subnetId: vnets[indexOf(regionKeys, ubuntu01RegionKey)].outputs.subnets.server.id
-    enablePublicIp: false
+    subnetId: vnets[indexOf(regionKeys, serverWindows01RegionKey)].outputs.subnets.server.id
+    assignPublicIp: false
+//      testTargets: []
+      tags: union(finalTags, {
+        role: 'server'
+      })
+    image: windowsServerImage     
+    osDisk: osDisk                
+  }
+}
+
+//
+// WINDOWS CLIENT
+//
+
+module cliwin01 'modules/compute/vm-windows.bicep' = {
+  name: 'cliwin01'
+  scope: resourceGroup('${prefix}-rg-${clientWindows01RegionKey}')
+  params: {
+    vmName: '${prefix}-cliwin01'
+    vmSize: vmSize
+    adminUsername: clientAdminUsername
+    adminPassword: clientAdminPassword
+    subnetId: vnets[indexOf(regionKeys, clientWindows01RegionKey)].outputs.subnets.client.id
+    assignPublicIp: false
+//      testTargets: []
+      tags: union(finalTags, {
+        role: 'client'
+      })
+    image: windowsClientImage     
+    osDisk: osDisk                
+  }
+}
+
+//
+// LINUX SERVER VM
+//
+
+module srvlin01 'modules/compute/vm-linux.bicep' = {
+  name: 'srvlin01'
+  scope: resourceGroup('${prefix}-rg-${serverLinux01RegionKey}')
+  params: {
+    vmName: '${prefix}-srvlin01'
+    vmSize: vmSize
+    adminUsername: serverAdminUsername
+    adminPassword: serverAdminPassword
+    subnetId: vnets[indexOf(regionKeys, serverLinux01RegionKey)].outputs.subnets.server.id
+    assignPublicIp: false
          tags: union(finalTags, {
         role: 'server'
       })
@@ -232,16 +237,20 @@ module ubu01 'modules/compute/vm-linux.bicep' = {
   }
 }
 
-module ubu02 'modules/compute/vm-linux.bicep' = {
-  name: 'ubu02'
-  scope: resourceGroup('${prefix}-rg-${ubuntu02RegionKey}')
+//
+// LINUX SERVER VM
+//
+
+module clilin01 'modules/compute/vm-linux.bicep' = {
+  name: 'clilin01'
+  scope: resourceGroup('${prefix}-rg-${clientLinux01RegionKey}')
   params: {
-    vmName: '${prefix}-ubu02'
+    vmName: '${prefix}-clilin01'
     vmSize: vmSize
     adminUsername: clientAdminUsername
     adminPassword: clientAdminPassword
-    subnetId: vnets[indexOf(regionKeys, ubuntu02RegionKey)].outputs.subnets.client.id
-    enablePublicIp: false
+    subnetId: vnets[indexOf(regionKeys, clientLinux01RegionKey)].outputs.subnets.client.id
+    assignPublicIp: false
       tags: union(finalTags, {
         role: 'client'
       })
