@@ -1,166 +1,117 @@
-# Azure Multi-Region Lab (AMRL)
+# Azure Multi-Region Lab — v1.9
 
 ## Overview
 
-This project deploys a modular, multi-region Azure infrastructure using Bicep.
-
-Version: **v1.8**
-
-This version introduces full modularisation of networking components, improving reusability, maintainability, and alignment with enterprise Infrastructure-as-Code practices.
+This project deploys a secure, multi-region Azure lab environment using Bicep. Version 1.9 focuses on security hardening, identity foundations, and infrastructure best practices to prepare for Active Directory integration in v2.0.
 
 ---
 
-## Key Features (v1.8)
+## Key Architecture Principles
 
-- Multi-region deployment (5 regions)
-- Resource group per region
-- VNet per region
-- Subnet modularisation (dc, server, client)
-- NSG modularisation with role-based rule sets
-- Full mesh VNet peering (loop-driven)
-- Clean dependency handling to avoid Azure concurrency issues
-- Loop-based orchestration for scalable deployments
-- Secure credential storage using Azure Key Vault (foundation layer)
+- Multi-region deployment
+- Subnet-level segmentation
+- Jumpbox-only administrative access
+- Private-only internal workloads
+- Infrastructure as Code (Bicep)
 
 ---
 
-## Architecture
+## Security Hardening (v1.9)
 
-### Foundation Layer (Persistent)
+### Network Security
+- Subnet-specific NSGs (DC, server, client, jumpbox)
+- Explicit deny rules to stop lateral movement
+- Override default AllowVNetInBound
 
-This layer is NOT part of the main deployment and must exist before deploying the lab.
+### Access Control
+- Single entry point via jumpbox
+- No direct RDP/SSH from internet to internal VMs
+- No VM-to-VM administrative access
 
-- Resource Group: `traininglab-rg-foundation`
-- Key Vault: `traininglab-kv`
-- Secrets:
-  - adminPassword
-
-This layer is stable and should not be deleted during greenfield redeployments.
-
----
-
-### Regional Infrastructure Layer (Disposable)
-
-Each region contains:
-
-- Resource Group: `AMRL-rg-regionX`
-- Virtual Network
-- Subnets (modular):
-  - dc
-  - server
-  - client
-- Network Security Groups (modular):
-  - nsg-dc
-  - nsg-server
-  - nsg-client
-- Domain Controller VM
-- Windows client VMs (optional)
-- Linux VMs (optional)
+### Public Exposure
+- Public IP assigned only to jumpbox
+- All other VMs are private-only
 
 ---
 
-## Module Structure
+## Identity & Authentication
 
-```
-main.bicep
-main.parameters.json
-alt.parameters.json   # alternative region parameters
-README.md
-modules/
-  networking/
-    vnet.bicep        # composition layer
-    subnet.bicep      # subnet resource module
-    nsg.bicep         # NSG resource module
-  compute/
-    vm-windows.bicep
-    vm-linux.bicep
-  scripts/
-    network-test.ps1
-```
+### Admin Model
+- Single admin identity: `azureadmin`
+- Role-based credential separation via Key Vault
 
----
+### Key Vault Integration
+- Passwords stored securely in Key Vault
+- Separate secrets per role:
+  - jumpboxAdminPassword
+  - serverAdminPassword
+  - clientAdminPassword
 
-## Networking Design
-
-Azure DNS fallback (168.63.129.16) is used alongside domain controllers for name resolution.
-
-### Subnets
-
-Subnets are deployed as independent resources via modules and attached to the VNet sequentially to avoid Azure concurrency issues.
-
-### NSGs
-
-NSGs are modular and rule-driven. Rules are grouped by role:
-
-- dc rules (DNS, Kerberos, LDAP, RDP)
-- server rules (SSH)
-- client rules (RDP)
-
-Inbound traffic restricted to:
-
-```
-10.0.0.0/8
-```
+### Linux Authentication
+- SSH key-based authentication enabled
+- Password login disabled
+- Public key deployed via Bicep
 
 ---
 
-## Outputs
+## VM Security Enhancements
 
-The VNet module exposes structured outputs for reuse:
-
-- vnetId
-- vnetName
-- subnets:
-  - id
-  - name
-
-These outputs allow easy integration with future modules (e.g., domain join, monitoring, firewalls).
+- Trusted Launch (Gen2, Secure Boot, vTPM)
+- System Assigned Managed Identity enabled
+- Boot diagnostics enabled
+- VM agent enabled for extensions and monitoring
 
 ---
 
-## Deployment
+## Naming Convention
 
-### Prerequisites
+| Resource Type | Pattern |
+|--------------|--------|
+| Domain Controllers | dc01, dc02 |
+| Windows Servers | srvwin01 |
+| Linux Servers | srvlin01 |
+| Windows Clients | cliwin01 |
+| Linux Clients | clilin01 |
+| Jumpbox | jmp01 |
 
-- Key Vault must exist in the foundation resource group
-- Secret `adminPassword` must be present
-- Key Vault must have `enabledForTemplateDeployment = true`
-
----
-
-### Deploy
-
-```powershell
-az deployment sub create   --name v18   --location westeurope   --template-file main.bicep   --parameters "@main.parameters.json"
-```
+- Zero-padded numbering (01–09)
+- Consistent naming across Azure and OS
 
 ---
 
-## Known Limitations
+## Network Architecture
 
-- NSG rules are simplified (not least-privilege)
-- No Azure Firewall or advanced routing
-- Public IPs enabled for simplicity
-- Active Directory not yet configured
-
----
-
-## Roadmap
-
-### v1.9
-
-- Active Directory deployment
-- Domain join automation
-- DNS forwarding improvements
-
-### v2.0 (future)
-
-- Firewall integration
-- Route tables
-- Private endpoints
+- Multi-region VNets with peering
+- Centralised jumpbox access across regions
+- AD-required ports pre-configured
 
 ---
 
-## Version
+## AD Readiness
 
-Current version: **v1.8**
+- DNS configured to use DC IPs (future state)
+- Time synchronization validated
+- Naming aligned for AD integration
+- Network prepared for replication and authentication
+
+---
+
+## SSH Key Model
+
+- Public key stored in parameters file (non-sensitive)
+- Private key stored securely on jumpbox
+- Login flow:
+  - Laptop → RDP → Jumpbox
+  - Jumpbox → SSH → Linux VMs
+
+---
+
+## v1.9 Outcome
+
+- Secure, segmented, multi-region environment
+- Centralised administrative access
+- Hardened authentication (key-based for Linux)
+- Ready for Active Directory deployment
+
+---
+

@@ -139,7 +139,6 @@ module dcs 'modules/compute/vm-windows.bicep' = [
       subnetId: vnets[indexOf(regionKeys, dcRegionKey)].outputs.subnets.dc.id
       privateIp: dcIpArray[i]
       assignPublicIp: false
-//      testTargets: dcIpArray
       tags: union(finalTags, {
         role: 'domain-controller'
       })
@@ -185,7 +184,6 @@ module srvwin01 'modules/compute/vm-windows.bicep' = {
     adminPassword: serverAdminPassword
     subnetId: vnets[indexOf(regionKeys, serverWindows01RegionKey)].outputs.subnets.server.id
     assignPublicIp: false
-//      testTargets: []
       tags: union(finalTags, {
         role: 'server'
       })
@@ -208,7 +206,6 @@ module cliwin01 'modules/compute/vm-windows.bicep' = {
     adminPassword: clientAdminPassword
     subnetId: vnets[indexOf(regionKeys, clientWindows01RegionKey)].outputs.subnets.client.id
     assignPublicIp: false
-//      testTargets: []
       tags: union(finalTags, {
         role: 'client'
       })
