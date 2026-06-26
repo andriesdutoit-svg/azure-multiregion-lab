@@ -169,6 +169,8 @@ var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCap
 
 resource validation 'Microsoft.Resources/deployments@2021-04-01' = if (hasValidationError) {
   name: 'validationFailure'
+  location: deployment().location
+
   properties: {
     mode: 'Incremental'
     template: {
@@ -178,7 +180,7 @@ resource validation 'Microsoft.Resources/deployments@2021-04-01' = if (hasValida
       outputs: {
         error: {
           type: 'string'
-          value: 'Validation failed: check regionCount, jumpbox count, or capacity limits.'
+          value: 'Validation failed: check inputs and capacity.'
         }
       }
     }
