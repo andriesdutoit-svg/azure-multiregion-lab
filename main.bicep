@@ -44,11 +44,80 @@ param enableClientSsh bool
 param vmSize string
 param osDisk object
 
+// VM TYPE ARRAYS //
+
+var jumpboxArray = [
+  for i in range(0, vmCounts.jumpbox): {
+    type: 'jumpbox'
+    index: i
+  }
+]
+var windowsServerArray = [
+  for i in range(0, vmCounts.windowsServer): {
+    type: 'srvwin'
+    index: i
+  }
+]
+var windowsClientArray = [
+  for i in range(0, vmCounts.windowsClient): {
+    type: 'cliwin'
+    index: i
+  }
+]
+var linuxServerArray = [
+  for i in range(0, vmCounts.linuxServer): {
+    type: 'srvlin'
+    index: i
+  }
+]
+var linuxClientArray = [
+  for i in range(0, vmCounts.linuxClient): {
+    type: 'clilin'
+    index: i
+  }
+]
+
+var vmList = concat(
+  jumpboxArray,
+  windowsServerArray,
+  windowsClientArray,
+  linuxServerArray,
+  linuxClientArray
+)
+
+var regionKeys = [for r in items(regions): r.key]
+
+var vmListWithPlacement = [
+  for (vm, i) in vmList: {
+    type: vm.type
+    index: vm.index
+    globalIndex: i
+    regionIndex: int(i / maxVmsPerRegion)
+  }
+]
+
+var vmListWithRegion = [
+  for vm in vmListWithPlacement: {
+    type: vm.type
+    index: vm.index
+    globalIndex: vm.globalIndex
+    regionKey: vm.regionIndex < length(regionKeys) ? regionKeys[vm.regionIndex] : 'overflow'
+  }
+]
+
+var jumpboxesWithRegion = [
+  for (vm, i) in vmListWithPlacement: vm.type == 'jumpbox' ? { type: vm.type, index: vm.index, globalIndex: vm.globalIndex, regionKey: regionKeys[i] } : null
+]
+
+var workloadWithRegion = [
+  for vm in vmListWithPlacement: vm.type != 'jumpbox' ? { type: vm.type, index: vm.index, globalIndex: vm.globalIndex, regionKey: regionKeys[vm.regionIndex] } : null
+]
+
+var finalVmPlacement = concat(jumpboxesWithRegion, workloadWithRegion)
+
 var finalTags = union(tags, {
   project: prefix
 })
-
-var regionKeys = [for r in items(regions): r.key]
 
 var selectedRegions = take(regionPool, regionCount)
 var dynamicRegionKeys = selectedRegions
@@ -298,3 +367,7 @@ module clilin01 'modules/compute/vm-linux.bicep' = {
 output selectedRegionsOutput array = selectedRegions
 output totalVmRequested int = totalVMs
 output totalCapacityAvailable int = totalCapacity
+
+output vmPlacement array = vmListWithRegion
+output vmListOutput array = vmList
+output finalPlacement array = finalVmPlacement
