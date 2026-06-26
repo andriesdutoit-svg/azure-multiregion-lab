@@ -19,9 +19,8 @@ param windowsServerImage object
 param windowsClientImage object
 param ubuntuImage object
 
-param dcIps object
-
-param regionConfig object
+param regionIndexMap object
+param subnetIndexMap object
 param regionPool array
 param regionCount int
 param maxVmsPerRegion int
@@ -104,17 +103,13 @@ var selectedRegions = take(regionPool, regionCount)
 var dcRegionKeys = regionKeys
 
 var dcIpArray = [
-  dcIps.dc01
-  dcIps.dc02
-  dcIps.dc03
-  dcIps.dc04
-  dcIps.dc05
+  for (region, i) in regionKeys: replace(subnetPrefixesArray[i].dc, '0/24', '4')
 ]
 
 var dnsServers = dcIpArray
 
 var jumpboxSubnets = [
-  for region in regionKeys: regionConfig[region].subnetPrefix.jumpbox
+  for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
 ]
 
 var safeVmList = [
@@ -133,6 +128,21 @@ var linuxVMList = [
   for vm in safeVmList: (vm.type == 'srvlin' || vm.type == 'clilin') ? vm : null
 ]
 
+var addressPrefixes = [
+  for region in regionKeys: '10.${regionIndexMap[region]}.0.0/16'
+]
+
+var subnetPrefixesArray = [
+  for region in regionKeys: {
+    jumpbox: '10.${regionIndexMap[region]}.${subnetIndexMap.jumpbox}.0/24'
+    dc:      '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.0/24'
+    server:  '10.${regionIndexMap[region]}.${subnetIndexMap.server}.0/24'
+    client:  '10.${regionIndexMap[region]}.${subnetIndexMap.client}.0/24'
+  }
+]
+
+// VALIDATION //
+
 // VALIDATION //
 
 var invalidRegionCount = regionCount > length(regionPool)
@@ -145,13 +155,15 @@ var totalCapacity = regionCount * maxVmsPerRegion
 
 var invalidCapacity = totalVMs > totalCapacity
 
-var hasMissingRegionConfig = [
-  for region in regionKeys: contains(regionConfig, region) ? false : true
+var hasInvalidRegionIndex = [
+  for region in regionKeys: contains(regionIndexMap, region) ? false : true
 ]
 
-var missingRegionConfig = contains(hasMissingRegionConfig, true)
+var missingRegionIndex = contains(hasInvalidRegionIndex, true)
 
-var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCapacity || missingRegionConfig
+var hasInvalidSubnetIndex = !(contains(subnetIndexMap, 'jumpbox') && contains(subnetIndexMap, 'dc') && contains(subnetIndexMap, 'server') && contains(subnetIndexMap, 'client'))
+
+var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCapacity || missingRegionIndex || hasInvalidSubnetIndex
 
 resource validation 'Microsoft.Resources/deployments@2021-04-01' = if (hasValidationError) {
   name: 'validationFailure'
@@ -188,17 +200,23 @@ resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
 //
 
 module vnets 'modules/networking/vnet.bicep' = [
-  for region in regionKeys: {
+  for (region, i) in regionKeys: {
+
     name: 'vnet-${region}'
+
     scope: resourceGroup('${prefix}-rg-${region}')
+
     dependsOn: [
       rgs
     ]
+
     params: {
       vnetName: '${prefix}-vnet-${region}'
       location: region
-      addressPrefix: regionConfig[region].addressPrefix
-      subnetPrefix: regionConfig[region].subnetPrefix
+
+      addressPrefix: addressPrefixes[i]
+      subnetPrefix: subnetPrefixesArray[i]
+
       dnsServers: dnsServers
       jumpboxSubnets: jumpboxSubnets
       jumpboxAllowedSources: jumpboxAllowedSources

@@ -47,17 +47,7 @@
         "secretName": "clientAdminPassword"
       }
     },
-    
-    "dcIps": {
-      "value": {
-        "dc01": "10.0.0.4",
-        "dc02": "10.1.0.4",
-        "dc03": "10.2.0.4",
-        "dc04": "10.3.0.4",
-        "dc05": "10.4.0.4"
-      }
-    },
-
+  
     "regionPool": {
       "value": [
         "southafricanorth",
@@ -77,35 +67,31 @@
       ]
     },
 
-    "regionConfig": {
-      "value": {
-        "southafricanorth": {
-          "addressPrefix": "10.1.0.0/16",
-          "subnetPrefix": {
-            "jumpbox": "10.1.0.0/24",
-            "dc": "10.1.1.0/24",
-            "server": "10.1.2.0/24",
-            "client": "10.1.3.0/24"
-          }
-        },
-        "canadaeast": {
-          "addressPrefix": "10.2.0.0/16",
-          "subnetPrefix": {
-            "jumpbox": "10.2.0.0/24",
-            "dc": "10.2.1.0/24",
-            "server": "10.2.2.0/24",
-            "client": "10.2.3.0/24"
-          }
-        },
-        "southindia": {
-          "addressPrefix": "10.3.0.0/16",
-          "subnetPrefix": {
-            "jumpbox": "10.3.0.0/24",
-            "dc": "10.3.1.0/24",
-            "server": "10.3.2.0/24",
-            "client": "10.3.3.0/24"
-          }
+    "regionIndexMap": {
+        "value": {
+          "southafricanorth": 1,
+          "canadaeast": 2,
+          "southindia": 3,
+          "japanwest": 4,
+          "israelcentral": 5,
+          "koreasouth": 6,
+          "swedencentral": 7,
+          "australiaeast": 8,
+          "mexicocentral": 9,
+          "chilecentral": 10,
+          "koreacentral": 11,
+          "uaenorth": 12,
+          "wus2": 13,
+          "westeurope": 14
         }
+      },
+
+    "subnetIndexMap": {
+      "value": {
+        "jumpbox": 0,
+        "dc": 1,
+        "server": 2,
+        "client": 3
       }
     },
 
