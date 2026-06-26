@@ -144,6 +144,22 @@ var jumpboxSubnets = [
   for r in items(regions): r.value.subnetPrefix.jumpbox
 ]
 
+var safeVmList = [
+  for vm in finalVmPlacement: empty(vm) ? {
+    type: ''
+    index: -1
+    regionKey: ''
+  } : vm
+]
+
+var windowsVMList = [
+  for vm in safeVmList: (vm.type == 'jumpbox' || vm.type == 'srvwin' || vm.type == 'cliwin') ? vm : null
+]
+
+var linuxVMList = [
+  for vm in safeVmList: (vm.type == 'srvlin' || vm.type == 'clilin') ? vm : null
+]
+
 // VALIDATION //
 
 var invalidRegionCount = regionCount > length(regionPool)
@@ -252,115 +268,61 @@ module dcs 'modules/compute/vm-windows.bicep' = [
   }
 ]
 
-//
-// JUMPBOX
-//
+module windowsVMs 'modules/compute/vm-windows.bicep' = [
+  for vm in windowsVMList: if (vm != null) {
+    name: 'win-${vm.type}-${vm.index}'
 
-module jumpbox 'modules/compute/vm-windows.bicep' = {
-  name: 'jumpbox'
-  scope: resourceGroup('${prefix}-rg-${jumpbox01RegionKey}')
-  params: {
-    vmName: '${prefix}-jmp01'
-    vmSize: vmSize
-    adminUsername: jumpboxAdminUsername
-    adminPassword: jumpboxAdminPassword
-    subnetId: vnets[indexOf(regionKeys, jumpbox01RegionKey)].outputs.subnets.jumpbox.id
-    assignPublicIp: true
-    tags: union(finalTags, {
-      role: 'jumpbox'
-    })
-    image: windowsServerImage
-    osDisk: osDisk
-  }
-}
+    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
-//
-// WINDOWS SERVER
-//
+    params: {
+      vmName: '${prefix}-${vm.type}${(vm.index + 1) < 10 ? '0${vm.index + 1}' : vm.index + 1}'
+      vmSize: vmSize
 
-module srvwin01 'modules/compute/vm-windows.bicep' = {
-  name: 'srvwin01'
-  scope: resourceGroup('${prefix}-rg-${serverWindows01RegionKey}')
-  params: {
-    vmName: '${prefix}-srvwin01'
-    vmSize: vmSize
-    adminUsername: serverAdminUsername
-    adminPassword: serverAdminPassword
-    subnetId: vnets[indexOf(regionKeys, serverWindows01RegionKey)].outputs.subnets.server.id
-    assignPublicIp: false
+      adminUsername: vm.type == 'jumpbox' ? jumpboxAdminUsername : vm.type == 'srvwin' ? serverAdminUsername : clientAdminUsername
+
+      adminPassword: vm.type == 'jumpbox' ? jumpboxAdminPassword : vm.type == 'srvwin' ? serverAdminPassword : clientAdminPassword
+
+      subnetId: vm.type == 'jumpbox' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.jumpbox.id : vm.type == 'srvwin' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
+
+      assignPublicIp: vm.type == 'jumpbox'
+
       tags: union(finalTags, {
-        role: 'server'
+        role: vm.type == 'jumpbox' ? 'jumpbox' : vm.type == 'srvwin' ? 'server' : 'client'
       })
-    image: windowsServerImage     
-    osDisk: osDisk                
+
+      image: vm.type == 'cliwin' ? windowsClientImage : windowsServerImage
+      osDisk: osDisk
+    }
   }
-}
+]
 
-//
-// WINDOWS CLIENT
-//
+module linuxVMs 'modules/compute/vm-linux.bicep' = [
+  for vm in linuxVMList: if (vm != null) {
+    name: 'lin-${vm.type}-${vm.index}'
 
-module cliwin01 'modules/compute/vm-windows.bicep' = {
-  name: 'cliwin01'
-  scope: resourceGroup('${prefix}-rg-${clientWindows01RegionKey}')
-  params: {
-    vmName: '${prefix}-cliwin01'
-    vmSize: vmSize
-    adminUsername: clientAdminUsername
-    adminPassword: clientAdminPassword
-    subnetId: vnets[indexOf(regionKeys, clientWindows01RegionKey)].outputs.subnets.client.id
-    assignPublicIp: false
+    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
+
+    params: {
+      vmName: '${prefix}-${vm.type}${(vm.index + 1) < 10 ? '0${vm.index + 1}' : vm.index + 1}'
+      vmSize: vmSize
+
+      adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
+
+      adminPublicKey: adminPublicKey
+
+      subnetId: vm.type == 'srvlin' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
+
+      assignPublicIp: false
+
       tags: union(finalTags, {
-        role: 'client'
+        role: vm.type == 'srvlin' ? 'server' : 'client'
       })
-    image: windowsClientImage     
-    osDisk: osDisk                
+
+      image: ubuntuImage
+      osDisk: osDisk
+    }
   }
-}
-
-//
-// LINUX SERVER VM
-//
-
-module srvlin01 'modules/compute/vm-linux.bicep' = {
-  name: 'srvlin01'
-  scope: resourceGroup('${prefix}-rg-${serverLinux01RegionKey}')
-  params: {
-    vmName: '${prefix}-srvlin01'
-    vmSize: vmSize
-    adminUsername: serverAdminUsername
-    adminPublicKey: adminPublicKey
-    subnetId: vnets[indexOf(regionKeys, serverLinux01RegionKey)].outputs.subnets.server.id
-    assignPublicIp: false
-         tags: union(finalTags, {
-        role: 'server'
-      })
-    image: ubuntuImage               
-    osDisk: osDisk                 
-  }
-}
-
-//
-// LINUX SERVER VM
-//
-
-module clilin01 'modules/compute/vm-linux.bicep' = {
-  name: 'clilin01'
-  scope: resourceGroup('${prefix}-rg-${clientLinux01RegionKey}')
-  params: {
-    vmName: '${prefix}-clilin01'
-    vmSize: vmSize
-    adminUsername: clientAdminUsername
-    adminPublicKey: adminPublicKey
-    subnetId: vnets[indexOf(regionKeys, clientLinux01RegionKey)].outputs.subnets.client.id
-    assignPublicIp: false
-      tags: union(finalTags, {
-        role: 'client'
-      })
-    image: ubuntuImage               
-    osDisk: osDisk                 
-  }
-}
+]
 
 // DEBUG OUTPUTS //
 
