@@ -21,7 +21,6 @@ param ubuntuImage object
 
 param regionIndexMap object
 param subnetIndexMap object
-param regionPool array
 param regionCount int
 param maxVmsPerRegion int
 param vmCounts object
@@ -36,7 +35,7 @@ param osDisk object
 
 var jumpboxArray = [
   for i in range(0, vmCounts.jumpbox): {
-    type: 'jumpbox'
+    type: 'jmp'
     index: i
   }
 ]
@@ -73,7 +72,21 @@ var vmList = concat(
   linuxClientArray
 )
 
-var regionKeys = selectedRegions
+// Build region items once (clean + efficient)
+var regionItems = items(regionIndexMap)
+
+// Build ordered region list safely
+var sortedRegions = [
+  for i in range(1, length(regionItems) + 1): length(filter(regionItems, r => r.value == i)) == 1 ? first(filter(regionItems, r => r.value == i)).key : ''
+]
+
+// Remove invalid entries (empty strings)
+var cleanedRegions = [
+  for r in sortedRegions: r != '' ? r : null
+]
+
+// Take only the required number of regions
+var regionKeys = take(cleanedRegions, regionCount)
 
 var vmListWithPlacement = [
   for (vm, i) in vmList: {
@@ -85,11 +98,11 @@ var vmListWithPlacement = [
 ]
 
 var jumpboxesWithRegion = [
-  for (vm, i) in vmListWithPlacement: vm.type == 'jumpbox' ? { type: vm.type, index: vm.index, globalIndex: vm.globalIndex, regionKey: regionKeys[i] } : null
+  for (vm, i) in vmListWithPlacement: vm.type == 'jmp' ? { type: vm.type, index: vm.index, globalIndex: vm.index, regionKey: regionKeys[i] } : null
 ]
 
 var workloadWithRegion = [
-  for vm in vmListWithPlacement: vm.type != 'jumpbox' ? { type: vm.type, index: vm.index, globalIndex: vm.globalIndex, regionKey: regionKeys[vm.regionIndex] } : null
+  for vm in vmListWithPlacement: vm.type != 'jmp' ? { type: vm.type, index: vm.index, globalIndex: vm.index, regionKey: regionKeys[vm.regionIndex] } : null
 ]
 
 var finalVmPlacement = concat(jumpboxesWithRegion, workloadWithRegion)
@@ -97,8 +110,6 @@ var finalVmPlacement = concat(jumpboxesWithRegion, workloadWithRegion)
 var finalTags = union(tags, {
   project: prefix
 })
-
-var selectedRegions = take(regionPool, regionCount)
 
 var dcRegionKeys = regionKeys
 
@@ -121,7 +132,7 @@ var safeVmList = [
 ]
 
 var windowsVMList = [
-  for vm in safeVmList: (vm.type == 'jumpbox' || vm.type == 'srvwin' || vm.type == 'cliwin') ? vm : null
+  for vm in safeVmList: (vm.type == 'jmp' || vm.type == 'srvwin' || vm.type == 'cliwin') ? vm : null
 ]
 
 var linuxVMList = [
@@ -145,7 +156,7 @@ var subnetPrefixesArray = [
 
 // VALIDATION //
 
-var invalidRegionCount = regionCount > length(regionPool)
+var invalidRegionCount = regionCount > length(regionIndexMap)
 
 var invalidJumpboxCount = vmCounts.jumpbox > regionCount
 
@@ -275,24 +286,22 @@ module dcs 'modules/compute/vm-windows.bicep' = [
 
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
   for vm in windowsVMList: if (vm != null) {
-    name: 'win-${vm.type}-${vm.index}'
+    name: 'win-${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
     params: {
-      vmName: '${prefix}-${vm.type}${(vm.index + 1) < 10 ? '0${vm.index + 1}' : vm.index + 1}'
+      vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
       vmSize: vmSize
 
-      adminUsername: vm.type == 'jumpbox' ? jumpboxAdminUsername : vm.type == 'srvwin' ? serverAdminUsername : clientAdminUsername
+      adminUsername: vm.type == 'jmp' ? jumpboxAdminUsername : vm.type == 'srvwin' ? serverAdminUsername : clientAdminUsername
+      adminPassword: vm.type == 'jmp' ? jumpboxAdminPassword : vm.type == 'srvwin' ? serverAdminPassword : clientAdminPassword
 
-      adminPassword: vm.type == 'jumpbox' ? jumpboxAdminPassword : vm.type == 'srvwin' ? serverAdminPassword : clientAdminPassword
-
-      subnetId: vm.type == 'jumpbox' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.jumpbox.id : vm.type == 'srvwin' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
-
-      assignPublicIp: vm.type == 'jumpbox'
+      subnetId: vm.type == 'jmp' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.jumpbox.id : vm.type == 'srvwin' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
+      assignPublicIp: vm.type == 'jmp'
 
       tags: union(finalTags, {
-        role: vm.type == 'jumpbox' ? 'jumpbox' : vm.type == 'srvwin' ? 'server' : 'client'
+        role: vm.type == 'jmp' ? 'jumpbox' : vm.type == 'srvwin' ? 'server' : 'client'
       })
 
       image: vm.type == 'cliwin' ? windowsClientImage : windowsServerImage
@@ -303,20 +312,18 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
   for vm in linuxVMList: if (vm != null) {
-    name: 'lin-${vm.type}-${vm.index}'
+    name: 'lin-${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
     params: {
-      vmName: '${prefix}-${vm.type}${(vm.index + 1) < 10 ? '0${vm.index + 1}' : vm.index + 1}'
+      vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
       vmSize: vmSize
 
       adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
-
       adminPublicKey: adminPublicKey
 
       subnetId: vm.type == 'srvlin' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
-
       assignPublicIp: false
 
       tags: union(finalTags, {
@@ -331,7 +338,7 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
 
 // DEBUG OUTPUTS //
 
-output selectedRegionsOutput array = selectedRegions
+output selectedRegionsOutput array = regionKeys
 output totalVmRequested int = totalVMs
 output totalCapacityAvailable int = totalCapacity
 

@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "1A"
+      "value": "3A"
     },
     "tags": {
       "value": {
@@ -47,31 +47,12 @@
         "secretName": "clientAdminPassword"
       }
     },
-  
-    "regionPool": {
-      "value": [
-        "southafricanorth",
-        "canadaeast",
-        "southindia",
-        "japanwest",
-        "israelcentral",
-        "koreasouth",
-        "swedencentral",
-        "australiaeast",
-        "mexicocentral",
-        "chilecentral",
-        "koreacentral",
-        "uaenorth",
-        "wus2",
-        "westeurope"
-      ]
-    },
 
     "regionIndexMap": {
         "value": {
-          "southafricanorth": 1,
-          "canadaeast": 2,
-          "southindia": 3,
+          "southafricanorth": 12,
+          "canadaeast": 13,
+          "southindia": 14,
           "japanwest": 4,
           "israelcentral": 5,
           "koreasouth": 6,
@@ -80,9 +61,9 @@
           "mexicocentral": 9,
           "chilecentral": 10,
           "koreacentral": 11,
-          "uaenorth": 12,
-          "wus2": 13,
-          "westeurope": 14
+          "uaenorth": 1,
+          "westus2": 2,
+          "westeurope": 3
         }
       },
 
@@ -96,19 +77,19 @@
     },
 
     "regionCount": {
-      "value": 3
+      "value": 14
     },
 
     "maxVmsPerRegion": {
-      "value": 1
+      "value": 2
     },
 
     "vmCounts": {
       "value": {
-        "jumpbox": 1,
-        "windowsServer": 1,
-        "windowsClient": 0,
-        "linuxServer": 0,
+        "jumpbox": 2,
+        "windowsServer": 2,
+        "windowsClient": 1,
+        "linuxServer": 1,
         "linuxClient": 1
       }
     },
