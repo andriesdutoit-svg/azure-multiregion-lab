@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "3A"
+      "value": "5A"
     },
     "tags": {
       "value": {
@@ -50,20 +50,22 @@
 
     "regionIndexMap": {
         "value": {
-          "southafricanorth": 12,
-          "canadaeast": 13,
-          "southindia": 14,
-          "japanwest": 4,
-          "israelcentral": 5,
-          "koreasouth": 6,
-          "swedencentral": 7,
-          "australiaeast": 8,
-          "mexicocentral": 9,
-          "chilecentral": 10,
-          "koreacentral": 11,
-          "uaenorth": 1,
-          "westus2": 2,
-          "westeurope": 3
+          "southafricanorth": 1,
+          "southindia": 2,
+          "japanwest": 3,
+          "israelcentral": 4,
+          "koreasouth": 5,
+          "swedencentral": 6,
+          "australiaeast": 7,
+          "mexicocentral": 8,
+          "chilecentral": 9,
+          "koreacentral": 10,
+          "uaenorth": 11,
+          "westus2": 12,
+          "centralindia": 13,
+          "eastasia": 14,
+          "japaneast": 15,
+          "canadaeast": 16
         }
       },
 
@@ -77,7 +79,7 @@
     },
 
     "regionCount": {
-      "value": 14
+      "value": 16
     },
 
     "maxVmsPerRegion": {
@@ -86,11 +88,11 @@
 
     "vmCounts": {
       "value": {
-        "jumpbox": 2,
-        "windowsServer": 2,
-        "windowsClient": 1,
-        "linuxServer": 1,
-        "linuxClient": 1
+        "jumpbox": 3,
+        "windowsServer": 3,
+        "windowsClient": 3,
+        "linuxServer": 3,
+        "linuxClient": 3
       }
     },
 

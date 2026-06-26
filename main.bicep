@@ -286,7 +286,7 @@ module dcs 'modules/compute/vm-windows.bicep' = [
 
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
   for vm in windowsVMList: if (vm != null) {
-    name: 'win-${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
+    name: '${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
@@ -312,7 +312,7 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
   for vm in linuxVMList: if (vm != null) {
-    name: 'lin-${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
+    name: '${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
