@@ -33,6 +33,12 @@ param osDisk object
 
 // VM TYPE ARRAYS //
 
+var dcArray = [
+  for i in range(0, vmCounts.dc): {
+    type: 'dc'
+    index: i
+  }
+]
 var jumpboxArray = [
   for i in range(0, vmCounts.jumpbox): {
     type: 'jmp'
@@ -65,6 +71,7 @@ var linuxClientArray = [
 ]
 
 var vmList = concat(
+  dcArray,
   jumpboxArray,
   windowsServerArray,
   windowsClientArray,
@@ -132,7 +139,7 @@ var safeVmList = [
 ]
 
 var windowsVMList = [
-  for vm in safeVmList: (vm.type == 'jmp' || vm.type == 'srvwin' || vm.type == 'cliwin') ? vm : null
+  for vm in safeVmList: (vm.type == 'dc' || vm.type == 'jmp' || vm.type == 'srvwin' || vm.type == 'cliwin') ? vm : null
 ]
 
 var linuxVMList = [
@@ -154,7 +161,7 @@ var subnetPrefixesArray = [
 
 // VALIDATION //
 
-// VALIDATION //
+var invalidMinimums = vmCounts.dc < 1 || vmCounts.jumpbox < 1
 
 var invalidRegionCount = regionCount > length(regionIndexMap)
 
@@ -176,7 +183,7 @@ var missingRegionIndex = contains(hasInvalidRegionIndex, true)
 
 var hasInvalidSubnetIndex = !(contains(subnetIndexMap, 'jumpbox') && contains(subnetIndexMap, 'dc') && contains(subnetIndexMap, 'server') && contains(subnetIndexMap, 'client'))
 
-var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCapacity || missingRegionIndex || hasInvalidSubnetIndex
+var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCapacity || missingRegionIndex || hasInvalidSubnetIndex || invalidMinimums
 
 resource validation 'Microsoft.Resources/deployments@2021-04-01' = if (hasValidationError) {
   name: 'validationFailure'
@@ -191,7 +198,7 @@ resource validation 'Microsoft.Resources/deployments@2021-04-01' = if (hasValida
       outputs: {
         error: {
           type: 'string'
-          value: 'Validation failed: check inputs and capacity.'
+          value: 'Validation failed: ensure at least 1 DC and 1 Jumpbox, valid region configuration, and sufficient capacity.'
         }
       }
     }
@@ -259,31 +266,6 @@ module peerings 'modules/peering/peering.bicep' = [
   }
 ]
 
-//
-// DOMAIN CONTROLLERS
-//
-
-module dcs 'modules/compute/vm-windows.bicep' = [
-  for (dcRegionKey, i) in dcRegionKeys: {
-    name: 'dc${(i + 1) < 10 ? '0${i + 1}' : i + 1}'
-    scope: resourceGroup('${prefix}-rg-${dcRegionKey}')
-    params: {
-      vmName: '${prefix}-dc${(i + 1) < 10 ? '0${i + 1}' : i + 1}'
-      vmSize: vmSize
-      adminUsername: serverAdminUsername
-      adminPassword: serverAdminPassword
-      subnetId: vnets[indexOf(regionKeys, dcRegionKey)].outputs.subnets.dc.id
-      privateIp: dcIpArray[i]
-      assignPublicIp: false
-      tags: union(finalTags, {
-        role: 'domain-controller'
-      })
-      image: windowsServerImage
-      osDisk: osDisk
-    }
-  }
-]
-
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
   for vm in windowsVMList: if (vm != null) {
     name: '${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
@@ -294,14 +276,24 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
       vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
       vmSize: vmSize
 
-      adminUsername: vm.type == 'jmp' ? jumpboxAdminUsername : vm.type == 'srvwin' ? serverAdminUsername : clientAdminUsername
-      adminPassword: vm.type == 'jmp' ? jumpboxAdminPassword : vm.type == 'srvwin' ? serverAdminPassword : clientAdminPassword
+      adminUsername: vm.type == 'jmp'
+        ? jumpboxAdminUsername
+        : (vm.type == 'dc' || vm.type == 'srvwin'
+          ? serverAdminUsername
+          : clientAdminUsername)
 
-      subnetId: vm.type == 'jmp' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.jumpbox.id : vm.type == 'srvwin' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
+      adminPassword: vm.type == 'jmp'
+        ? jumpboxAdminPassword
+        : (vm.type == 'dc' || vm.type == 'srvwin'
+          ? serverAdminPassword
+          : clientAdminPassword)
+
+      subnetId: vm.type == 'dc' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.dc.id : vm.type == 'jmp' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.jumpbox.id : vm.type == 'srvwin' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
+
       assignPublicIp: vm.type == 'jmp'
 
       tags: union(finalTags, {
-        role: vm.type == 'jmp' ? 'jumpbox' : vm.type == 'srvwin' ? 'server' : 'client'
+        role:   vm.type == 'dc' ? 'domain-controller' : vm.type == 'jmp' ? 'jumpbox' : vm.type == 'srvwin' ? 'server' : 'client'
       })
 
       image: vm.type == 'cliwin' ? windowsClientImage : windowsServerImage

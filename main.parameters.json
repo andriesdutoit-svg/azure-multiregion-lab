@@ -88,6 +88,7 @@
 
     "vmCounts": {
       "value": {
+        "dc": 3,
         "jumpbox": 3,
         "windowsServer": 3,
         "windowsClient": 3,
