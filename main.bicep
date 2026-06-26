@@ -149,7 +149,9 @@ var invalidRegionCount = regionCount > length(regionPool)
 
 var invalidJumpboxCount = vmCounts.jumpbox > regionCount
 
-var totalVMs = vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
+var totalDCs = length(regionKeys)
+
+var totalVMs = totalDCs + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
 
 var totalCapacity = regionCount * maxVmsPerRegion
 

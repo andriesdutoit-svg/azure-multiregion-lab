@@ -100,7 +100,7 @@
     },
 
     "maxVmsPerRegion": {
-      "value": 2
+      "value": 1
     },
 
     "vmCounts": {
