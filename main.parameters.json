@@ -47,10 +47,6 @@
         "secretName": "clientAdminPassword"
       }
     },
-    "vmSize": {
-      "value": "Standard_B2ls_v2"
-    },
-
     "regions": {
       "value": {
         "region1": {
@@ -105,35 +101,16 @@
       }
     }
   },
-
-"jumpboxAllowedSources": {
-  "value": [
-    "168.210.156.45",
-    "137.158.0.0/16",
-    "197.239.0.0/16",
-    "196.24.0.0/16",
-    "196.42.0.0/16",
-    "196.47.0.0/16"
-  ]
-},
-
-"enableClientSsh": {
-  "value": true
-},
-
-"dc01RegionKey": { "value": "region1" },
-"dc02RegionKey": { "value": "region2" },
-"dc03RegionKey": { "value": "region3" },
-"dc04RegionKey": { "value": "region4" },
-"dc05RegionKey": { "value": "region5" },
-
-"jumpbox01RegionKey": { "value": "region1" },
-
-"serverWindows01RegionKey": { "value": "region2" },
-"clientWindows01RegionKey": { "value": "region3" },
-
-"serverLinux01RegionKey": { "value": "region4" },
-"clientLinux01RegionKey": { "value": "region5" },
+    "dc01RegionKey": { "value": "region1" },
+    "dc02RegionKey": { "value": "region2" },
+    "dc03RegionKey": { "value": "region3" },
+    "dc04RegionKey": { "value": "region4" },
+    "dc05RegionKey": { "value": "region5" },
+    "jumpbox01RegionKey": { "value": "region1" },
+    "serverWindows01RegionKey": { "value": "region2" },
+    "clientWindows01RegionKey": { "value": "region3" },
+    "serverLinux01RegionKey": { "value": "region4" },
+    "clientLinux01RegionKey": { "value": "region5" },
 
     "dcIps": {
       "value": {
@@ -143,6 +120,58 @@
         "dc04": "10.3.0.4",
         "dc05": "10.4.0.4"
       }
+    },
+
+    "regionPool": {
+      "value": [
+        "southafricanorth",
+        "canadaeast",
+        "southindia",
+        "japanwest",
+        "israelcentral",
+        "koreasouth",
+        "swedencentral",
+        "australiaeast",
+        "mexicocentral",
+        "chilecentral",
+        "koreacentral",
+        "uaenorth",
+        "wus2",
+        "westeurope"
+      ]
+    },
+
+    "regionCount": {
+      "value": 3
+    },
+
+    "maxVmsPerRegion": {
+      "value": 2
+    },
+
+    "vmCounts": {
+      "value": {
+        "jumpbox": 1,
+        "windowsServer": 1,
+        "windowsClient": 0,
+        "linuxServer": 0,
+        "linuxClient": 1
+      }
+    },
+
+    "jumpboxAllowedSources": {
+      "value": [
+        "168.210.156.45",
+        "137.158.0.0/16",
+        "197.239.0.0/16",
+        "196.24.0.0/16",
+        "196.42.0.0/16",
+        "196.47.0.0/16"
+      ]
+    },
+
+    "enableClientSsh": {
+      "value": true
     },
 
     "windowsServerImage": {
@@ -168,6 +197,9 @@
         "sku": "22_04-lts-gen2",
         "version": "latest"
       }
+    },
+    "vmSize": {
+      "value": "Standard_B2ls_v2"
     },
     "osDisk": {
       "value": {

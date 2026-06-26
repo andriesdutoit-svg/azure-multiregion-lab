@@ -3,7 +3,6 @@ targetScope = 'subscription'
 param prefix string
 param tags object
 
-
 param jumpboxAdminUsername string
 @secure()
 param jumpboxAdminPassword string
@@ -15,12 +14,6 @@ param clientAdminUsername string
 param clientAdminPassword string
 
 param adminPublicKey string
-
-param vmSize string
-param osDisk object
-
-param jumpboxAllowedSources array
-param enableClientSsh bool
 
 param regions object
 param dc01RegionKey string
@@ -40,11 +33,25 @@ param ubuntuImage object
 
 param dcIps object
 
+param regionPool array
+param regionCount int
+param maxVmsPerRegion int
+param vmCounts object
+
+param jumpboxAllowedSources array
+param enableClientSsh bool
+
+param vmSize string
+param osDisk object
+
 var finalTags = union(tags, {
   project: prefix
 })
 
 var regionKeys = [for r in items(regions): r.key]
+
+var selectedRegions = take(regionPool, regionCount)
+var dynamicRegionKeys = selectedRegions
 
 var dcRegionKeys = [
   dc01RegionKey
@@ -67,6 +74,34 @@ var dnsServers = dcIpArray
 var jumpboxSubnets = [
   for r in items(regions): r.value.subnetPrefix.jumpbox
 ]
+
+// VALIDATION //
+
+var invalidRegionCount = regionCount > length(regionPool)
+var invalidJumpboxCount = vmCounts.jumpbox > regionCount
+var totalVMs = vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
+var totalCapacity = regionCount * maxVmsPerRegion
+var invalidCapacity = totalVMs > totalCapacity
+
+var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCapacity
+
+resource validation 'Microsoft.Resources/deployments@2021-04-01' = if (hasValidationError) {
+  name: 'validationFailure'
+  properties: {
+    mode: 'Incremental'
+    template: {
+      '$schema': 'https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#'
+      contentVersion: '1.0.0.0'
+      resources: []
+      outputs: {
+        error: {
+          type: 'string'
+          value: 'Validation failed: check regionCount, jumpbox count, or capacity limits.'
+        }
+      }
+    }
+  }
+}
 
 //
 // RESOURCE GROUPS
@@ -257,3 +292,9 @@ module clilin01 'modules/compute/vm-linux.bicep' = {
     osDisk: osDisk                 
   }
 }
+
+// DEBUG OUTPUTS //
+
+output selectedRegionsOutput array = selectedRegions
+output totalVmRequested int = totalVMs
+output totalCapacityAvailable int = totalCapacity
