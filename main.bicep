@@ -15,24 +15,13 @@ param clientAdminPassword string
 
 param adminPublicKey string
 
-param regions object
-param dc01RegionKey string
-param dc02RegionKey string
-param dc03RegionKey string
-param dc04RegionKey string
-param dc05RegionKey string
-param jumpbox01RegionKey string
-param serverWindows01RegionKey string
-param clientWindows01RegionKey string
-param serverLinux01RegionKey string
-param clientLinux01RegionKey string
-
 param windowsServerImage object
 param windowsClientImage object
 param ubuntuImage object
 
 param dcIps object
 
+param regionConfig object
 param regionPool array
 param regionCount int
 param maxVmsPerRegion int
@@ -85,7 +74,7 @@ var vmList = concat(
   linuxClientArray
 )
 
-var regionKeys = [for r in items(regions): r.key]
+var regionKeys = selectedRegions
 
 var vmListWithPlacement = [
   for (vm, i) in vmList: {
@@ -93,15 +82,6 @@ var vmListWithPlacement = [
     index: vm.index
     globalIndex: i
     regionIndex: int(i / maxVmsPerRegion)
-  }
-]
-
-var vmListWithRegion = [
-  for vm in vmListWithPlacement: {
-    type: vm.type
-    index: vm.index
-    globalIndex: vm.globalIndex
-    regionKey: vm.regionIndex < length(regionKeys) ? regionKeys[vm.regionIndex] : 'overflow'
   }
 ]
 
@@ -120,15 +100,8 @@ var finalTags = union(tags, {
 })
 
 var selectedRegions = take(regionPool, regionCount)
-var dynamicRegionKeys = selectedRegions
 
-var dcRegionKeys = [
-  dc01RegionKey
-  dc02RegionKey
-  dc03RegionKey
-  dc04RegionKey
-  dc05RegionKey
-]
+var dcRegionKeys = regionKeys
 
 var dcIpArray = [
   dcIps.dc01
@@ -141,7 +114,7 @@ var dcIpArray = [
 var dnsServers = dcIpArray
 
 var jumpboxSubnets = [
-  for r in items(regions): r.value.subnetPrefix.jumpbox
+  for region in regionKeys: regionConfig[region].subnetPrefix.jumpbox
 ]
 
 var safeVmList = [
@@ -163,12 +136,22 @@ var linuxVMList = [
 // VALIDATION //
 
 var invalidRegionCount = regionCount > length(regionPool)
+
 var invalidJumpboxCount = vmCounts.jumpbox > regionCount
+
 var totalVMs = vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
+
 var totalCapacity = regionCount * maxVmsPerRegion
+
 var invalidCapacity = totalVMs > totalCapacity
 
-var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCapacity
+var hasMissingRegionConfig = [
+  for region in regionKeys: contains(regionConfig, region) ? false : true
+]
+
+var missingRegionConfig = contains(hasMissingRegionConfig, true)
+
+var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCapacity || missingRegionConfig
 
 resource validation 'Microsoft.Resources/deployments@2021-04-01' = if (hasValidationError) {
   name: 'validationFailure'
@@ -193,9 +176,9 @@ resource validation 'Microsoft.Resources/deployments@2021-04-01' = if (hasValida
 //
 
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
-  for region in items(regions): {
-    name: '${prefix}-rg-${region.key}'
-    location: region.value.location
+  for region in regionKeys: {
+    name: '${prefix}-rg-${region}'
+    location: region
     tags: finalTags
   }
 ]
@@ -205,17 +188,17 @@ resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
 //
 
 module vnets 'modules/networking/vnet.bicep' = [
-  for region in items(regions): {
-    name: 'vnet-${region.key}'
-    scope: resourceGroup('${prefix}-rg-${region.key}')
+  for region in regionKeys: {
+    name: 'vnet-${region}'
+    scope: resourceGroup('${prefix}-rg-${region}')
     dependsOn: [
       rgs
     ]
     params: {
-      vnetName: '${prefix}-vnet-${region.key}'
-      location: region.value.location
-      addressPrefix: region.value.addressPrefix
-      subnetPrefix: region.value.subnetPrefix
+      vnetName: '${prefix}-vnet-${region}'
+      location: region
+      addressPrefix: regionConfig[region].addressPrefix
+      subnetPrefix: regionConfig[region].subnetPrefix
       dnsServers: dnsServers
       jumpboxSubnets: jumpboxSubnets
       jumpboxAllowedSources: jumpboxAllowedSources
@@ -330,6 +313,4 @@ output selectedRegionsOutput array = selectedRegions
 output totalVmRequested int = totalVMs
 output totalCapacityAvailable int = totalCapacity
 
-output vmPlacement array = vmListWithRegion
-output vmListOutput array = vmList
 output finalPlacement array = finalVmPlacement
