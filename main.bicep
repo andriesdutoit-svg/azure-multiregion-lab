@@ -31,7 +31,11 @@ param enableClientSsh bool
 param vmSize string
 param osDisk object
 
-// VM TYPE ARRAYS //
+//
+// ========================================
+// VM MODEL (builds unified list of all VMs)
+// ========================================
+//
 
 var dcArray = [
   for i in range(0, vmCounts.dc): {
@@ -79,56 +83,105 @@ var vmList = concat(
   linuxClientArray
 )
 
-// Build region items once (clean + efficient)
-var regionItems = items(regionIndexMap)
+//
+// ========================================
+// REGION SELECTION & ORDERING
+// Converts regionIndexMap → ordered region list
+// ========================================
+//
 
-// Build ordered region list safely
+// Extract regions in order of their index value (1 → N)
 var sortedRegions = [
-  for i in range(1, length(regionItems) + 1): length(filter(regionItems, r => r.value == i)) == 1 ? first(filter(regionItems, r => r.value == i)).key : ''
+  for i in range(1, length(regionIndexMap)): first(filter(items(regionIndexMap), r => r.value == i)).key
 ]
 
-// Remove invalid entries (empty strings)
-var cleanedRegions = [
-  for r in sortedRegions: r != '' ? r : null
-]
-
-// Take only the required number of regions
-var regionKeys = take(cleanedRegions, regionCount)
+// Select only the required number of regions
+var regionKeys = take(sortedRegions, regionCount)
 
 var primaryRegion = regionKeys[0]
 var isSingleRegion = regionCount == 1
+
+//
+// ========================================
+// PLACEMENT ENGINE
+// Assigns each VM to a region using rules
+// ========================================
+//
 
 var vmListWithPlacement = [
   for (vm, i) in vmList: {
     type: vm.type
     index: vm.index
-    regionKey: isSingleRegion ? regionKeys[0] : (vm.type == 'dc' && vm.index == 0) ? primaryRegion : (vm.type == 'jmp' && vm.index == 0) ? primaryRegion : vm.type == 'dc' ? regionKeys[vm.index % regionCount] : vm.type == 'jmp' ? regionKeys[vm.index % regionCount] : (vm.type == 'srvwin' || vm.type == 'srvlin') ? regionKeys[vm.index % regionCount] : regionKeys[i % regionCount]
+
+    // Hybrid Placement Logic:
+    // - DCs + Jumpboxes use vm.index (spread evenly per role)
+    // - All other VMs use global index i (balanced across all regions)
+
+    regionKey: isSingleRegion
+      ? regionKeys[0]
+      : (vm.type == 'dc' && vm.index == 0)
+        ? primaryRegion
+        : (vm.type == 'jmp' && vm.index == 0)
+          ? primaryRegion
+          : vm.type == 'dc'
+            ? regionKeys[vm.index % regionCount]
+            : vm.type == 'jmp'
+              ? regionKeys[vm.index % regionCount]
+              : regionKeys[i % regionCount]
   }
 ]
 
-var vmPerRegionCounts = [
-  for region in regionKeys: length(filter(vmListWithPlacement, vm => vm.regionKey == region))
-]
-
-var regionOverflowFlags = [
-  for count in vmPerRegionCounts: count > maxVmsPerRegion
-]
-
-var hasRegionOverflow = contains(regionOverflowFlags, true)
-
 var jumpboxesWithRegion = [
   for vm in vmListWithPlacement: vm.type == 'jmp'
-    ? { type: vm.type, index: vm.index, globalIndex: vm.index, regionKey: vm.regionKey }
-    : null
+    ? {
+      type: vm.type
+      index: vm.index
+      globalIndex: vm.index
+      regionKey: vm.regionKey
+    }
+    : {
+      type: ''
+      index: -1
+      globalIndex: -1
+      regionKey: ''
+    }
 ]
 
-var workloadWithRegion = [for vm in vmListWithPlacement: vm.type != 'jmp' ? { type: vm.type, index: vm.index, globalIndex: vm.index, regionKey: vm.regionKey } : null]
+var workloadWithRegion = [
+  for vm in vmListWithPlacement: vm.type != 'jmp'
+    ? {
+      type: vm.type
+      index: vm.index
+      globalIndex: vm.index
+      regionKey: vm.regionKey
+    }
+    : {
+      type: ''
+      index: -1
+      globalIndex: -1
+      regionKey: ''
+    }
+]
+
+//
+// ================================
+// VM GROUPING + SUPPORT VARIABLES
+// ================================
+//
+
+//
+// VM GROUPING
+//
 
 var finalVmPlacement = concat(jumpboxesWithRegion, workloadWithRegion)
 
 var finalTags = union(tags, {
   project: prefix
 })
+
+//
+// NETWORK HELPER VARIABLES
+//
 
 var dcIpArray = [
   for (region, i) in regionKeys: replace(subnetPrefixesArray[i].dc, '0/24', '4')
@@ -140,21 +193,15 @@ var jumpboxSubnets = [
   for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
 ]
 
-var safeVmList = [
-  for vm in finalVmPlacement: empty(vm) ? {
-    type: ''
-    index: -1
-    regionKey: ''
-  } : vm
-]
+var safeVmList = filter(finalVmPlacement, vm => vm.type != '')
 
-var windowsVMList = [
-  for vm in safeVmList: (vm.type == 'dc' || vm.type == 'jmp' || vm.type == 'srvwin' || vm.type == 'cliwin') ? vm : null
-]
+var windowsVMList = filter(safeVmList, vm =>
+  vm.type == 'dc' || vm.type == 'jmp' || vm.type == 'srvwin' || vm.type == 'cliwin'
+)
 
-var linuxVMList = [
-  for vm in safeVmList: (vm.type == 'srvlin' || vm.type == 'clilin') ? vm : null
-]
+var linuxVMList = filter(safeVmList, vm =>
+  vm.type == 'srvlin' || vm.type == 'clilin'
+)
 
 var addressPrefixes = [
   for region in regionKeys: '10.${regionIndexMap[region]}.0.0/16'
@@ -169,7 +216,27 @@ var subnetPrefixesArray = [
   }
 ]
 
-// VALIDATION //
+//
+// ========================================
+// PER-REGION CAPACITY VALIDATION
+// ========================================
+
+var vmPerRegionCounts = [
+  for region in regionKeys: length(filter(vmListWithPlacement, vm => vm.regionKey == region))
+]
+
+var regionOverflowFlags = [
+  for count in vmPerRegionCounts: count > maxVmsPerRegion
+]
+
+var hasRegionOverflow = contains(regionOverflowFlags, true)
+
+//
+// ========================================
+// VALIDATION ENGINE
+// Ensures configuration is valid BEFORE deployment
+// ========================================
+//
 
 var invalidMinimums = vmCounts.dc < 1 || vmCounts.jumpbox < 1
 
@@ -177,9 +244,9 @@ var invalidRegionCount = regionCount > length(regionIndexMap)
 
 var invalidJumpboxCount = vmCounts.jumpbox > regionCount
 
-var totalDCs = length(regionKeys)
+var regionTotal = length(regionKeys)
 
-var totalVMs = totalDCs + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
+var totalVMs = regionTotal + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
 
 var totalCapacity = regionCount * maxVmsPerRegion
 
@@ -215,7 +282,7 @@ resource validationFailure 'Microsoft.Resources/deployments@2021-04-01' = if (ha
       outputs: {
         error: {
           type: 'string'
-          value: json(validationMessage != '' ? validationMessage : 'Validation failed')
+          value: 'Validation failed'
         }
       }
     }
