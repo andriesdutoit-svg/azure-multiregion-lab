@@ -95,30 +95,40 @@ var cleanedRegions = [
 // Take only the required number of regions
 var regionKeys = take(cleanedRegions, regionCount)
 
+var primaryRegion = regionKeys[0]
+var isSingleRegion = regionCount == 1
+
 var vmListWithPlacement = [
   for (vm, i) in vmList: {
     type: vm.type
     index: vm.index
-    globalIndex: i
-    regionIndex: int(i / maxVmsPerRegion)
+    regionKey: isSingleRegion ? regionKeys[0] : (vm.type == 'dc' && vm.index == 0) ? primaryRegion : (vm.type == 'jmp' && vm.index == 0) ? primaryRegion : vm.type == 'dc' ? regionKeys[vm.index % regionCount] : vm.type == 'jmp' ? regionKeys[vm.index % regionCount] : (vm.type == 'srvwin' || vm.type == 'srvlin') ? regionKeys[vm.index % regionCount] : regionKeys[i % regionCount]
   }
 ]
 
-var jumpboxesWithRegion = [
-  for (vm, i) in vmListWithPlacement: vm.type == 'jmp' ? { type: vm.type, index: vm.index, globalIndex: vm.index, regionKey: regionKeys[i] } : null
+var vmPerRegionCounts = [
+  for region in regionKeys: length(filter(vmListWithPlacement, vm => vm.regionKey == region))
 ]
 
-var workloadWithRegion = [
-  for vm in vmListWithPlacement: vm.type != 'jmp' ? { type: vm.type, index: vm.index, globalIndex: vm.index, regionKey: regionKeys[vm.regionIndex] } : null
+var regionOverflowFlags = [
+  for count in vmPerRegionCounts: count > maxVmsPerRegion
 ]
+
+var hasRegionOverflow = contains(regionOverflowFlags, true)
+
+var jumpboxesWithRegion = [
+  for vm in vmListWithPlacement: vm.type == 'jmp'
+    ? { type: vm.type, index: vm.index, globalIndex: vm.index, regionKey: vm.regionKey }
+    : null
+]
+
+var workloadWithRegion = [for vm in vmListWithPlacement: vm.type != 'jmp' ? { type: vm.type, index: vm.index, globalIndex: vm.index, regionKey: vm.regionKey } : null]
 
 var finalVmPlacement = concat(jumpboxesWithRegion, workloadWithRegion)
 
 var finalTags = union(tags, {
   project: prefix
 })
-
-var dcRegionKeys = regionKeys
 
 var dcIpArray = [
   for (region, i) in regionKeys: replace(subnetPrefixesArray[i].dc, '0/24', '4')
@@ -183,9 +193,16 @@ var missingRegionIndex = contains(hasInvalidRegionIndex, true)
 
 var hasInvalidSubnetIndex = !(contains(subnetIndexMap, 'jumpbox') && contains(subnetIndexMap, 'dc') && contains(subnetIndexMap, 'server') && contains(subnetIndexMap, 'client'))
 
-var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCapacity || missingRegionIndex || hasInvalidSubnetIndex || invalidMinimums
+var hasMissingIndexes = [
+  for i in range(1, length(regionIndexMap) + 1): empty(filter(items(regionIndexMap), r => r.value == i))
+]
 
-resource validation 'Microsoft.Resources/deployments@2021-04-01' = if (hasValidationError) {
+var invalidIndexSequence = contains(hasMissingIndexes, true)
+
+var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCapacity || missingRegionIndex || hasInvalidSubnetIndex || invalidMinimums || invalidIndexSequence || hasRegionOverflow
+var validationMessage = invalidMinimums ? 'At least 1 DC and 1 Jumpbox are required.' : invalidRegionCount ? 'Region count exceeds available regions.' : invalidJumpboxCount ? 'Jumpboxes cannot exceed number of regions.' : missingRegionIndex ? 'One or more regions are missing in regionIndexMap.' : hasInvalidSubnetIndex ? 'Subnet index map must include dc, jumpbox, server, and client.' : hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
+
+resource validationFailure 'Microsoft.Resources/deployments@2021-04-01' = if (hasValidationError) {
   name: 'validationFailure'
   location: deployment().location
 
@@ -198,7 +215,7 @@ resource validation 'Microsoft.Resources/deployments@2021-04-01' = if (hasValida
       outputs: {
         error: {
           type: 'string'
-          value: 'Validation failed: ensure at least 1 DC and 1 Jumpbox, valid region configuration, and sufficient capacity.'
+          value: json(validationMessage != '' ? validationMessage : 'Validation failed')
         }
       }
     }

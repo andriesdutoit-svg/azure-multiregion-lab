@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "5A"
+      "value": "6A"
     },
     "tags": {
       "value": {
@@ -79,7 +79,7 @@
     },
 
     "regionCount": {
-      "value": 16
+      "value": 5
     },
 
     "maxVmsPerRegion": {
@@ -88,12 +88,12 @@
 
     "vmCounts": {
       "value": {
-        "dc": 3,
-        "jumpbox": 3,
-        "windowsServer": 3,
-        "windowsClient": 3,
-        "linuxServer": 3,
-        "linuxClient": 3
+        "dc": 0,
+        "jumpbox": 1,
+        "windowsServer": 1,
+        "windowsClient": 1,
+        "linuxServer": 1,
+        "linuxClient": 1
       }
     },
 
