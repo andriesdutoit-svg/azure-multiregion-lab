@@ -1,4 +1,5 @@
 targetScope = 'subscription'
+
 @description('Prefix for all resources')
 param prefix string
 param tags object
@@ -85,14 +86,23 @@ var vmList = concat(
 
 //
 // ========================================
-// REGION SELECTION & ORDERING
+// REGION ORDERING (Index-Based Sorting)
 // Converts regionIndexMap → ordered region list
 // ========================================
 //
 
 // Extract regions in order of their index value (1 → N)
+var regionPairs = [
+  for r in items(regionIndexMap): {
+    key: r.key
+    index: r.value
+  }
+]
+
+var sortedRegionPairs = sort(regionPairs, (a, b) => a.index < b.index)
+
 var sortedRegions = [
-  for i in range(1, length(regionIndexMap)): first(filter(items(regionIndexMap), r => r.value == i)).key
+  for r in sortedRegionPairs: r.key
 ]
 
 // Select only the required number of regions
@@ -101,6 +111,14 @@ var regionKeys = take(sortedRegions, regionCount)
 var primaryRegion = regionKeys[0]
 var isSingleRegion = regionCount == 1
 
+// Non-DC VMs used for global round-robin ordering
+var nonDcVmList = filter(vmList, vm => vm.type != 'dc')
+
+// Compute global index for non-DC VMs (used for round-robin placement)
+var nonDcIndexList = [
+  for vm in vmList: vm.type == 'dc' ? -1 : indexOf(nonDcVmList, vm)
+]
+
 //
 // ========================================
 // PLACEMENT ENGINE
@@ -108,59 +126,19 @@ var isSingleRegion = regionCount == 1
 // ========================================
 //
 
-var vmListWithPlacement = [
+var vmPlacements = [
   for (vm, i) in vmList: {
     type: vm.type
     index: vm.index
-
-    // Hybrid Placement Logic:
-    // - DCs + Jumpboxes use vm.index (spread evenly per role)
-    // - All other VMs use global index i (balanced across all regions)
 
     regionKey: isSingleRegion
       ? regionKeys[0]
       : (vm.type == 'dc' && vm.index == 0)
         ? primaryRegion
-        : (vm.type == 'jmp' && vm.index == 0)
-          ? primaryRegion
-          : vm.type == 'dc'
-            ? regionKeys[vm.index % regionCount]
-            : vm.type == 'jmp'
-              ? regionKeys[vm.index % regionCount]
-              : regionKeys[i % regionCount]
+        : vm.type == 'dc'
+          ? regionKeys[vm.index % regionCount]
+          : regionKeys[nonDcIndexList[i] % regionCount]
   }
-]
-
-var jumpboxesWithRegion = [
-  for vm in vmListWithPlacement: vm.type == 'jmp'
-    ? {
-      type: vm.type
-      index: vm.index
-      globalIndex: vm.index
-      regionKey: vm.regionKey
-    }
-    : {
-      type: ''
-      index: -1
-      globalIndex: -1
-      regionKey: ''
-    }
-]
-
-var workloadWithRegion = [
-  for vm in vmListWithPlacement: vm.type != 'jmp'
-    ? {
-      type: vm.type
-      index: vm.index
-      globalIndex: vm.index
-      regionKey: vm.regionKey
-    }
-    : {
-      type: ''
-      index: -1
-      globalIndex: -1
-      regionKey: ''
-    }
 ]
 
 //
@@ -172,8 +150,6 @@ var workloadWithRegion = [
 //
 // VM GROUPING
 //
-
-var finalVmPlacement = concat(jumpboxesWithRegion, workloadWithRegion)
 
 var finalTags = union(tags, {
   project: prefix
@@ -193,13 +169,11 @@ var jumpboxSubnets = [
   for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
 ]
 
-var safeVmList = filter(finalVmPlacement, vm => vm.type != '')
-
-var windowsVMList = filter(safeVmList, vm =>
+var windowsVMList = filter(vmPlacements, vm =>
   vm.type == 'dc' || vm.type == 'jmp' || vm.type == 'srvwin' || vm.type == 'cliwin'
 )
 
-var linuxVMList = filter(safeVmList, vm =>
+var linuxVMList = filter(vmPlacements, vm =>
   vm.type == 'srvlin' || vm.type == 'clilin'
 )
 
@@ -222,7 +196,7 @@ var subnetPrefixesArray = [
 // ========================================
 
 var vmPerRegionCounts = [
-  for region in regionKeys: length(filter(vmListWithPlacement, vm => vm.regionKey == region))
+  for region in regionKeys: length(filter(vmPlacements, vm => vm.regionKey == region))
 ]
 
 var regionOverflowFlags = [
@@ -351,7 +325,7 @@ module peerings 'modules/peering/peering.bicep' = [
 ]
 
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
-  for vm in windowsVMList: if (vm != null) {
+  for vm in windowsVMList: {
     name: '${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
@@ -387,7 +361,7 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 ]
 
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
-  for vm in linuxVMList: if (vm != null) {
+  for vm in linuxVMList: {
     name: '${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
@@ -414,8 +388,34 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
 
 // DEBUG OUTPUTS //
 
-output selectedRegionsOutput array = regionKeys
-output totalVmRequested int = totalVMs
-output totalCapacityAvailable int = totalCapacity
+// List of regions selected for this deployment (ordered by regionIndexMap)// and assigned region
+// This is the primary output used to verify distribution logic
+output vmPlacement array = vmPlacements
 
-output finalPlacement array = finalVmPlacement
+// Validation message describing why deployment failed (empty if no validation errors)
+output validationMessage string = validationMessage
+
+// Per-region VM count after placement
+// Useful for confirming even distribution and ensuring no region exceeds limits
+output vmCountPerRegion array = [
+  for region in regionKeys: {
+    region: region
+    count: length(filter(vmPlacements, vm => vm.regionKey == region))
+  }
+]
+
+// Summary of capacity vs requested VMs
+// Helps quickly determine if deployment is within allowed limits
+output capacityCheck object = {
+  totalVMs: totalVMs
+  capacity: totalCapacity
+  withinLimit: totalVMs <= totalCapacity
+}
+
+output selectedRegionsOutput array = regionKeys
+
+// Total number of VMs requested across all types
+output totalVmRequested int = totalVMs
+
+// Maximum number of VMs that can be deployed based on region count and per-region limit
+output totalCapacityAvailable int = totalCapacity
