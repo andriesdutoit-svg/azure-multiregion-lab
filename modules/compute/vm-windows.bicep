@@ -1,11 +1,6 @@
 param vmName string
 param subnetId string
 param vmSize string
-
-// param vmType string
-// param vmIndex int
-// param regionIndex int
-// param subnetIndex int
 param assignPublicIp bool
 
 param adminUsername string

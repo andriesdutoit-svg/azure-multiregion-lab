@@ -13,7 +13,7 @@
     },    
     "regionIndexMap": {
         "value": {
-          "southafricanorth": 1,
+          "southafricanorth": 15,
           "southindia": 2,
           "japanwest": 3,
           "israelcentral": 4,
@@ -25,7 +25,7 @@
           "koreacentral": 10,
           "uaenorth": 16,
           "westus2": 17,
-          "centralindia": 15,
+          "centralindia": 1,
           "eastasia": 14,
           "japaneast": 13,
           "canadaeast": 11,
@@ -43,7 +43,7 @@
     },
 
     "regionCount": {
-      "value": 12
+      "value": 2
     },
 
     "maxVmsPerRegion": {
@@ -52,12 +52,12 @@
 
     "vmCounts": {
       "value": {
-        "dc": 14,
-        "jumpbox": 2,
-        "windowsServer": 2,
-        "windowsClient": 2,
-        "linuxServer": 2,
-        "linuxClient": 2
+        "dc": 2,
+        "jumpbox": 1,
+        "windowsServer": 1,
+        "windowsClient": 0,
+        "linuxServer": 0,
+        "linuxClient": 0
       }
     },
 

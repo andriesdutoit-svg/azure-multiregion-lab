@@ -342,18 +342,6 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
     params: {
       vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
       vmSize: vmSize
-      // vmType: vm.type
-
-      // vmIndex: vm.index
-      // regionIndex: regionIndexMap[vm.regionKey]
-
-      // subnetIndex: vm.type == 'dc'
-      //   ? subnetIndexMap.dc
-      //   : vm.type == 'jmp'
-      //     ? subnetIndexMap.jumpbox
-      //     : vm.type == 'srvwin'
-      //       ? subnetIndexMap.server
-      //       : subnetIndexMap.client
 
       adminUsername: vm.type == 'jmp'
         ? jumpboxAdminUsername
