@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "AMRL"
+      "value": "11A"
     },
     "tags": {
       "value": {
@@ -43,7 +43,7 @@
     },
 
     "regionCount": {
-      "value": 17
+      "value": 3
     },
 
     "maxVmsPerRegion": {
@@ -52,19 +52,23 @@
 
     "vmCounts": {
       "value": {
-        "dc": 10,
-        "jumpbox": 4,
-        "windowsServer": 5,
-        "windowsClient": 5,
-        "linuxServer": 5,
-        "linuxClient": 5
+        "dc": 3,
+        "jumpbox": 1,
+        "windowsServer": 1,
+        "windowsClient": 0,
+        "linuxServer": 1,
+        "linuxClient": 0
       }
     },
 
     "jumpboxAllowedSources": {
       "value": [
-        "198.51.100.25",
-        "203.0.113.0/24"
+        "168.210.156.45",
+        "137.158.0.0/16",
+        "197.239.0.0/16",
+        "196.24.0.0/16",
+        "196.42.0.0/16",
+        "196.47.0.0/16"
       ]
     },
 

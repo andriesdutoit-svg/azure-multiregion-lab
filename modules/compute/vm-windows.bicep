@@ -1,14 +1,21 @@
 param vmName string
 param subnetId string
 param vmSize string
+
+param vmType string
+param vmIndex int
+param regionIndex int
+param dcRegionalIndex int
+param subnetIndex int
+param privateIp string?
+param assignPublicIp bool
+
 param adminUsername string
 @secure()
 param adminPassword string
 param tags object = {}
 param image object
 param osDisk object
-param privateIp string?
-param assignPublicIp bool
 
 resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
   name: '${vmName}-nic'
@@ -22,8 +29,13 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
           subnet: {
             id: subnetId
           }
-          privateIPAllocationMethod: empty(privateIp) ? 'Dynamic' : 'Static'
-          privateIPAddress: privateIp
+          privateIPAllocationMethod: vmType == 'dc'
+            ? 'Static'
+            : (empty(privateIp) ? 'Dynamic' : 'Static')
+
+          privateIPAddress: vmType == 'dc'
+            ? '10.${regionIndex}.${subnetIndex}.${4 + dcRegionalIndex}'
+            : privateIp
           publicIPAddress: assignPublicIp ? {
             id: publicIp.id
           } : null
