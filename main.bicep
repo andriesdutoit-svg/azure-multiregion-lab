@@ -162,14 +162,7 @@ var finalTags = union(tags, {
 //
 
 var dcPerRegionIndex = [
-  for (vm, i) in vmList: vm.type == 'dc'
-    ? length(
-        filter(
-          take(vmList, i),
-          v => v.type == 'dc' && v.regionKey == vm.regionKey
-        )
-      )
-    : null
+  for (vm, i) in vmPlacements: vm.type == 'dc' ? length(filter(take(vmPlacements, i), v => v.type == 'dc' && v.regionKey == vm.regionKey)) : 0
 ]
 
 var dcIpArray = [
@@ -234,7 +227,7 @@ var invalidJumpboxCount = vmCounts.jumpbox > regionCount
 
 var regionTotal = length(regionKeys)
 
-var totalVMs = regionTotal + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
+var totalVMs = vmCounts.dc + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
 
 var totalCapacity = regionCount * maxVmsPerRegion
 
@@ -257,25 +250,7 @@ var invalidIndexSequence = contains(hasMissingIndexes, true)
 var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCapacity || missingRegionIndex || hasInvalidSubnetIndex || invalidMinimums || invalidIndexSequence || hasRegionOverflow
 var validationMessage = invalidMinimums ? 'At least 1 DC and 1 Jumpbox are required.' : invalidRegionCount ? 'Region count exceeds available regions.' : invalidJumpboxCount ? 'Jumpboxes cannot exceed number of regions.' : missingRegionIndex ? 'One or more regions are missing in regionIndexMap.' : hasInvalidSubnetIndex ? 'Subnet index map must include dc, jumpbox, server, and client.' : hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
 
-resource validationCheck 'Microsoft.Resources/deployments@2021-04-01' = if (hasValidationError) {
-  name: 'validationCheck'
-  location: deployment().location
-
-  properties: {
-    mode: 'Incremental'
-    template: {
-      '$schema': 'https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#'
-      contentVersion: '1.0.0.0'
-      resources: []
-      outputs: {
-        validationError: {
-          type: 'string'
-          value: validationMessage
-        }
-      }
-    }
-  }
-}
+assert validationCheck = !hasValidationError
 
 //
 // RESOURCE GROUPS
@@ -343,7 +318,7 @@ module peerings 'modules/peering/peering.bicep' = [
 //
 
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
-  for vm in windowsVMList: {
+  for (vm, i) in windowsVMList: {
     name: '${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
@@ -356,7 +331,7 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
       vmIndex: vm.index
       regionIndex: regionIndexMap[vm.regionKey]
 
-      dcRegionalIndex: dcPerRegionIndex[i]
+      dcRegionalIndex: vm.type == 'dc' ? dcPerRegionIndex[i] : 0
 
       subnetIndex: vm.type == 'dc'
         ? subnetIndexMap.dc
