@@ -6,7 +6,6 @@ param adminPublicKey string
 param tags object = {}
 param image object
 param osDisk object
-param privateIp string?
 param assignPublicIp bool
 
 resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
@@ -21,8 +20,7 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
           subnet: {
             id: subnetId
           }
-          privateIPAllocationMethod: empty(privateIp) ? 'Dynamic' : 'Static'
-          privateIPAddress: privateIp
+          privateIPAllocationMethod: 'Dynamic'
           publicIPAddress: assignPublicIp ? {
             id: publicIp.id
           } : null

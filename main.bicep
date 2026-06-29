@@ -132,7 +132,7 @@ var vmPlacements = [
   for (vm, i) in vmList: {
     type: vm.type
     index: vm.index
-
+    dcSlot: 0
     regionKey: isSingleRegion
       ? regionKeys[0]
       : (vm.type == 'dc' && vm.index == 0)
@@ -142,6 +142,16 @@ var vmPlacements = [
           : regionKeys[(nonDcIndexList[i] + dcCount) % regionCount]
   }
 ]
+
+var maxDcPerRegion = maxVmsPerRegion
+
+var totalDcs = vmCounts.dc
+
+var minRegionsNeededForDcs = (totalDcs + maxDcPerRegion - 1) / maxDcPerRegion
+
+var hasTooManyDcs = minRegionsNeededForDcs > regionCount
+
+var dnsServers = [for region in regionKeys: '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.4']
 
 //
 // ================================
@@ -160,17 +170,6 @@ var finalTags = union(tags, {
 //
 // NETWORK HELPER VARIABLES
 //
-
-var dcPerRegionIndex = [
-  for (vm, i) in vmPlacements: vm.type == 'dc' ? length(filter(take(vmPlacements, i), v => v.type == 'dc' && v.regionKey == vm.regionKey)) : 0
-]
-
-var dcIpArray = [
-  for (region, i) in regionKeys: replace(subnetPrefixesArray[i].dc, '0/24', '4')
-]
-
-// DNS servers for each region (DCs)
-var dnsServers = dcIpArray
 
 var jumpboxSubnets = [
   for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
@@ -225,8 +224,6 @@ var invalidRegionCount = regionCount > length(regionIndexMap)
 
 var invalidJumpboxCount = vmCounts.jumpbox > regionCount
 
-var regionTotal = length(regionKeys)
-
 var totalVMs = vmCounts.dc + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
 
 var totalCapacity = regionCount * maxVmsPerRegion
@@ -247,10 +244,29 @@ var hasMissingIndexes = [
 
 var invalidIndexSequence = contains(hasMissingIndexes, true)
 
-var hasValidationError = invalidRegionCount || invalidJumpboxCount || invalidCapacity || missingRegionIndex || hasInvalidSubnetIndex || invalidMinimums || invalidIndexSequence || hasRegionOverflow
-var validationMessage = invalidMinimums ? 'At least 1 DC and 1 Jumpbox are required.' : invalidRegionCount ? 'Region count exceeds available regions.' : invalidJumpboxCount ? 'Jumpboxes cannot exceed number of regions.' : missingRegionIndex ? 'One or more regions are missing in regionIndexMap.' : hasInvalidSubnetIndex ? 'Subnet index map must include dc, jumpbox, server, and client.' : hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
+var validationFlags = {
+  invalidMinimums: invalidMinimums
+  invalidRegionCount: invalidRegionCount
+  invalidJumpboxCount: invalidJumpboxCount
+  invalidCapacity: invalidCapacity
+  missingRegionIndex: missingRegionIndex
+  hasInvalidSubnetIndex: hasInvalidSubnetIndex
+  invalidIndexSequence: invalidIndexSequence
+  hasRegionOverflow: hasRegionOverflow
+  hasTooManyDcs: hasTooManyDcs
+}
 
-assert validationCheck = !hasValidationError
+var msg1 = invalidMinimums ? 'At least 1 DC and 1 Jumpbox are required.' : ''
+var msg2 = invalidRegionCount ? 'Region count exceeds available regions.' : ''
+var msg3 = invalidJumpboxCount ? 'Jumpboxes cannot exceed number of regions.' : ''
+var msg4 = missingRegionIndex ? 'One or more regions are missing in regionIndexMap.' : ''
+var msg5 = hasInvalidSubnetIndex ? 'Subnet index map must include dc, jumpbox, server, and client.' : ''
+var msg6 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : ''
+var msg7 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
+var msg8 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
+var msg9 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
+
+var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : ''
 
 //
 // RESOURCE GROUPS
@@ -319,27 +335,25 @@ module peerings 'modules/peering/peering.bicep' = [
 
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
   for (vm, i) in windowsVMList: {
-    name: '${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
+    name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
     params: {
       vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
       vmSize: vmSize
-      vmType: vm.type
+      // vmType: vm.type
 
-      vmIndex: vm.index
-      regionIndex: regionIndexMap[vm.regionKey]
+      // vmIndex: vm.index
+      // regionIndex: regionIndexMap[vm.regionKey]
 
-      dcRegionalIndex: vm.type == 'dc' ? dcPerRegionIndex[i] : 0
-
-      subnetIndex: vm.type == 'dc'
-        ? subnetIndexMap.dc
-        : vm.type == 'jmp'
-          ? subnetIndexMap.jumpbox
-          : vm.type == 'srvwin'
-            ? subnetIndexMap.server
-            : subnetIndexMap.client
+      // subnetIndex: vm.type == 'dc'
+      //   ? subnetIndexMap.dc
+      //   : vm.type == 'jmp'
+      //     ? subnetIndexMap.jumpbox
+      //     : vm.type == 'srvwin'
+      //       ? subnetIndexMap.server
+      //       : subnetIndexMap.client
 
       adminUsername: vm.type == 'jmp'
         ? jumpboxAdminUsername
@@ -384,7 +398,7 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
   for vm in linuxVMList: {
-    name: '${vm.type}-${padLeft(string(vm.index + 1), 2, '0')}'
+    name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
@@ -415,6 +429,8 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
 output vmPlacement array = vmPlacements
 
 // Validation message describing why deployment failed (empty if no validation errors)
+
+output validationDebug object = validationFlags
 output validationMessage string = validationMessage
 
 // Per-region VM count after placement
@@ -441,3 +457,12 @@ output totalVmRequested int = totalVMs
 
 // Maximum number of VMs that can be deployed based on region count and per-region limit
 output totalCapacityAvailable int = totalCapacity
+
+output regionSummary array = [
+  for (region, i) in regionKeys: {
+    region: region
+    addressSpace: addressPrefixes[i]
+    subnets: subnetPrefixesArray[i]
+    vmCount: length(filter(vmPlacements, vm => vm.regionKey == region))
+  }
+]

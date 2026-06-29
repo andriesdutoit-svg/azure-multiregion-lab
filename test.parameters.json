@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "11A"
+      "value": "13A"
     },
     "tags": {
       "value": {
@@ -23,13 +23,13 @@
           "mexicocentral": 8,
           "chilecentral": 9,
           "koreacentral": 10,
-          "uaenorth": 11,
-          "westus2": 12,
-          "centralindia": 13,
+          "uaenorth": 16,
+          "westus2": 17,
+          "centralindia": 15,
           "eastasia": 14,
-          "japaneast": 15,
-          "canadaeast": 16,
-          "westeurope": 17
+          "japaneast": 13,
+          "canadaeast": 11,
+          "westeurope": 12
         }
       },
 
@@ -43,7 +43,7 @@
     },
 
     "regionCount": {
-      "value": 3
+      "value": 12
     },
 
     "maxVmsPerRegion": {
@@ -52,12 +52,12 @@
 
     "vmCounts": {
       "value": {
-        "dc": 3,
-        "jumpbox": 1,
-        "windowsServer": 1,
-        "windowsClient": 0,
-        "linuxServer": 1,
-        "linuxClient": 0
+        "dc": 14,
+        "jumpbox": 2,
+        "windowsServer": 2,
+        "windowsClient": 2,
+        "linuxServer": 2,
+        "linuxClient": 2
       }
     },
 

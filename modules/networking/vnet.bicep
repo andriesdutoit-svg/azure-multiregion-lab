@@ -2,7 +2,7 @@ param vnetName string
 param location string
 param addressPrefix string
 param subnetPrefix object
-param dnsServers array = []
+param dnsServers array
 param jumpboxSubnets array
 param jumpboxAllowedSources array
 param enableClientSsh bool
@@ -135,7 +135,9 @@ module nsgDc 'nsg.bicep' = {
   params: {
     nsgName: '${vnetName}-nsg-dc'
     location: location
-    tags: tags
+    tags: union(tags, {
+      role: 'dc-nsg'
+    })
     rules: nsgRules.dc
   }
 }
@@ -145,7 +147,9 @@ module nsgJumpbox 'nsg.bicep' = {
   params: {
     nsgName: '${vnetName}-nsg-jumpbox'
     location: location
-    tags: tags
+    tags: union(tags, {
+      role: 'jumpbox-nsg'
+    })
     rules: nsgRules.jumpbox
   }
 }
@@ -155,7 +159,9 @@ module nsgServer 'nsg.bicep' = {
   params: {
     nsgName: '${vnetName}-nsg-server'
     location: location
-    tags: tags
+    tags: union(tags, {
+      role: 'server-nsg'
+    })
     rules: nsgRules.server
   }
 }
@@ -165,7 +171,9 @@ module nsgClient 'nsg.bicep' = {
   params: {
     nsgName: '${vnetName}-nsg-client'
     location: location
-    tags: tags
+    tags: union(tags, {
+      role: 'client-nsg'
+    })
     rules: nsgRules.client
   }
 }

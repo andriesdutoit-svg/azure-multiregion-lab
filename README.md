@@ -10,7 +10,52 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 - Modular architecture using reusable components  
 - Secure-by-default design principles  
 - Controlled workload distribution across multiple regions  
-- Validation-first deployment to prevent configuration errors  
+- Validation-first deployment to prevent configuration errors
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+  - [Project Evolution](#project-evolution)
+  - [Design Principles](#design-principles)
+
+- [Architecture Overview](#architecture-overview)
+  - [Regional Architecture](#regional-architecture)
+  - [Network Architecture](#network-architecture)
+  - [IP Addressing Strategy](#ip-addressing-strategy)
+  - [DNS Configuration](#dns-configuration)
+  - [Security Model](#security-model)
+  - [Workload Distribution](#workload-distribution)
+
+- [File Structure](#file-structure)
+  - [Root Files](#root-files)
+  - [Modules](#modules)
+    - [Networking](#networking)
+    - [Compute](#compute)
+    - [Peering](#peering)
+  - [Supporting Logic in main.bicep](#supporting-logic-in-mainbicep)
+  - [Foundation Layer (External)](#foundation-layer-external)
+
+- [Start Guide](#start-guide)
+  - [Step 1: Understand the Core Concept](#step-1-understand-the-core-concept)
+  - [Step 2: Core Deployment Settings](#step-2-core-deployment-settings)
+  - [Step 3: Region Mapping (VERY IMPORTANT)](#step-3-region-mapping-very-important)
+  - [Step 4: Subnet Mapping](#step-4-subnet-mapping)
+  - [Step 5: VM Counts (Controls Scale)](#step-5-vm-counts-controls-scale)
+  - [Step 6: VM Size (CRITICAL)](#step-6-vm-size-critical)
+  - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
+  - [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required)
+  - [Step 9: Deploy](#step-9-deploy)
+  - [Step 10: Validate Results](#step-10-validate-results)
+
+- [Placement Engine](#placement-engine)
+  - [Rules](#rules)
+  - [Offset-Based Placement (IMPORTANT)](#offset-based-placement-important)
+
+- [Validation](#validation)
+
+- [Outputs](#outputs)
 
 ---
 
@@ -31,7 +76,7 @@ The solution was developed iteratively, with each phase introducing additional a
   Introduction of a jumpbox model, private-only workloads, and hardened authentication.
 
 - **Current Version v1.10 — Placement and Validation Engine**  
-  Deterministic VM placement, capacity-aware distribution, and pre-deployment validation.
+  Deterministic VM placement and predictable network addressing, capacity-aware distribution, and pre-deployment validation.
 
 ---
 
@@ -56,7 +101,8 @@ The design is based on the following principles:
 
 - **Security-first approach**  
   Minimal exposure, controlled access paths, and secure credential handling.
-``
+
+  [Back to top](#table-of-contents)
 
 ---
 
@@ -89,6 +135,54 @@ Each selected region contains:
 
 ---
 
+### IP Addressing Strategy
+
+All virtual machines use **Dynamic private IP allocation**.
+
+Domain Controllers are deployed into dedicated **DC subnets per region**. Azure assigns IP addresses deterministically within each subnet:
+
+- `.0–.3` are reserved by Azure  
+- `.4` is the first usable IP address  
+
+Because Domain Controllers are deployed first into their subnets, each region’s primary DC consistently receives the `.4` address.
+
+This removes the need for complex static IP calculations while maintaining predictable addressing.
+
+---
+
+### DNS Configuration
+
+Each Virtual Network is configured to use the `.4` IP address of the Domain Controller subnet in every region.
+
+Example:
+- Region A → 10.1.2.4
+- Region B → 10.2.2.4
+- Region C → 10.3.2.4
+
+### Design Approach
+
+DNS configuration is based on deterministic infrastructure behavior rather than dynamic discovery:
+
+- Bicep does not support runtime lookup of assigned IP addresses
+- Each DC subnet is isolated and contains only Domain Controllers
+- The first deployed VM in each subnet always receives `.4`
+- Domain Controllers are deployed first, ensuring correct assignment
+
+### Behaviour
+
+- Each region contributes one DNS entry (the primary DC)
+- DNS redundancy is achieved across regions
+- VNets use multiple regional DCs for DNS resolution
+
+### Active Directory Integration
+
+After AD DS installation:
+
+- Domain Controllers automatically register themselves in DNS
+- Clients can discover all DCs using AD-integrated DNS
+
+---
+
 ### Security Model
 
 - Public access is restricted to jumpboxes only  
@@ -103,6 +197,8 @@ Each selected region contains:
 - Domain Controllers are placed first using deterministic rules  
 - All other VMs are distributed using an offset-based round-robin model  
 - Each region is constrained by a maximum VM limit to prevent over-allocation  
+
+  [Back to top](#table-of-contents)
 
 ---
 
@@ -175,6 +271,8 @@ The project is structured to separate concerns and promote modular reuse.
 - Azure Key Vault (must exist before deployment)  
 - Stores admin credentials securely  
 - Referenced directly from the parameter file
+
+  [Back to top](#table-of-contents)
 
 ---
 
@@ -435,20 +533,72 @@ az deployment sub create   --name amrl-deployment   --location westeurope   --te
 
 ## Step 10: Validate Results
 
-Check outputs:
+After deployment validation (or during development), review the outputs to confirm correctness and troubleshoot issues.
 
-- `vmPlacement` → where each VM was deployed
-- `vmCountPerRegion` → confirms no region exceeded limits
+### Key Outputs
+
+- `vmPlacement`  
+  Shows where each VM is deployed across regions.  
+  Use this to verify deterministic placement logic.
+
+- `vmCountPerRegion`  
+  Displays VM distribution per region.  
+  Confirms that no region exceeds capacity limits.
+
+- `validationMessage`  
+  Provides a human-readable explanation of the first validation failure (empty if valid).
+
+- `validationDebug`  
+  Displays detailed validation flags for all rules.  
+  Useful during development to identify exactly which condition failed.
+
+- `capacityCheck`  
+  Shows total requested VMs vs total available capacity.
+
+---
+
+### How to Use These Outputs
+
+1. Check `validationMessage` for a quick explanation  
+2. Use `validationDebug` to see which rule failed  
+3. Review `vmPlacement` and `vmCountPerRegion` to validate distribution logic  
+
+---
+
+### Note
+
+During development, validation errors are exposed via outputs instead of blocking deployment.  
+In production scenarios, assertions can be enabled to prevent invalid deployments.
 
 ---
 
 # Final Tip
 
-If deployment fails:
+# Final Tip
 
-1. Check VM size vs quota
-2. Check regionCount vs vmCounts
-3. Check Key Vault configuration
+If deployment validation fails or produces unexpected results:
+
+1. Check `validationMessage` for a high-level explanation  
+2. Inspect `validationDebug` to identify the exact failing condition  
+3. Validate VM distribution using:
+   - `vmPlacement`
+   - `vmCountPerRegion`  
+
+4. Verify configuration inputs:
+   - VM sizes vs regional quota  
+   - `regionCount` vs available regions  
+   - `vmCounts` vs total capacity  
+
+5. Confirm Key Vault configuration and secret references  
+
+---
+
+### Important
+
+Validation is designed to catch errors **before deployment**.  
+Use the outputs to fix configuration issues rather than troubleshooting failed resources.
+
+  [Back to top](#table-of-contents)
 
 ---
 
@@ -487,19 +637,80 @@ With offset:
 
 # Validation
 
-Checks include:
-- minimum VM counts
-- region constraints
-- capacity limits
-- subnet validity
+The deployment includes a validation engine that ensures configuration correctness before resources are provisioned.
+
+### Validation Rules
+
+The following checks are performed:
+
+- Minimum required VM counts (at least 1 DC and 1 jumpbox)  
+- Region count does not exceed available mappings  
+- Jumpbox count does not exceed region count  
+- Total VM count does not exceed regional capacity  
+- All regions defined in `regionKeys` exist in `regionIndexMap`  
+- Subnet index map includes required roles (dc, jumpbox, server, client)  
+- Region index values are continuous and start at 1  
+- No region exceeds the maximum VM capacity  
+- Domain Controller distribution fits within region constraints  
+
+---
+
+### Validation Outputs
+
+Validation results are exposed using:
+
+- `validationMessage` → first detected validation issue  
+- `validationDebug` → detailed boolean values for all validation checks  
 
 ---
 
 # Outputs
 
-- vmPlacement
-- vmCountPerRegion
-- validationMessage
-- capacityCheck
+The deployment provides several outputs to assist with validation, debugging, and verification.
+
+### Core Outputs
+
+- `vmPlacement`  
+  Detailed mapping of all VMs to regions  
+
+- `vmCountPerRegion`  
+  Number of VMs deployed per region  
+
+- `validationMessage`  
+  Human-readable validation error (empty if valid)  
+
+- `validationDebug`  
+  Detailed validation flags for all rules  
+
+- `capacityCheck`  
+  Summary of total requested VMs vs available capacity  
+
+- `selectedRegionsOutput`  
+  List of regions used in deployment  
+
+- `totalVmRequested`  
+  Total number of VMs requested  
+
+- `totalCapacityAvailable`  
+  Maximum allowed VMs based on configuration  
+
+---
+
+### Purpose
+
+These outputs are designed to:
+
+- Validate deployment logic  
+- Troubleshoot configuration issues  
+- Confirm workload distribution  
+- Provide insight into capacity usage  
+
+---
+
+### Best Practice
+
+Always review validation outputs before proceeding with further configuration steps.
+
+  [Back to top](#table-of-contents)
 
 ---
