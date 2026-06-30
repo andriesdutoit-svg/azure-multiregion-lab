@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "26A"
+      "value": "30A"
     },
     "tags": {
       "value": {
@@ -13,23 +13,34 @@
     },    
     "regionIndexMap": {
         "value": {
-          "southafricanorth": 2,
-          "southindia": 3,
-          "japanwest": 6,
-          "israelcentral": 7,
-          "koreasouth": 8,
-          "swedencentral": 9,
-          "australiaeast": 11,
-          "mexicocentral": 12,
-          "chilecentral": 13,
-          "koreacentral": 10,
-          "uaenorth": 14,
-          "westus2": 15,
-          "centralindia": 16,
-          "eastasia": 17,
-          "japaneast": 4,
-          "canadaeast": 5,
-          "westeurope": 1
+          "southafricanorth": 1,
+          "australiaeast": 2,
+          "australiasoutheast": 3,
+          "austriaeast": 4,
+          "belgiumcentral": 5,
+          "canadaeast": 6,
+          "centralindia": 7,
+          "chilecentral": 8,
+          "denmarkeast": 9,
+          "eastasia": 10,
+          "indonesiacentral": 11,
+          "israelcentral": 12,
+          "japaneast": 13,
+          "japanwest": 14,
+          "koreacentral": 15,
+          "koreasouth": 16,
+          "malaysiawest": 17,
+          "mexicocentral": 18,
+          "newzealandnorth": 19,
+          "polandcentral": 20,
+          "southindia": 21,
+          "southeastasia": 22,
+          "spaincentral": 23,
+          "swedencentral": 24,
+          "uaenorth": 25,
+          "westcentralus": 26,
+          "westus2": 27,
+          "westeurope": 28
         }
       },
 
@@ -77,7 +88,7 @@
     },
 
     "deploySubnets": {
-      "value": false
+      "value": true
     },
 
     "enableClientSsh": {

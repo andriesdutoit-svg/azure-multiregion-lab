@@ -23,6 +23,7 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 - [Architecture Overview](#architecture-overview)
   - [Regional Architecture](#regional-architecture)
   - [Network Architecture](#network-architecture)
+  - [Traffic Flow](#traffic-flow)
   - [IP Addressing Strategy](#ip-addressing-strategy)
   - [DNS Configuration](#dns-configuration)
   - [Security Model](#security-model)
@@ -57,6 +58,8 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 
 - [Outputs](#outputs)
 
+- [Final Tip](#final-tip)
+
 ---
 
 ### Project Evolution
@@ -67,16 +70,19 @@ The solution was developed iteratively, with each phase introducing additional a
   Multi-region networking, subnet segmentation, and DNS structure.
 
 - **v1.7 — Security and Modularity**  
-  Network Security Groups, role-based segmentation, and full mesh VNet peering.
+  Network Security Groups, role-based segmentation, and hub/spoke VNet peering.
 
 - **v1.8 — Modular Architecture**  
   Separation of components into reusable modules and integration with Azure Key Vault.
 
 - **v1.9 — Security Hardening and Identity**  
-  Introduction of a jumpbox model, private-only workloads, and hardened authentication.
+  Introduction of a jumpbox model, private-only workloads, hub firewall routing, and hardened authentication.
 
-- **Current Version v1.10 — Placement and Validation Engine**  
-  Deterministic VM placement and predictable network addressing, capacity-aware distribution, and pre-deployment validation.
+- **v1.10 — Placement and Validation Engine**  
+  Deterministic VM placement, predictable network addressing, capacity-aware distribution, route-table driven traffic control, and pre-deployment validation.
+
+- **Current Version v1.11 — Hub-Spoke Networking**  
+  Hub-and-spoke peering, hub firewall routing, spoke route tables, and refined network flow control across regions.
 
 ---
 
@@ -124,14 +130,32 @@ Each selected region contains:
 - Network Security Groups (NSGs) applied per subnet  
 - Virtual Machines based on configured roles  
 
+  [Back to top](#table-of-contents)
+
 ---
 
 ### Network Architecture
 
-- Full mesh VNet peering between all regions  
-- Private communication between all workloads  
+- Hub firewall for inspected east-west traffic  
+- Hub-to-spoke and spoke-to-hub VNet peering  
+- User-defined routes on spoke server/client subnets  
 - Controlled administrative access via jumpboxes  
 - Subnet-level traffic segmentation using NSGs  
+
+  [Back to top](#table-of-contents)
+
+---
+
+### Traffic Flow
+
+Spoke workloads do not talk directly to each other by default. Instead:
+
+- Server and client subnets in spoke regions use route tables to send internal traffic to the hub firewall
+- The hub firewall applies the central routing and security control point
+- Jumpboxes remain the entry point for administration
+- NSGs still enforce subnet-level access rules
+
+  [Back to top](#table-of-contents)
 
 ---
 
@@ -190,6 +214,8 @@ After AD DS installation:
 - Role-based NSG rules control traffic flow  
 - Credentials are securely stored in Azure Key Vault  
 
+  [Back to top](#table-of-contents)
+
 ---
 
 ### Workload Distribution
@@ -223,13 +249,19 @@ The project is structured to separate concerns and promote modular reuse.
 #### Networking
 
 - **modules/networking/vnet.bicep**  
-  Deploys VNets, integrates subnets, and configures DNS.
+  Deploys VNets, integrates subnets, configures DNS, and supports both greenfield and brownfield network reuse.
 
 - **modules/networking/subnet.bicep**  
   Defines individual subnet resources.
 
 - **modules/networking/nsg.bicep**  
   Deploys Network Security Groups with role-based rules.
+
+- **modules/networking/firewall.bicep**  
+  Deploys the hub firewall and policy-based rule collections.
+
+- **modules/networking/routeTable.bicep**  
+  Attaches user-defined routes to spoke subnets so traffic reaches the hub firewall.
 
 ---
 
@@ -246,7 +278,7 @@ The project is structured to separate concerns and promote modular reuse.
 #### Peering
 
 - **modules/peering/peering.bicep**  
-  Configures full mesh VNet peering across all regions.
+  Configures hub-to-spoke and spoke-to-hub VNet peering.
 
 ---
 
@@ -355,7 +387,7 @@ The placement engine uses this order to distribute VMs.
 
 ---
 
-## Step 4: Subnet Mapping
+## Step 4a: Subnet Mapping
 
 ```json
 "subnetIndexMap": {
@@ -379,6 +411,31 @@ The numbering determines:
 ### Recommendation
 
 Leave these values as-is unless redesigning networking.
+
+---
+
+## Step 4b: `deploySubnets` (IMPORTANT)
+
+```json
+"deploySubnets": { "value": true }
+```
+
+### What this does
+
+This switch controls whether the networking modules create subnets and NSGs, or whether they expect those resources to already exist.
+
+### Behaviour
+
+- `true` = create the subnets and NSGs as part of the deployment
+- `false` = reuse existing subnets and NSGs instead of creating them
+
+### Why it matters
+
+For a fresh lab deployment, `deploySubnets` must stay `true`. If you set it to `false` without pre-existing subnets, the deployment will fail when VMs or the firewall try to reference subnets that do not exist yet.
+
+### When to use `false`
+
+Only use `false` if you have already built the VNet, subnets, and NSGs separately and want the lab to attach to that existing network.
 
 ---
 
@@ -571,8 +628,6 @@ During development, validation errors are exposed via outputs instead of blockin
 In production scenarios, assertions can be enabled to prevent invalid deployments.
 
 ---
-
-# Final Tip
 
 # Final Tip
 

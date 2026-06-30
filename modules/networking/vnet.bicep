@@ -166,16 +166,6 @@ var subnetNames = {
 // 3) Subnets per role with NSG association
 // ========================================
 
-module subnetHub 'subnet.bicep' = if (isHub && deploySubnets) {
-  name: 'AzureFirewallSubnet'
-  params: {
-    vnetName: vnetName
-    subnetName: 'AzureFirewallSubnet'
-    addressPrefix: '10.${regionIndex}.${hubSubnetIndex}.0/24'
-    nsgId: ''
-  }
-}
-
 module nsgDc 'nsg.bicep' = if (deploySubnets) {
   name: '${vnetName}-nsg-dc'
   params: {
@@ -226,6 +216,9 @@ module nsgClient 'nsg.bicep' = if (deploySubnets) {
 
 module subnetDc 'subnet.bicep' = if (deploySubnets) {
   name: '${vnetName}-subnet-dc'
+  dependsOn: [
+    vnet
+  ]
   params: {
     vnetName: vnetName
     subnetName: subnetNames.dc
@@ -236,6 +229,9 @@ module subnetDc 'subnet.bicep' = if (deploySubnets) {
 
 module subnetJumpbox 'subnet.bicep' = if (deploySubnets) {
   name: '${vnetName}-subnet-jumpbox'
+  dependsOn: [
+    subnetDc
+  ]
   params: {
     vnetName: vnetName
     subnetName: subnetNames.jumpbox
@@ -246,6 +242,9 @@ module subnetJumpbox 'subnet.bicep' = if (deploySubnets) {
 
 module subnetServer 'subnet.bicep' = if (deploySubnets) {
   name: '${vnetName}-subnet-server'
+  dependsOn: [
+    subnetJumpbox
+  ]
   params: {
     vnetName: vnetName
     subnetName: subnetNames.server
@@ -256,11 +255,27 @@ module subnetServer 'subnet.bicep' = if (deploySubnets) {
 
 module subnetClient 'subnet.bicep' = if (deploySubnets) {
   name: '${vnetName}-subnet-client'
+  dependsOn: [
+    subnetServer
+  ]
   params: {
     vnetName: vnetName
     subnetName: subnetNames.client
     addressPrefix: subnetPrefix.client
     nsgId: nsgClient!.outputs.nsgId
+  }
+}
+
+module subnetHub 'subnet.bicep' = if (isHub && deploySubnets) {
+  name: 'AzureFirewallSubnet'
+  dependsOn: [
+    subnetClient
+  ]
+  params: {
+    vnetName: vnetName
+    subnetName: 'AzureFirewallSubnet'
+    addressPrefix: '10.${regionIndex}.${hubSubnetIndex}.0/24'
+    nsgId: ''
   }
 }
 

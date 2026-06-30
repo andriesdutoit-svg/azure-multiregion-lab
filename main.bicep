@@ -411,6 +411,10 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
+    dependsOn: [
+      vnets
+    ]
+
     params: {
       vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
       vmSize: vmSize
@@ -465,6 +469,10 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
     name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
+
+    dependsOn: [
+      vnets
+    ]
 
     params: {
       vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
