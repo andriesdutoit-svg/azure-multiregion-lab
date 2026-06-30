@@ -77,7 +77,7 @@
     },
 
     "deploySubnets": {
-      "value": true
+      "value": false
     },
 
     "enableClientSsh": {

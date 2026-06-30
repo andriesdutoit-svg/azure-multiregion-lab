@@ -1,6 +1,11 @@
 param location string
 param nextHopIp string
 
+// ========================================
+// INPUTS
+// Next hop + subnet identity/prefix + NSG IDs for server and client paths.
+// ========================================
+
 // Server subnet inputs
 param serverSubnetId string
 param serverSubnetPrefix string
@@ -13,22 +18,31 @@ param clientNsgId string
 
 //
 // ========================================
-// EXTRACT NAMES (from subnet IDs)
+// MODULE PURPOSE
+// Creates server/client route tables and attaches them to existing subnets.
+// Routes internal traffic (10.0.0.0/8) to the hub firewall next hop.
+// ========================================
+//
+
+// ========================================
+// DERIVED IDENTIFIERS
+// Parse VNet and subnet names from subnet ARM IDs.
+// Assumes subnet IDs are valid full ARM resource IDs.
 // ========================================
 //
 
 var vnetId = substring(serverSubnetId, 0, indexOf(serverSubnetId, '/subnets/'))
 var vnetName = last(split(vnetId, '/virtualNetworks/'))
 
-// Server
+// Server subnet name from ARM ID
 var serverSubnetName = last(split(serverSubnetId, '/subnets/'))
 
-// Client
+// Client subnet name from ARM ID
 var clientSubnetName = last(split(clientSubnetId, '/subnets/'))
 
 //
 // ========================================
-// EXISTING VNET REFERENCE
+// EXISTING DEPENDENCY: TARGET VNET
 // ========================================
 //
 
@@ -38,7 +52,8 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
 
 //
 // ========================================
-// ROUTE TABLES
+// RESOURCE CREATED: ROUTE TABLES
+// One route table per subnet role (server/client).
 // ========================================
 //
 
@@ -80,7 +95,8 @@ resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
 
 //
 // ========================================
-// SUBNET UPDATES (ATTACH ROUTE TABLES)
+// SUBNET UPDATES
+// Re-apply subnet prefix + NSG and attach route table association.
 // ========================================
 //
 

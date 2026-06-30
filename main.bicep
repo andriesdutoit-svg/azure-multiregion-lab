@@ -1,5 +1,14 @@
 targetScope = 'subscription'
 
+// ========================================
+// MODULE PURPOSE
+// Subscription-scope orchestrator for multi-region networking, security, routing, and VM deployment.
+// ========================================
+
+// ========================================
+// INPUTS
+// ========================================
+
 @description('Prefix for all resources')
 param prefix string
 param tags object
@@ -123,7 +132,9 @@ var nonDcIndexList = [
   for vm in vmList: vm.type == 'dc' ? -1 : indexOf(nonDcVmList, vm)
 ]
 
-//HUB//
+// ========================================
+// HUB MODEL
+// ========================================
 
 var hubRegion = primaryRegion
 
@@ -159,29 +170,17 @@ var minRegionsNeededForDcs = (totalDcs + maxDcPerRegion - 1) / maxDcPerRegion
 
 var hasTooManyDcs = minRegionsNeededForDcs > regionCount
 
-var dnsServers = [for region in regionKeys: '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.4']
-
-//
-// ================================
+// ========================================
 // VM GROUPING + SUPPORT VARIABLES
-// ================================
-//
-
-//
-// VM GROUPING
-//
+// ========================================
 
 var finalTags = union(tags, {
   project: prefix
 })
 
-//
+// ========================================
 // NETWORK HELPER VARIABLES
-//
-
-var jumpboxSubnets = [
-  for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
-]
+// ========================================
 
 var windowsVMList = filter(vmPlacements, vm =>
   vm.type == 'dc' || vm.type == 'jmp' || vm.type == 'srvwin' || vm.type == 'cliwin'
@@ -202,6 +201,12 @@ var subnetPrefixesArray = [
     server:  '10.${regionIndexMap[region]}.${subnetIndexMap.server}.0/24'
     client:  '10.${regionIndexMap[region]}.${subnetIndexMap.client}.0/24'
   }
+]
+
+var dnsServers = [for region in regionKeys: '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.4']
+
+var jumpboxSubnets = [
+  for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
 ]
 
 //
@@ -276,9 +281,9 @@ var msg9 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
 
 var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : ''
 
-//
-// RESOURCE GROUPS
-//
+// ========================================
+// DEPLOYMENT STAGE 1: RESOURCE GROUPS
+// ========================================
 
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
@@ -288,9 +293,9 @@ resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   }
 ]
 
-//
-// VNets
-//
+// ========================================
+// DEPLOYMENT STAGE 2: VNETS + NSGS + SUBNETS
+// ========================================
 
 module vnets 'modules/networking/vnet.bicep' = [
   for (region, i) in regionKeys: {
@@ -324,9 +329,9 @@ module vnets 'modules/networking/vnet.bicep' = [
   }
 ]
 
-//
-// PEERING (loop)
-//
+// ========================================
+// DEPLOYMENT STAGE 3: VNET PEERING
+// ========================================
 
 module peerings 'modules/peering/peering.bicep' = [
   for source in regionKeys: {
@@ -343,7 +348,9 @@ module peerings 'modules/peering/peering.bicep' = [
   }
 ]
 
-//FIREWALL//
+// ========================================
+// DEPLOYMENT STAGE 4: HUB FIREWALL
+// ========================================
 
 module firewall 'modules/networking/firewall.bicep' = {
   name: 'firewall-${hubRegion}'
@@ -363,7 +370,9 @@ module firewall 'modules/networking/firewall.bicep' = {
   }
 }
 
-//ROUTING TABLE//
+// ========================================
+// DEPLOYMENT STAGE 5: ROUTE TABLES (SPOKE REGIONS)
+// ========================================
 
 module routeTables 'modules/networking/routeTable.bicep' = [
   for (region, i) in regionKeys: if (region != hubRegion) {
@@ -384,17 +393,17 @@ module routeTables 'modules/networking/routeTable.bicep' = [
       serverSubnetPrefix: subnetPrefixesArray[i].server
       clientSubnetPrefix: subnetPrefixesArray[i].client
 
-      serverNsgId: vnets[i].outputs.subnets.nsgs.server
-      clientNsgId: vnets[i].outputs.subnets.nsgs.client
+      serverNsgId: vnets[i].outputs.nsgs.server
+      clientNsgId: vnets[i].outputs.nsgs.client
 
       nextHopIp: firewall.outputs.firewallPrivateIp
     }
   }
 ]
 
-//
-// VMs
-//
+// ========================================
+// DEPLOYMENT STAGE 6: WINDOWS VMS
+// ========================================
 
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
   for (vm, i) in windowsVMList: {
@@ -447,6 +456,10 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
   }
 ]
 
+// ========================================
+// DEPLOYMENT STAGE 7: LINUX VMS
+// ========================================
+
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
   for vm in linuxVMList: {
     name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
@@ -473,7 +486,9 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
   }
 ]
 
-// DEBUG OUTPUTS //
+// ========================================
+// OUTPUTS: PLACEMENT, VALIDATION, CAPACITY, REGIONAL SUMMARY
+// ========================================
 
 // List of regions selected for this deployment (ordered by regionIndexMap)// and assigned region
 // This is the primary output used to verify distribution logic

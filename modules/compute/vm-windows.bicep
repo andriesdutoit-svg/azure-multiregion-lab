@@ -1,3 +1,13 @@
+// ========================================
+// MODULE PURPOSE
+// Deploys a Windows VM with Trusted Launch and optional public IP exposure.
+// ========================================
+
+// ========================================
+// INPUTS
+// VM identity, networking, image, disk, admin credentials, and access mode.
+// ========================================
+
 param vmName string
 param subnetId string
 param vmSize string
@@ -9,6 +19,11 @@ param adminPassword string
 param tags object = {}
 param image object
 param osDisk object
+
+// ========================================
+// RESOURCE CREATED: NETWORK INTERFACE
+// Always created; attaches VM to the target subnet.
+// ========================================
 
 resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
   name: '${vmName}-nic'
@@ -23,6 +38,7 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
             id: subnetId
           }
           privateIPAllocationMethod: 'Dynamic'
+          // Optional public IP attachment based on assignPublicIp.
           publicIPAddress: assignPublicIp ? {
             id: publicIp.id
           } : null
@@ -31,6 +47,11 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
     ]
   }
 }
+
+// ========================================
+// RESOURCE CREATED: WINDOWS VM
+// System-assigned identity, Trusted Launch, and boot diagnostics enabled.
+// ========================================
 
 resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
   name: vmName
@@ -81,6 +102,11 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
     }
   }
 }
+
+// ========================================
+// CONDITIONAL RESOURCE: PUBLIC IP
+// Created only when assignPublicIp is true.
+// ========================================
 
 resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (assignPublicIp) {
   name: '${vmName}-pip'
