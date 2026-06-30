@@ -1,16 +1,56 @@
-param routeTableName string
 param location string
 param nextHopIp string
-param subnetId string
 
-// Create route table
-resource routeTable 'Microsoft.Network/routeTables@2023-02-01' = {
-  name: routeTableName
+// Server subnet inputs
+param serverSubnetId string
+param serverSubnetPrefix string
+param serverNsgId string
+
+// Client subnet inputs
+param clientSubnetId string
+param clientSubnetPrefix string
+param clientNsgId string
+
+//
+// ========================================
+// EXTRACT NAMES (from subnet IDs)
+// ========================================
+//
+
+// Server
+var serverSubnetName = last(split(serverSubnetId, '/subnets/'))
+var serverVnetId = substring(serverSubnetId, 0, indexOf(serverSubnetId, '/subnets/'))
+var serverVnetName = last(split(serverVnetId, '/virtualNetworks/'))
+
+// Client
+var clientSubnetName = last(split(clientSubnetId, '/subnets/'))
+var clientVnetId = substring(clientSubnetId, 0, indexOf(clientSubnetId, '/subnets/'))
+var clientVnetName = last(split(clientVnetId, '/virtualNetworks/'))
+
+//
+// ========================================
+// EXISTING VNET REFERENCE
+// ========================================
+//
+
+resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
+  name: serverVnetName
+}
+
+//
+// ========================================
+// ROUTE TABLES
+// ========================================
+//
+
+// Server route table
+resource rtServer 'Microsoft.Network/routeTables@2023-02-01' = {
+  name: '${serverSubnetName}-rt'
   location: location
   properties: {
     routes: [
       {
-        name: 'force-internal-through-hub'
+        name: 'route-all-to-hub'
         properties: {
           addressPrefix: '10.0.0.0/8'
           nextHopType: 'VirtualAppliance'
@@ -21,23 +61,60 @@ resource routeTable 'Microsoft.Network/routeTables@2023-02-01' = {
   }
 }
 
-// Extract names
-var subnetName = last(split(subnetId, '/subnets/'))
-var vnetId = substring(subnetId, 0, indexOf(subnetId, '/subnets/'))
-var vnetName = last(split(vnetId, '/virtualNetworks/'))
-
-// Reference existing VNet correctly (NO id here)
-resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
-  name: vnetName
+// Client route table
+resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
+  name: '${clientSubnetName}-rt'
+  location: location
+  properties: {
+    routes: [
+      {
+        name: 'route-all-to-hub'
+        properties: {
+          addressPrefix: '10.0.0.0/8'
+          nextHopType: 'VirtualAppliance'
+          nextHopIpAddress: nextHopIp
+        }
+      }
+    ]
+  }
 }
 
-// Attach route table to subnet
-resource subnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
-  name: subnetName
+//
+// ========================================
+// SUBNET UPDATES (ATTACH ROUTE TABLES)
+// ========================================
+//
+
+// Server subnet update
+resource serverSubnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
+  name: serverSubnetName
   parent: vnet
   properties: {
+    addressPrefix: serverSubnetPrefix
+
+    networkSecurityGroup: {
+      id: serverNsgId
+    }
+
     routeTable: {
-      id: routeTable.id
+      id: rtServer.id
+    }
+  }
+}
+
+// Client subnet update
+resource clientSubnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
+  name: clientSubnetName
+  parent: vnet
+  properties: {
+    addressPrefix: clientSubnetPrefix
+
+    networkSecurityGroup: {
+      id: clientNsgId
+    }
+
+    routeTable: {
+      id: rtClient.id
     }
   }
 }

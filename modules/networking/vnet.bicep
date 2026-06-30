@@ -282,4 +282,10 @@ output subnets object = {
     id: subnetClient.outputs.subnetId
     name: subnetNames.client
   }
+  nsgs: {
+    server: nsgServer.outputs.nsgId
+    client: nsgClient.outputs.nsgId
+    dc: nsgDc.outputs.nsgId
+    jumpbox: nsgJumpbox.outputs.nsgId
+  }
 }
