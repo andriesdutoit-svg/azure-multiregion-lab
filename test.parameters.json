@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "15A"
+      "value": "16A"
     },
     "tags": {
       "value": {
@@ -15,21 +15,21 @@
         "value": {
           "southafricanorth": 15,
           "southindia": 12,
-          "japanwest": 3,
-          "israelcentral": 4,
-          "koreasouth": 5,
-          "swedencentral": 6,
-          "australiaeast": 7,
-          "mexicocentral": 8,
-          "chilecentral": 9,
-          "koreacentral": 10,
+          "japanwest": 6,
+          "israelcentral": 7,
+          "koreasouth": 8,
+          "swedencentral": 1,
+          "australiaeast": 2,
+          "mexicocentral": 3,
+          "chilecentral": 4,
+          "koreacentral": 5,
           "uaenorth": 16,
           "westus2": 17,
           "centralindia": 11,
           "eastasia": 14,
           "japaneast": 13,
-          "canadaeast": 1,
-          "westeurope": 2
+          "canadaeast": 9,
+          "westeurope": 10
         }
       },
 

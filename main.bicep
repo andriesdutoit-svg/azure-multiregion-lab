@@ -340,6 +340,43 @@ module peerings 'modules/peering/peering.bicep' = [
   }
 ]
 
+//ROUTING TABLE//
+
+module routeTablesServer 'modules/networking/routeTable.bicep' = [
+  for (region, i) in regionKeys: if (region != hubRegion) {
+    name: 'rt-${region}-server'
+
+    scope: resourceGroup('${prefix}-rg-${region}')
+
+    params: {
+      routeTableName: '${prefix}-rt-${region}-server'
+      location: region
+
+      // Temporary next hop (we replace with firewall later)
+      nextHopIp: '10.${regionIndexMap[hubRegion]}.${hubSubnetIndex}.4'
+
+      subnetId: vnets[i].outputs.subnets.server.id
+    }
+  }
+]
+
+module routeTablesClient 'modules/networking/routeTable.bicep' = [
+  for (region, i) in regionKeys: if (region != hubRegion) {
+    name: 'rt-${region}-client'
+
+    scope: resourceGroup('${prefix}-rg-${region}')
+
+    params: {
+      routeTableName: '${prefix}-rt-${region}-client'
+      location: region
+
+      nextHopIp: '10.${regionIndexMap[hubRegion]}.${hubSubnetIndex}.4'
+
+      subnetId: vnets[i].outputs.subnets.client.id
+    }
+  }
+]
+
 //
 // VMs
 //
