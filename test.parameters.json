@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "AMRL"
+      "value": "15A"
     },
     "tags": {
       "value": {
@@ -13,8 +13,8 @@
     },    
     "regionIndexMap": {
         "value": {
-          "southafricanorth": 1,
-          "southindia": 2,
+          "southafricanorth": 15,
+          "southindia": 12,
           "japanwest": 3,
           "israelcentral": 4,
           "koreasouth": 5,
@@ -23,17 +23,17 @@
           "mexicocentral": 8,
           "chilecentral": 9,
           "koreacentral": 10,
-          "uaenorth": 11,
-          "westus2": 12,
-          "centralindia": 13,
+          "uaenorth": 16,
+          "westus2": 17,
+          "centralindia": 11,
           "eastasia": 14,
-          "japaneast": 15,
-          "canadaeast": 16,
-          "westeurope": 17
+          "japaneast": 13,
+          "canadaeast": 1,
+          "westeurope": 2
         }
       },
 
-    "hubSubnetIndex": {
+   "hubSubnetIndex": {
       "value": 0
     },  
 
@@ -46,8 +46,8 @@
       }
     },
 
-        "regionCount": {
-      "value": 17
+    "regionCount": {
+      "value": 5
     },
 
     "maxVmsPerRegion": {
@@ -56,19 +56,23 @@
 
     "vmCounts": {
       "value": {
-        "dc": 10,
-        "jumpbox": 4,
-        "windowsServer": 5,
-        "windowsClient": 5,
-        "linuxServer": 5,
-        "linuxClient": 5
+        "dc": 6,
+        "jumpbox": 1,
+        "windowsServer": 1,
+        "windowsClient": 1,
+        "linuxServer": 1,
+        "linuxClient": 0
       }
     },
 
     "jumpboxAllowedSources": {
       "value": [
-        "198.51.100.25",
-        "203.0.113.0/24"
+        "168.210.156.45",
+        "137.158.0.0/16",
+        "197.239.0.0/16",
+        "196.24.0.0/16",
+        "196.42.0.0/16",
+        "196.47.0.0/16"
       ]
     },
 

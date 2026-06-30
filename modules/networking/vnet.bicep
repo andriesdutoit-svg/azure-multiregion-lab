@@ -2,6 +2,9 @@ param vnetName string
 param location string
 param addressPrefix string
 param subnetPrefix object
+param regionIndex int
+param hubSubnetIndex int
+param isHub bool
 param dnsServers array
 param jumpboxSubnets array
 param jumpboxAllowedSources array
@@ -128,6 +131,21 @@ var subnetNames = {
   server: '${vnetName}-subnet-server'
   client: '${vnetName}-subnet-client'
   jumpbox: '${vnetName}-subnet-jumpbox'
+}
+
+var hubSubnetPrefix = '10.${regionIndex}.${hubSubnetIndex}.0/24'
+
+module subnetHub 'subnet.bicep' = if (isHub) {
+  name: '${vnetName}-subnet-hub'
+  dependsOn: [
+    subnetClient
+  ]
+  params: {
+    vnetName: vnetName
+    subnetName: '${vnetName}-subnet-hub'
+    addressPrefix: hubSubnetPrefix
+    nsgId: nsgServer.outputs.nsgId
+  }
 }
 
 module nsgDc 'nsg.bicep' = {

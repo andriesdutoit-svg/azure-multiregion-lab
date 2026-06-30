@@ -21,6 +21,8 @@ param windowsClientImage object
 param ubuntuImage object
 
 param regionIndexMap object
+@description('Subnet index used for hub services (only applies to hub VNet)')
+param hubSubnetIndex int
 param subnetIndexMap object
 param regionCount int
 param maxVmsPerRegion int
@@ -118,6 +120,10 @@ var nonDcVmList = filter(vmList, vm => vm.type != 'dc')
 var nonDcIndexList = [
   for vm in vmList: vm.type == 'dc' ? -1 : indexOf(nonDcVmList, vm)
 ]
+
+//HUB//
+
+var hubRegion = primaryRegion
 
 //
 // ========================================
@@ -298,6 +304,10 @@ module vnets 'modules/networking/vnet.bicep' = [
     params: {
       vnetName: '${prefix}-vnet-${region}'
       location: region
+      regionIndex: regionIndexMap[region]
+      hubSubnetIndex: hubSubnetIndex
+
+      isHub: region == hubRegion
 
       addressPrefix: addressPrefixes[i]
       subnetPrefix: subnetPrefixesArray[i]
@@ -325,6 +335,7 @@ module peerings 'modules/peering/peering.bicep' = [
       regionKeys: regionKeys
       sourceRegion: source
       prefix: prefix
+      hubRegion: hubRegion
     }
   }
 ]
