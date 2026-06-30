@@ -124,12 +124,14 @@ var regionKeys = take(sortedRegions, regionCount)
 var primaryRegion = regionKeys[0]
 var isSingleRegion = regionCount == 1
 
-// Non-DC VMs used for global round-robin ordering
-var nonDcVmList = filter(vmList, vm => vm.type != 'dc')
+// Pinned primary-region VMs are excluded from round-robin placement.
+var roundRobinVmList = filter(vmList, vm =>
+  !(vm.type == 'dc' && vm.index == 0) && !(vm.type == 'jmp' && vm.index == 0)
+)
 
-// Compute global index for non-DC VMs (used for round-robin placement)
-var nonDcIndexList = [
-  for vm in vmList: vm.type == 'dc' ? -1 : indexOf(nonDcVmList, vm)
+// Compute global index for VMs that are still eligible for round-robin placement.
+var roundRobinVmIndexList = [
+  for vm in vmList: (vm.type == 'dc' && vm.index == 0) || (vm.type == 'jmp' && vm.index == 0) ? -1 : indexOf(roundRobinVmList, vm)
 ]
 
 // ========================================
@@ -145,8 +147,6 @@ var hubRegion = primaryRegion
 // ========================================
 //
 
-var dcCount = vmCounts.dc
-
 var vmPlacements = [
   for (vm, i) in vmList: {
     type: vm.type
@@ -154,11 +154,14 @@ var vmPlacements = [
     dcSlot: 0
     regionKey: isSingleRegion
       ? regionKeys[0]
+      // Pin the first DC to the primary region.
       : (vm.type == 'dc' && vm.index == 0)
         ? primaryRegion
-        : vm.type == 'dc'
-          ? regionKeys[vm.index % regionCount]
-          : regionKeys[(nonDcIndexList[i] + dcCount) % regionCount]
+        // Pin the first jumpbox to the primary region.
+        : (vm.type == 'jmp' && vm.index == 0)
+          ? primaryRegion
+          // Place all remaining VMs across non-primary regions only.
+          : regionKeys[(roundRobinVmIndexList[i] % (regionCount - 1)) + 1]
   }
 ]
 
@@ -203,7 +206,11 @@ var subnetPrefixesArray = [
   }
 ]
 
-var dnsServers = [for region in regionKeys: '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.4']
+var nonHubDcCandidates = [
+  for region in regionKeys: region != hubRegion && length(filter(vmPlacements, vm => vm.type == 'dc' && vm.regionKey == region)) > 0 ? region : ''
+]
+
+var nonHubDcRegions = filter(nonHubDcCandidates, r => !empty(r))
 
 var jumpboxSubnets = [
   for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
@@ -320,7 +327,22 @@ module vnets 'modules/networking/vnet.bicep' = [
       addressPrefix: addressPrefixes[i]
       subnetPrefix: subnetPrefixesArray[i]
 
-      dnsServers: dnsServers
+      dnsServers: take(concat(
+        // 1. Local DC
+        (region != hubRegion && length(filter(vmPlacements, vm => vm.type == 'dc' && vm.regionKey == region)) > 0) ? [
+          '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.4'
+        ] : [],
+
+        // 2. Hub DC
+        [
+          '10.${regionIndexMap[hubRegion]}.${subnetIndexMap.dc}.4'
+        ],
+
+        // 3. Remote DC fallback
+        length(filter(nonHubDcRegions, x => x != region)) > 0 ? [
+          '10.${regionIndexMap[filter(nonHubDcRegions, x => x != region)[0]]}.${subnetIndexMap.dc}.4'
+        ] : []
+      ), 3)
       jumpboxSubnets: jumpboxSubnets
       jumpboxAllowedSources: jumpboxAllowedSources
       enableClientSsh: enableClientSsh
@@ -382,6 +404,7 @@ module routeTables 'modules/networking/routeTable.bicep' = [
     dependsOn: [
       #disable-next-line no-unnecessary-dependson
       firewall
+      vnets[i]
     ]
 
     params: {

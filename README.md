@@ -224,12 +224,13 @@ This removes the need for complex static IP calculations while maintaining predi
 
 ### DNS Configuration
 
-Each Virtual Network is configured to use the `.4` IP address of the Domain Controller subnet in every region.
+Each Virtual Network is configured with up to three DNS servers using deterministic `.4` DC subnet addresses and a fixed priority order:
 
-Example:
-- Region A → 10.1.2.4
-- Region B → 10.2.2.4
-- Region C → 10.3.2.4
+1. Local region DC (`.4`) when the region has a non-hub DC
+2. Hub region DC (`.4`)
+3. Fallback non-local DC (`.4`) from another region (if available)
+
+This ensures local-first resolution where possible, with consistent cross-region resiliency.
 
 ### Design Approach
 
@@ -242,9 +243,9 @@ DNS configuration is based on deterministic infrastructure behavior rather than 
 
 ### Behaviour
 
-- Each region contributes one DNS entry (the primary DC)
-- DNS redundancy is achieved across regions
-- VNets use multiple regional DCs for DNS resolution
+- DNS order is priority-based: local -> hub -> fallback
+- A VNet may have 2 or 3 DNS entries depending on DC placement and region count
+- DNS redundancy is maintained through hub and fallback regional DCs
 
 ### Active Directory Integration
 

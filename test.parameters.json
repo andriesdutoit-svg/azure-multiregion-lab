@@ -58,7 +58,7 @@
     },
 
     "regionCount": {
-      "value": 28
+      "value": 3
     },
 
     "maxVmsPerRegion": {
@@ -67,12 +67,12 @@
 
     "vmCounts": {
       "value": {
-        "dc": 28,
-        "jumpbox": 4,
-        "windowsServer": 6,
-        "windowsClient": 6,
-        "linuxServer": 6,
-        "linuxClient": 6
+        "dc": 2,
+        "jumpbox": 2,
+        "windowsServer": 2,
+        "windowsClient": 0,
+        "linuxServer": 0,
+        "linuxClient": 0
       }
     },
 
