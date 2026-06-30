@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "30A"
+      "value": "AMRL"
     },
     "tags": {
       "value": {
@@ -58,7 +58,7 @@
     },
 
     "regionCount": {
-      "value": 3
+      "value": 28
     },
 
     "maxVmsPerRegion": {
@@ -67,12 +67,12 @@
 
     "vmCounts": {
       "value": {
-        "dc": 3,
-        "jumpbox": 1,
-        "windowsServer": 1,
-        "windowsClient": 1,
-        "linuxServer": 0,
-        "linuxClient": 0
+        "dc": 28,
+        "jumpbox": 4,
+        "windowsServer": 6,
+        "windowsClient": 6,
+        "linuxServer": 6,
+        "linuxClient": 6
       }
     },
 

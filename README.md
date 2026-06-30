@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL)
+# Azure Multi-Region Lab (AMRL) v1.11
 
 ## Overview
 
@@ -23,6 +23,7 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 - [Architecture Overview](#architecture-overview)
   - [Regional Architecture](#regional-architecture)
   - [Network Architecture](#network-architecture)
+  - [Network Architecture Diagram](#network-architecture-diagram)
   - [Traffic Flow](#traffic-flow)
   - [IP Addressing Strategy](#ip-addressing-strategy)
   - [DNS Configuration](#dns-configuration)
@@ -42,7 +43,8 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
   - [Step 1: Understand the Core Concept](#step-1-understand-the-core-concept)
   - [Step 2: Core Deployment Settings](#step-2-core-deployment-settings)
   - [Step 3: Region Mapping (VERY IMPORTANT)](#step-3-region-mapping-very-important)
-  - [Step 4: Subnet Mapping](#step-4-subnet-mapping)
+  - [Step 4a: Subnet Mapping](#step-4a-subnet-mapping)
+  - [Step 4b: deploySubnets (IMPORTANT)](#step-4b-deploysubnets-important)
   - [Step 5: VM Counts (Controls Scale)](#step-5-vm-counts-controls-scale)
   - [Step 6: VM Size (CRITICAL)](#step-6-vm-size-critical)
   - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
@@ -53,6 +55,7 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 - [Placement Engine](#placement-engine)
   - [Rules](#rules)
   - [Offset-Based Placement (IMPORTANT)](#offset-based-placement-important)
+  - [Why this matters](#why-this-matters)
 
 - [Validation](#validation)
 
@@ -70,7 +73,7 @@ The solution was developed iteratively, with each phase introducing additional a
   Multi-region networking, subnet segmentation, and DNS structure.
 
 - **v1.7 — Security and Modularity**  
-  Network Security Groups, role-based segmentation, and hub/spoke VNet peering.
+  Network Security Groups, role-based segmentation, and VNet peering.
 
 - **v1.8 — Modular Architecture**  
   Separation of components into reusable modules and integration with Azure Key Vault.
@@ -82,7 +85,7 @@ The solution was developed iteratively, with each phase introducing additional a
   Deterministic VM placement, predictable network addressing, capacity-aware distribution, route-table driven traffic control, and pre-deployment validation.
 
 - **Current Version v1.11 — Hub-Spoke Networking**  
-  Hub-and-spoke peering, hub firewall routing, spoke route tables, and refined network flow control across regions.
+  Hub-and-spoke VNet peering combined with centralized firewall-based routing, spoke route tables, and refined network flow control across regions.
 
 ---
 
@@ -136,11 +139,56 @@ Each selected region contains:
 
 ### Network Architecture
 
-- Hub firewall for inspected east-west traffic  
-- Hub-to-spoke and spoke-to-hub VNet peering  
-- User-defined routes on spoke server/client subnets  
-- Controlled administrative access via jumpboxes  
-- Subnet-level traffic segmentation using NSGs  
+- Spoke server and client subnets use user-defined routes (UDRs) to direct traffic through the hub firewall
+- Hub firewall provides centralized east-west traffic inspection and acts as the control point for inter-region communication
+- Controlled administrative access via regional jumpboxes (only tier with public exposure)
+- Subnet-level traffic segmentation enforced using Network Security Groups (NSGs)
+
+This design enforces centralized security by preventing direct spoke-to-spoke communication and routing all inter-network traffic through the hub firewall.
+
+### Network Architecture Diagram
+
+```mermaid
+flowchart TB
+  subgraph HUB[Hub VNet - Primary Region]
+    FW[Azure Firewall\nHub control point]
+  end
+
+  subgraph A[Spoke VNet A - Region A]
+    AJ[Jumpbox Subnet\nPublic admin access]
+    AD[DC Subnet\nAD + DNS]
+    AS[Server Subnet\nUDR to Hub Firewall]
+    AC[Client Subnet\nUDR to Hub Firewall]
+  end
+
+  subgraph B[Spoke VNet B - Region B]
+    BJ[Jumpbox Subnet\nPublic admin access]
+    BD[DC Subnet\nAD + DNS]
+    BS[Server Subnet\nUDR to Hub Firewall]
+    BC[Client Subnet\nUDR to Hub Firewall]
+  end
+
+  subgraph C[Spoke VNet C - Region C]
+    CJ[Jumpbox Subnet\nPublic admin access]
+    CD[DC Subnet\nAD + DNS]
+    CS[Server Subnet\nUDR to Hub Firewall]
+    CC[Client Subnet\nUDR to Hub Firewall]
+  end
+
+  FW <--> A
+  FW <--> B
+  FW <--> C
+
+  AS --> FW
+  AC --> FW
+  BS --> FW
+  BC --> FW
+  CS --> FW
+  CC --> FW
+```
+
+Traffic path: Spoke VM -> UDR -> Hub Firewall -> Destination Spoke VM (no direct spoke-to-spoke path).
+
 
   [Back to top](#table-of-contents)
 

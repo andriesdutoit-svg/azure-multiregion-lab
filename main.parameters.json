@@ -60,7 +60,7 @@
     },
 
         "regionCount": {
-      "value": 17
+      "value": 28
     },
 
     "maxVmsPerRegion": {
@@ -69,12 +69,12 @@
 
     "vmCounts": {
       "value": {
-        "dc": 10,
+        "dc": 28,
         "jumpbox": 4,
-        "windowsServer": 5,
-        "windowsClient": 5,
-        "linuxServer": 5,
-        "linuxClient": 5
+        "windowsServer": 6,
+        "windowsClient": 6,
+        "linuxServer": 6,
+        "linuxClient": 6
       }
     },
 
@@ -86,7 +86,7 @@
     },
 
     "deploySubnets": {
-      "value": false
+      "value": true
     },
 
     "enableClientSsh": {

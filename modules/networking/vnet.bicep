@@ -58,6 +58,46 @@ var adRules = [
 
 var adAdvancedRules = [
   {
+    name: 'Allow-NTP'
+    port: '123'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-Kerberos-Password-Change'
+    port: '464'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-SMB'
+    port: '445'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-Global-Catalog'
+    port: '3268'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-Global-Catalog-SSL'
+    port: '3269'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
     name: 'Allow-LDAPS'
     port: '636'
     access: 'Allow'
