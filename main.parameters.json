@@ -6,30 +6,43 @@
     "prefix": {
       "value": "AMRL"
     },
+
     "tags": {
       "value": {
         "environment": "lab"
       }
-    },    
+    },   
+     
     "regionIndexMap": {
         "value": {
           "southafricanorth": 1,
-          "southindia": 2,
-          "japanwest": 3,
-          "israelcentral": 4,
-          "koreasouth": 5,
-          "swedencentral": 6,
-          "australiaeast": 7,
-          "mexicocentral": 8,
-          "chilecentral": 9,
-          "koreacentral": 10,
-          "uaenorth": 11,
-          "westus2": 12,
-          "centralindia": 13,
-          "eastasia": 14,
-          "japaneast": 15,
-          "canadaeast": 16,
-          "westeurope": 17
+          "australiaeast": 2,
+          "australiasoutheast": 3,
+          "austriaeast": 4,
+          "belgiumcentral": 5,
+          "canadaeast": 6,
+          "centralindia": 7,
+          "chilecentral": 8,
+          "denmarkeast": 9,
+          "eastasia": 10,
+          "indonesiacentral": 11,
+          "israelcentral": 12,
+          "japaneast": 13,
+          "japanwest": 14,
+          "koreacentral": 15,
+          "koreasouth": 16,
+          "malaysiawest": 17,
+          "mexicocentral": 18,
+          "newzealandnorth": 19,
+          "polandcentral": 20,
+          "southindia": 21,
+          "southeastasia": 22,
+          "spaincentral": 23,
+          "swedencentral": 24,
+          "uaenorth": 25,
+          "westcentralus": 26,
+          "westus2": 27,
+          "westeurope": 28
         }
       },
 
@@ -70,6 +83,10 @@
         "198.51.100.25",
         "203.0.113.0/24"
       ]
+    },
+
+    "deploySubnets": {
+      "value": false
     },
 
     "enableClientSsh": {

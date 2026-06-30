@@ -17,15 +17,14 @@ param clientNsgId string
 // ========================================
 //
 
+var vnetId = substring(serverSubnetId, 0, indexOf(serverSubnetId, '/subnets/'))
+var vnetName = last(split(vnetId, '/virtualNetworks/'))
+
 // Server
 var serverSubnetName = last(split(serverSubnetId, '/subnets/'))
-var serverVnetId = substring(serverSubnetId, 0, indexOf(serverSubnetId, '/subnets/'))
-var serverVnetName = last(split(serverVnetId, '/virtualNetworks/'))
 
 // Client
 var clientSubnetName = last(split(clientSubnetId, '/subnets/'))
-var clientVnetId = substring(clientSubnetId, 0, indexOf(clientSubnetId, '/subnets/'))
-var clientVnetName = last(split(clientVnetId, '/virtualNetworks/'))
 
 //
 // ========================================
@@ -34,7 +33,7 @@ var clientVnetName = last(split(clientVnetId, '/virtualNetworks/'))
 //
 
 resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
-  name: serverVnetName
+  name: vnetName
 }
 
 //

@@ -23,6 +23,8 @@ param ubuntuImage object
 param regionIndexMap object
 @description('Subnet index used for hub services (only applies to hub VNet)')
 param hubSubnetIndex int
+@description('Controls whether subnets should be created/modified')
+param deploySubnets bool
 param subnetIndexMap object
 param regionCount int
 param maxVmsPerRegion int
@@ -306,8 +308,9 @@ module vnets 'modules/networking/vnet.bicep' = [
       location: region
       regionIndex: regionIndexMap[region]
       hubSubnetIndex: hubSubnetIndex
-
       isHub: region == hubRegion
+
+      deploySubnets: deploySubnets
 
       addressPrefix: addressPrefixes[i]
       subnetPrefix: subnetPrefixesArray[i]
@@ -340,12 +343,37 @@ module peerings 'modules/peering/peering.bicep' = [
   }
 ]
 
+//FIREWALL//
+
+module firewall 'modules/networking/firewall.bicep' = {
+  name: 'firewall-${hubRegion}'
+
+  scope: resourceGroup('${prefix}-rg-${hubRegion}')
+
+  dependsOn: [
+    rgs
+    vnets
+  ]
+
+  params: {
+    location: hubRegion
+    firewallName: '${prefix}-fw-${hubRegion}'
+    vnetName: '${prefix}-vnet-${hubRegion}'
+    publicIpName: '${prefix}-fw-pip-${hubRegion}'
+  }
+}
+
 //ROUTING TABLE//
 
 module routeTables 'modules/networking/routeTable.bicep' = [
   for (region, i) in regionKeys: if (region != hubRegion) {
     name: 'rt-${region}'
     scope: resourceGroup('${prefix}-rg-${region}')
+
+    dependsOn: [
+      #disable-next-line no-unnecessary-dependson
+      firewall
+    ]
 
     params: {
       location: region
@@ -359,7 +387,7 @@ module routeTables 'modules/networking/routeTable.bicep' = [
       serverNsgId: vnets[i].outputs.subnets.nsgs.server
       clientNsgId: vnets[i].outputs.subnets.nsgs.client
 
-      nextHopIp: '10.${regionIndexMap[hubRegion]}.${hubSubnetIndex}.4'
+      nextHopIp: firewall.outputs.firewallPrivateIp
     }
   }
 ]

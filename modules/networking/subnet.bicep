@@ -12,7 +12,7 @@ resource subnet 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
   parent: vnet
   properties: {
     addressPrefix: addressPrefix
-    networkSecurityGroup: {
+    networkSecurityGroup: empty(nsgId) ? null : {
       id: nsgId
     }
   }

@@ -1,5 +1,6 @@
 param vnetName string
 param location string
+param deploySubnets bool
 param addressPrefix string
 param subnetPrefix object
 param regionIndex int
@@ -135,16 +136,16 @@ var subnetNames = {
 
 var hubSubnetPrefix = '10.${regionIndex}.${hubSubnetIndex}.0/24'
 
-module subnetHub 'subnet.bicep' = if (isHub) {
-  name: '${vnetName}-subnet-hub'
+module subnetHub 'subnet.bicep' = if (isHub && deploySubnets) {
+  name: 'AzureFirewallSubnet'
   dependsOn: [
     subnetClient
   ]
   params: {
     vnetName: vnetName
-    subnetName: '${vnetName}-subnet-hub'
+    subnetName: 'AzureFirewallSubnet'
     addressPrefix: hubSubnetPrefix
-    nsgId: nsgServer.outputs.nsgId
+    nsgId: ''
   }
 }
 
@@ -196,7 +197,7 @@ module nsgClient 'nsg.bicep' = {
   }
 }
 
-module subnetDc 'subnet.bicep' = {
+module subnetDc 'subnet.bicep' = if (deploySubnets) {
   name: '${vnetName}-subnet-dc'
   dependsOn: [
     vnet
@@ -209,7 +210,7 @@ module subnetDc 'subnet.bicep' = {
   }
 }
 
-module subnetJumpbox 'subnet.bicep' = {
+module subnetJumpbox 'subnet.bicep' = if (deploySubnets) {
   name: '${vnetName}-subnet-jumpbox'
   dependsOn: [
     subnetDc
@@ -222,7 +223,7 @@ module subnetJumpbox 'subnet.bicep' = {
   }
 }
 
-module subnetServer 'subnet.bicep' = {
+module subnetServer 'subnet.bicep' = if (deploySubnets) {
   name: '${vnetName}-subnet-server'
   dependsOn: [
     subnetJumpbox
@@ -235,7 +236,7 @@ module subnetServer 'subnet.bicep' = {
   }
 }
 
-module subnetClient 'subnet.bicep' = {
+module subnetClient 'subnet.bicep' = if (deploySubnets) {
   name: '${vnetName}-subnet-client'
   dependsOn: [
     subnetServer
@@ -262,30 +263,54 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
   }
 }
 
+// Existing subnet references used for safe ID resolution.
+// Avoids module.outputs access and satisfies ARM validation requirements.
+
+resource subnetClientExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
+  parent: vnet
+  name: '${vnetName}-subnet-client'
+}
+
+resource subnetDcExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
+  parent: vnet
+  name: '${vnetName}-subnet-dc'
+}
+
+resource subnetJumpboxExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
+  parent: vnet
+  name: '${vnetName}-subnet-jumpbox'
+}
+
+resource subnetServerExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
+  parent: vnet
+  name: '${vnetName}-subnet-server'
+}
+
+// ----------------------------------------
+// OUTPUTS
+// ----------------------------------------
+
 output vnetId string = vnet.id
 output vnetName string = vnet.name
 
+// ----------------------------------------
+// Subnet Outputs
+// ----------------------------------------
+// Resolve subnet IDs using existing resource references.
+// Avoids module.outputs access because subnet modules are conditional (module | null).
+// Works for both new and existing deployments.
+
 output subnets object = {
+  client: {
+    id: subnetClientExisting.id
+  }
   dc: {
-    id: subnetDc.outputs.subnetId
-    name: subnetNames.dc
+    id: subnetDcExisting.id
   }
   jumpbox: {
-    id: subnetJumpbox.outputs.subnetId
-    name: subnetNames.jumpbox
+    id: subnetJumpboxExisting.id
   }
   server: {
-    id: subnetServer.outputs.subnetId
-    name: subnetNames.server
-  }
-  client: {
-    id: subnetClient.outputs.subnetId
-    name: subnetNames.client
-  }
-  nsgs: {
-    server: nsgServer.outputs.nsgId
-    client: nsgClient.outputs.nsgId
-    dc: nsgDc.outputs.nsgId
-    jumpbox: nsgJumpbox.outputs.nsgId
+    id: subnetServerExisting.id
   }
 }

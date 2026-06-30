@@ -4,7 +4,7 @@
   "parameters": {
       
     "prefix": {
-      "value": "19A"
+      "value": "26A"
     },
     "tags": {
       "value": {
@@ -13,23 +13,23 @@
     },    
     "regionIndexMap": {
         "value": {
-          "southafricanorth": 16,
-          "southindia": 17,
-          "japanwest": 15,
-          "israelcentral": 12,
-          "koreasouth": 13,
-          "swedencentral": 6,
-          "australiaeast": 7,
-          "mexicocentral": 8,
-          "chilecentral": 4,
-          "koreacentral": 5,
-          "uaenorth": 1,
-          "westus2": 2,
-          "centralindia": 11,
-          "eastasia": 3,
-          "japaneast": 14,
-          "canadaeast": 9,
-          "westeurope": 10
+          "southafricanorth": 2,
+          "southindia": 3,
+          "japanwest": 6,
+          "israelcentral": 7,
+          "koreasouth": 8,
+          "swedencentral": 9,
+          "australiaeast": 11,
+          "mexicocentral": 12,
+          "chilecentral": 13,
+          "koreacentral": 10,
+          "uaenorth": 14,
+          "westus2": 15,
+          "centralindia": 16,
+          "eastasia": 17,
+          "japaneast": 4,
+          "canadaeast": 5,
+          "westeurope": 1
         }
       },
 
@@ -74,6 +74,10 @@
         "196.42.0.0/16",
         "196.47.0.0/16"
       ]
+    },
+
+    "deploySubnets": {
+      "value": true
     },
 
     "enableClientSsh": {
