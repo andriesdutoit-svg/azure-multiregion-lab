@@ -20,6 +20,14 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
   - [Project Evolution](#project-evolution)
   - [Design Principles](#design-principles)
 
+- [Design Decisions & Trade-offs](#design-decisions--trade-offs)
+  - [Deterministic `.4` DNS](#deterministic-4-dns)
+  - [Index-Based Placement](#index-based-placement)
+  - [Controlled Hub Placement for Control-Plane Workloads](#controlled-hub-placement-for-control-plane-workloads)
+  - [Hub Role Restriction](#hub-role-restriction)
+  - [Parallel Deployment Reality](#parallel-deployment-reality)
+  - [Global DNS](#global-dns)
+
 - [Architecture Overview](#architecture-overview)
   - [Regional Architecture](#regional-architecture)
   - [Network Architecture](#network-architecture)
@@ -27,6 +35,9 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
   - [Traffic Flow](#traffic-flow)
   - [IP Addressing Strategy](#ip-addressing-strategy)
   - [DNS Configuration](#dns-configuration)
+  - [Design Approach](#design-approach)
+  - [Behaviour](#behaviour)
+  - [Active Directory Integration](#active-directory-integration)
   - [Security Model](#security-model)
   - [Workload Distribution](#workload-distribution)
 
@@ -54,14 +65,21 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 
 - [Placement Engine](#placement-engine)
   - [Rules](#rules)
-  - [Offset-Based Placement (IMPORTANT)](#offset-based-placement-important)
+  - [Placement Decision Flow](#placement-decision-flow)
   - [Why this matters](#why-this-matters)
 
 - [Validation](#validation)
+  - [Validation Rules](#validation-rules)
+  - [Validation Outputs](#validation-outputs)
 
 - [Outputs](#outputs)
+  - [Core Outputs](#core-outputs)
+  - [Purpose](#purpose)
+  - [Best Practice](#best-practice)
 
 - [Final Tip](#final-tip)
+
+- [Future Plans](#future-plans)
 
 ---
 
@@ -114,6 +132,61 @@ The design is based on the following principles:
   [Back to top](#table-of-contents)
 
 ---
+
+## Design Decisions & Trade-offs
+
+### Deterministic `.4` DNS
+Use `.4` from each DC subnet for DNS.
+
+- Benefit: Predictable and valid.  
+- Limitation: Not all DC IPs are listed.  
+
+---
+
+### Index-Based Placement
+Placement uses deterministic indexing instead of real capacity tracking.
+
+- Benefit: Repeatable.  
+- Limitation: Approximate, not dynamic.  
+
+---
+
+### Controlled Hub Placement for Control-Plane Workloads
+The first Domain Controller and jumpbox are pinned to the hub region.  
+Additional DCs and jumpboxes are placed in spokes first, with the hub used as a fallback.
+
+- Benefit: Guarantees control-plane presence in the hub.  
+- Benefit: Distributes additional instances for resilience.  
+- Benefit: Protects limited hub capacity.  
+- Benefit: Allows additional hub placement when capacity permits.  
+- Limitation: Based on index ordering, not real-time capacity.  
+
+---
+
+### Hub Role Restriction
+Only DCs and jumpboxes are allowed in the hub.
+
+- Benefit: Clear control-plane separation.  
+- Benefit: Improved security posture.  
+- Limitation: Reduces general capacity in the hub.  
+
+---
+
+### Parallel Deployment Reality
+Placement does not rely on deployment order.
+
+- Benefit: Deterministic behaviour.  
+- Limitation: Must account for concurrent deployments.  
+
+---
+
+### Global DNS
+All VNets share the same DNS list derived from DC placement.
+
+- Benefit: Simple and consistent.  
+- Limitation: Not latency-optimised per region.  
+
+  [Back to top](#table-of-contents)
 
 ## Architecture Overview
 
@@ -246,7 +319,7 @@ DNS configuration is based on deterministic infrastructure behavior rather than 
 ### Behaviour
 
 - DNS order is hub-first, then remaining DC regions
-- A VNet may have 1, 2, or 3 DNS entries depending on DC placement and region count
+- Each VNet may have between one and three DNS entries depending on DC placement and region count
 - DNS redundancy is maintained by including multiple regional DCs when available
 
 ### Active Directory Integration
@@ -272,7 +345,8 @@ After AD DS installation:
 ### Workload Distribution
 
 - Domain Controllers are placed first using deterministic rules  
-- Remaining VMs use deterministic round-robin candidate placement with hub-avoidance for non-control workloads  
+- Non-control workloads (server/client roles) are always placed on spoke regions  
+- Additional DC/JMP workloads use spoke-first placement, then may use hub after the initial spoke-first placement pass (based on VM index)  
 - Each region is constrained by a maximum VM limit to prevent over-allocation  
 
   [Back to top](#table-of-contents)
@@ -342,7 +416,7 @@ The project is structured to separate concerns and promote modular reuse.
   Converts region mappings into a deterministic ordered list
 
 - **Placement Engine**  
-  Assigns each VM to a region using deterministic candidate placement with explicit hub pinning and hub-avoidance rules
+  Assigns each VM to a region using role-aware deterministic placement with explicit hub pinning and spoke-first control-plane behavior
 
 - **Validation Engine**  
   Ensures that configuration is valid before deployment begins
@@ -395,7 +469,7 @@ To control this behaviour, you configure a few key parameters in `main.parameter
 
 ### 🔹 maxVmsPerRegion
 - The **maximum number of VMs allowed in each region**
-- This protects you from exceeding Azure CPU quotas
+- Manual pre-check guidance: Use this to help plan around Azure CPU quotas. The template enforces VM count limits, not vCPU quota checks.
 
 Example:
 If each VM uses 2 vCPUs and quota is 4:
@@ -512,8 +586,8 @@ Defines HOW MANY VMs of each type to create.
 ### Important behaviour
 
 - Domain Controllers (dc) are placed first
-- Jumpboxes are placed early in distribution
-- Other VMs follow round-robin placement
+- The first jumpbox is pinned to the primary region
+- Non-control VMs are kept on spokes, while additional DC/JMP VMs follow spoke-first placement before hub fallback
 
 ### How to change safely
 
@@ -538,7 +612,7 @@ Defines the size of every VM (CPU + RAM).
 
 ### Why this matters
 
-Azure limits vCPU per region.
+Manual pre-check: Azure limits vCPU per region.
 
 Example:
 
@@ -549,6 +623,8 @@ Max safe:
 ```
 2 VMs per region
 ```
+
+This is a planning check only. Actual quota validation must be done against your subscription and region before deployment.
 
 ---
 
@@ -599,7 +675,11 @@ Ensure that the name of this resource group does not start with the prefix selec
 ### Create Key Vault
 
 ```bash
-az keyvault create   --name traininglab-kv   --resource-group traininglab-rg-foundation   --location westeurope   --enabled-for-template-deployment true
+az keyvault create \
+  --name traininglab-kv \
+  --resource-group traininglab-rg-foundation \
+  --location westeurope \
+  --enabled-for-template-deployment true
 ```
 
 ---
@@ -634,7 +714,11 @@ Repeat for other passwords.
 ## Step 9: Deploy
 
 ```bash
-az deployment sub create   --name amrl-deployment   --location westeurope   --template-file main.bicep   --parameters main.parameters.json
+az deployment sub create \
+  --name amrl-deployment \
+  --location westeurope \
+  --template-file main.bicep \
+  --parameters main.parameters.json
 ```
 
 ---
@@ -678,6 +762,8 @@ After deployment validation (or during development), review the outputs to confi
 During development, validation errors are exposed via outputs instead of blocking deployment.  
 In production scenarios, assertions can be enabled to prevent invalid deployments.
 
+  [Back to top](#table-of-contents)
+
 ---
 
 # Final Tip
@@ -714,22 +800,24 @@ Use the outputs to fix configuration issues rather than troubleshooting failed r
 
 1. dc01 → primary region
 2. jmp01 → primary region
-3. all remaining VMs → round-robin candidate across regions
-4. non-control VMs (not dc/jmp) are redirected away from hub when candidate lands in hub
+3. non-control VMs (not dc/jmp) → always placed on spoke regions (never hub)
+4. additional DC/JMP VMs → prefer spokes first, then may use hub after spoke-first pass
+
+Note: Bicep does not track real-time regional capacity during deployment. “Spoke-first” behavior is implemented using deterministic index-based placement rather than dynamic slot tracking.
 
 ---
 
-## Offset-Based Placement (IMPORTANT)
+## Placement Decision Flow
 
 Current placement behavior:
 
 ```
-candidateRegion = regionKeys[roundRobinVmIndex % regionCount]
-
-if candidateRegion == primaryRegion and vmType not in [dc, jmp]:
+if vmType not in [dc, jmp]:
+  finalRegion = regionKeys[(roundRobinVmIndex % (regionCount - 1)) + 1]
+elif vmType in [dc, jmp] and vmIndex < (regionCount - 1):
   finalRegion = regionKeys[(roundRobinVmIndex % (regionCount - 1)) + 1]
 else:
-  finalRegion = candidateRegion
+  finalRegion = regionKeys[roundRobinVmIndex % regionCount]
 ```
 
 ---
@@ -737,8 +825,10 @@ else:
 ## Why this matters
 
 - Control-plane placement stays deterministic (dc01 and jmp01 pinned to hub)
-- Non-control workloads are prevented from accumulating in hub
+- Non-control workloads are always excluded from hub
 - Regional spread remains predictable and capacity checks still apply
+
+  [Back to top](#table-of-contents)
 
 ---
 
@@ -752,7 +842,8 @@ The following checks are performed:
 
 - Minimum required VM counts (at least 1 DC and 1 jumpbox)  
 - Region count does not exceed available mappings  
-- Jumpbox count does not exceed region count  
+- Primary pinning is enforced (`dc01` and `jmp01` must be in the primary region)  
+- Non-control VMs (server/client roles) are not allowed in the hub region  
 - Total VM count does not exceed regional capacity  
 - All regions defined in `regionKeys` exist in `regionIndexMap`  
 - Subnet index map includes required roles (dc, jumpbox, server, client)  
@@ -768,6 +859,8 @@ Validation results are exposed using:
 
 - `validationMessage` → first detected validation issue  
 - `validationDebug` → detailed boolean values for all validation checks  
+
+  [Back to top](#table-of-contents)
 
 ---
 
@@ -817,6 +910,18 @@ These outputs are designed to:
 ### Best Practice
 
 Always review validation outputs before proceeding with further configuration steps.
+
+  [Back to top](#table-of-contents)
+
+---
+
+## Future Plans
+
+- Introduce staged deployments to control execution order and reduce concurrency risks  
+- Extend placement logic toward more accurate capacity-aware behaviour  
+- Add Azure Bastion as a secure alternative to jumpboxes  
+- Implement CI/CD pipelines for automated validation and deployment  
+- Enhance monitoring and logging for operational visibility  
 
   [Back to top](#table-of-contents)
 

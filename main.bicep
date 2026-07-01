@@ -119,6 +119,7 @@ var sortedRegions = [
 ]
 
 // Select only the required number of regions
+// This allows regionIndexMap to define more regions than are active in a given run.
 var regionKeys = take(sortedRegions, regionCount)
 
 var primaryRegion = regionKeys[0]
@@ -130,6 +131,7 @@ var roundRobinVmList = filter(vmList, vm =>
 )
 
 // Compute global index for VMs that are still eligible for round-robin placement.
+// -1 marks pinned VMs so they are never used in modulo placement math.
 var roundRobinVmIndexList = [
   for vm in vmList: (vm.type == 'dc' && vm.index == 0) || (vm.type == 'jmp' && vm.index == 0) ? -1 : indexOf(roundRobinVmList, vm)
 ]
@@ -156,19 +158,25 @@ var vmPlacements = [
     regionKey: isSingleRegion
       ? regionKeys[0]
 
-      // Pin first DC to hub
+      // Branch order is intentional:
+      // single-region override -> pinned hub control-plane -> spoke-only workloads -> spoke-first DC/JMP -> hub-eligible fallback.
+
+      // Always pin first DC and jumpbox
       : (vm.type == 'dc' && vm.index == 0)
         ? primaryRegion
 
-      // Pin first jumpbox to hub
       : (vm.type == 'jmp' && vm.index == 0)
         ? primaryRegion
 
-      // Redirect non-control VMs away from hub
-      : (regionKeys[roundRobinVmIndexList[i] % regionCount] == primaryRegion && !(vm.type == 'dc' || vm.type == 'jmp'))
+      // Workloads NEVER go to hub
+      : !(vm.type == 'dc' || vm.type == 'jmp')
         ? regionKeys[(roundRobinVmIndexList[i] % (regionCount - 1)) + 1]
 
-      // Otherwise use candidate region
+      // DC/JMP prefer spokes first
+      : vm.index < (regionCount - 1)
+        ? regionKeys[(roundRobinVmIndexList[i] % (regionCount - 1)) + 1]
+
+      // After spokes are “likely filled” → allow hub
       : regionKeys[roundRobinVmIndexList[i] % regionCount]
   }
 ]
@@ -231,6 +239,7 @@ var orderedDcRegions = concat(
 )
 
 // Build candidate DNS server IPs from the DC subnet (.4) in each ordered DC region.
+// This derives DNS from where DCs are actually placed, rather than from static region assumptions.
 var dnsCandidates = [
   for region in orderedDcRegions: '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.4'
 ]
@@ -268,12 +277,17 @@ var invalidMinimums = vmCounts.dc < 1 || vmCounts.jumpbox < 1
 
 var invalidRegionCount = regionCount > length(regionIndexMap)
 
-var invalidJumpboxCount = vmCounts.jumpbox > regionCount
+var missingPinnedDc = empty(filter(vmPlacements, vm => vm.type == 'dc' && vm.index == 0 && vm.regionKey == primaryRegion))
+var missingPinnedJumpbox = empty(filter(vmPlacements, vm => vm.type == 'jmp' && vm.index == 0 && vm.regionKey == primaryRegion))
+var invalidPrimaryPinning = missingPinnedDc || missingPinnedJumpbox
+
+var hasNonControlInHub = length(filter(vmPlacements, vm => !(vm.type == 'dc' || vm.type == 'jmp') && vm.regionKey == hubRegion)) > 0
 
 var totalVMs = vmCounts.dc + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
 
 var totalCapacity = regionCount * maxVmsPerRegion
 
+// Capacity validation is VM-count based; it does not evaluate subscription vCPU quota.
 var invalidCapacity = totalVMs > totalCapacity
 
 var hasInvalidRegionIndex = [
@@ -293,7 +307,8 @@ var invalidIndexSequence = contains(hasMissingIndexes, true)
 var validationFlags = {
   invalidMinimums: invalidMinimums
   invalidRegionCount: invalidRegionCount
-  invalidJumpboxCount: invalidJumpboxCount
+  invalidPrimaryPinning: invalidPrimaryPinning
+  hasNonControlInHub: hasNonControlInHub
   invalidCapacity: invalidCapacity
   missingRegionIndex: missingRegionIndex
   hasInvalidSubnetIndex: hasInvalidSubnetIndex
@@ -304,15 +319,17 @@ var validationFlags = {
 
 var msg1 = invalidMinimums ? 'At least 1 DC and 1 Jumpbox are required.' : ''
 var msg2 = invalidRegionCount ? 'Region count exceeds available regions.' : ''
-var msg3 = invalidJumpboxCount ? 'Jumpboxes cannot exceed number of regions.' : ''
-var msg4 = missingRegionIndex ? 'One or more regions are missing in regionIndexMap.' : ''
-var msg5 = hasInvalidSubnetIndex ? 'Subnet index map must include dc, jumpbox, server, and client.' : ''
-var msg6 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : ''
-var msg7 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
-var msg8 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
-var msg9 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
+var msg3 = invalidPrimaryPinning ? 'Primary pinning failed: dc01 and jmp01 must be placed in the primary region.' : ''
+var msg4 = hasNonControlInHub ? 'One or more non-control VMs were placed in the hub region.' : ''
+var msg5 = missingRegionIndex ? 'One or more regions are missing in regionIndexMap.' : ''
+var msg6 = hasInvalidSubnetIndex ? 'Subnet index map must include dc, jumpbox, server, and client.' : ''
+var msg7 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : ''
+var msg8 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
+var msg9 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
+var msg10 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
 
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : ''
+// Emit only the first failing validation message so operators get one clear primary failure reason.
+var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : ''
 
 // ========================================
 // DEPLOYMENT STAGE 1: RESOURCE GROUPS
@@ -439,6 +456,8 @@ module routeTables 'modules/networking/routeTable.bicep' = [
 // DEPLOYMENT STAGE 6: WINDOWS VMS
 // ========================================
 
+// Compute waits for routeTables so spoke subnet route associations are applied before VM provisioning starts.
+
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
   for (vm, i) in windowsVMList: {
     name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
@@ -447,6 +466,7 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 
     dependsOn: [
       vnets
+      routeTables
     ]
 
     params: {
@@ -498,6 +518,8 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 // DEPLOYMENT STAGE 7: LINUX VMS
 // ========================================
 
+// Same ordering guarantee as Windows VMs: network pathing is established first.
+
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
   for vm in linuxVMList: {
     name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
@@ -506,6 +528,7 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
 
     dependsOn: [
       vnets
+      routeTables
     ]
 
     params: {

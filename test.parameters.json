@@ -13,9 +13,9 @@
     },    
     "regionIndexMap": {
         "value": {
-          "southafricanorth": 1,
-          "australiaeast": 2,
-          "australiasoutheast": 3,
+          "southafricanorth": 26,
+          "australiaeast": 27,
+          "australiasoutheast": 28,
           "austriaeast": 4,
           "belgiumcentral": 5,
           "canadaeast": 6,
@@ -38,9 +38,9 @@
           "spaincentral": 23,
           "swedencentral": 24,
           "uaenorth": 25,
-          "westcentralus": 26,
-          "westus2": 27,
-          "westeurope": 28
+          "westcentralus": 1,
+          "westus2": 2,
+          "westeurope": 3
         }
       },
 

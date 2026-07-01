@@ -121,6 +121,9 @@ resource serverSubnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-0
 resource clientSubnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
   name: clientSubnetName
   parent: vnet
+  dependsOn: [
+    serverSubnetUpdate
+  ]
   properties: {
     addressPrefix: clientSubnetPrefix
 
