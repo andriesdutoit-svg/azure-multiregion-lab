@@ -88,7 +88,13 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 
 The solution was developed iteratively, with each phase introducing additional architectural capability:
 
-- **v1.6 — Foundation Layer**  
+- **v1.0 — IaC Baseline**  
+  Introduced the initial Bicep-based multi-region deployment baseline with static VNet peering and CLI-driven execution.
+
+- **v1.5 — Automation and Validation**  
+  Standardised and automated subscription-scope deployments with repeatable validation and cross-region connectivity testing.
+
+- **v1.6 — Core Network Foundation**  
   Multi-region networking, subnet segmentation, and DNS structure.
 
 - **v1.7 — Security and Modularity**  
@@ -104,7 +110,7 @@ The solution was developed iteratively, with each phase introducing additional a
   Deterministic VM placement, predictable network addressing, capacity-aware distribution, route-table driven traffic control, and pre-deployment validation.
 
 - **Current Version v1.11 — Hub-Spoke Networking**  
-  Hub-and-spoke VNet peering combined with centralized firewall-based routing, spoke route tables, and refined network flow control across regions.
+  Hub-and-spoke VNet peering combined with centralised firewall-based routing, spoke route tables, and refined network flow control across regions.
 
 ---
 
@@ -214,11 +220,11 @@ Each selected region contains:
 ### Network Architecture
 
 - Spoke server and client subnets use user-defined routes (UDRs) to direct traffic through the hub firewall
-- Hub firewall provides centralized east-west traffic inspection and acts as the control point for inter-region communication
+- Hub firewall provides centralised east-west traffic inspection and acts as the control point for inter-region communication
 - Controlled administrative access via regional jumpboxes (only tier with public exposure)
 - Subnet-level traffic segmentation enforced using Network Security Groups (NSGs)
 
-This design enforces centralized security by preventing direct spoke-to-spoke communication and routing all inter-network traffic through the hub firewall.
+This design enforces centralised security by preventing direct spoke-to-spoke communication and routing all inter-network traffic through the hub firewall.
 
 ### Network Architecture Diagram
 
@@ -310,7 +316,7 @@ This same ordered DNS server list is applied consistently across all VNets.
 
 ### Design Approach
 
-DNS configuration is based on deterministic infrastructure behavior rather than dynamic discovery:
+DNS configuration is based on deterministic infrastructure behaviour rather than dynamic discovery:
 
 - Bicep does not support runtime lookup of assigned IP addresses
 - Each DC subnet is isolated and contains only Domain Controllers
@@ -424,7 +430,7 @@ The project is structured to separate concerns and promote modular reuse.
   Converts region mappings into a deterministic ordered list
 
 - **Placement Engine**  
-  Assigns each VM to a region using role-aware deterministic placement with explicit hub pinning and spoke-first control-plane behavior
+  Assigns each VM to a region using role-aware deterministic placement with explicit hub pinning and spoke-first control-plane behaviour
 
 - **Validation Engine**  
   Invokes `modules/logic/validation.bicep` and surfaces validation outputs at the top level
@@ -811,13 +817,13 @@ Use the outputs to fix configuration issues rather than troubleshooting failed r
 3. non-control VMs (not dc/jmp) → always placed on spoke regions (never hub)
 4. additional DC/JMP VMs → prefer spokes first, then may use hub after spoke-first pass
 
-Note: Bicep does not track real-time regional capacity during deployment. “Spoke-first” behavior is implemented using deterministic index-based placement rather than dynamic slot tracking.
+Note: Bicep does not track real-time regional capacity during deployment. “Spoke-first” behaviour is implemented using deterministic index-based placement rather than dynamic slot tracking.
 
 ---
 
 ## Placement Decision Flow
 
-Current placement behavior:
+Current placement behaviour:
 
 ```
 if vmType not in [dc, jmp]:
