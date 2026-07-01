@@ -58,7 +58,7 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
   - [Step 4a: Subnet Mapping](#step-4a-subnet-mapping)
   - [Step 4b: deploySubnets](#step-4b-deploysubnets)
   - [Step 5: VM Counts (Controls Scale)](#step-5-vm-counts-controls-scale)
-  - [Step 6: VM Size (CRITICAL)](#step-6-vm-size-critical)
+  - [Step 6: VM Size](#step-6-vm-size)
   - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
   - [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required)
   - [Step 9: Deploy](#step-9-deploy)
@@ -614,7 +614,7 @@ totalVMs ≤ regionCount × maxVmsPerRegion
 
 ---
 
-## Step 6: VM Size (CRITICAL)
+## Step 6: VM Size
 
 ```json
 "vmSize": { "value": "Standard_B2ls_v2" }
