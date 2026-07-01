@@ -1,3 +1,19 @@
+// Controls when resources deploy.
+@allowed([
+  'network'
+  'control'
+  'workload'
+  'all'
+])
+param stage string = 'all'
+
+// Stage flags for conditional deployment of modules
+var deployNetwork = stage == 'network' || stage == 'all'
+var deployControl = stage == 'control' || stage == 'all'
+var deployWorkload = stage == 'workload' || stage == 'all'
+
+
+
 targetScope = 'subscription'
 
 // ========================================
@@ -44,6 +60,56 @@ param enableClientSsh bool
 
 param vmSize string
 param osDisk object
+
+var subnetResourceIds = [
+  for region in regionKeys: {
+    dc: resourceId(
+      subscription().subscriptionId,
+      '${prefix}-rg-${region}',
+      'Microsoft.Network/virtualNetworks/subnets',
+      '${prefix}-vnet-${region}',
+      'dc'
+    )
+    jumpbox: resourceId(
+      subscription().subscriptionId,
+      '${prefix}-rg-${region}',
+      'Microsoft.Network/virtualNetworks/subnets',
+      '${prefix}-vnet-${region}',
+      'jumpbox'
+    )
+    server: resourceId(
+      subscription().subscriptionId,
+      '${prefix}-rg-${region}',
+      'Microsoft.Network/virtualNetworks/subnets',
+      '${prefix}-vnet-${region}',
+      'server'
+    )
+    client: resourceId(
+      subscription().subscriptionId,
+      '${prefix}-rg-${region}',
+      'Microsoft.Network/virtualNetworks/subnets',
+      '${prefix}-vnet-${region}',
+      'client'
+    )
+  }
+]
+
+var nsgResourceIds = [
+  for region in regionKeys: {
+    server: resourceId(
+      subscription().subscriptionId,
+      '${prefix}-rg-${region}',
+      'Microsoft.Network/networkSecurityGroups',
+      '${prefix}-nsg-server-${region}'
+    )
+    client: resourceId(
+      subscription().subscriptionId,
+      '${prefix}-rg-${region}',
+      'Microsoft.Network/networkSecurityGroups',
+      '${prefix}-nsg-client-${region}'
+    )
+  }
+]
 
 //
 // ========================================
@@ -290,7 +356,7 @@ resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
 // ========================================
 
 module vnets 'modules/networking/vnet.bicep' = [
-  for (region, i) in regionKeys: {
+  for (region, i) in regionKeys: if (deployNetwork) {
 
     name: 'vnet-${region}'
 
@@ -326,7 +392,7 @@ module vnets 'modules/networking/vnet.bicep' = [
 // ========================================
 
 module peerings 'modules/peering/peering.bicep' = [
-  for source in regionKeys: {
+  for source in regionKeys: if (deployNetwork) {
     name: 'peerings-${source}'
     scope: resourceGroup('${prefix}-rg-${source}')
     dependsOn: vnets
@@ -344,7 +410,7 @@ module peerings 'modules/peering/peering.bicep' = [
 // DEPLOYMENT STAGE 4: HUB FIREWALL
 // ========================================
 
-module firewall 'modules/networking/firewall.bicep' = {
+module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
   name: 'firewall-${hubRegion}'
 
   scope: resourceGroup('${prefix}-rg-${hubRegion}')
@@ -367,7 +433,7 @@ module firewall 'modules/networking/firewall.bicep' = {
 // ========================================
 
 module routeTables 'modules/networking/routeTable.bicep' = [
-  for (region, i) in regionKeys: if (region != hubRegion) {
+  for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
     name: 'rt-${region}'
     scope: resourceGroup('${prefix}-rg-${region}')
 
@@ -380,14 +446,14 @@ module routeTables 'modules/networking/routeTable.bicep' = [
     params: {
       location: region
 
-      serverSubnetId: vnets[i].outputs.subnets.server.id
-      clientSubnetId: vnets[i].outputs.subnets.client.id
-
+      serverSubnetId: subnetResourceIds[i].server
+      clientSubnetId: subnetResourceIds[i].client
+  
       serverSubnetPrefix: subnetPrefixesArray[i].server
       clientSubnetPrefix: subnetPrefixesArray[i].client
 
-      serverNsgId: vnets[i].outputs.nsgs.server
-      clientNsgId: vnets[i].outputs.nsgs.client
+      serverNsgId: nsgResourceIds[i].server
+      clientNsgId: nsgResourceIds[i].client
 
       nextHopIp: firewall.outputs.firewallPrivateIp
     }
@@ -400,8 +466,29 @@ module routeTables 'modules/networking/routeTable.bicep' = [
 
 // Compute waits for routeTables so spoke subnet route associations are applied before VM provisioning starts.
 
+// ------------------------------
+// Stage-based filtering
+// ------------------------------
+
+var controlWindowsVMs = filter(windowsVMList, vm =>
+  vm.type == 'dc' || vm.type == 'jmp'
+)
+
+var workloadWindowsVMs = filter(windowsVMList, vm =>
+  vm.type == 'srvwin' || vm.type == 'cliwin'
+)
+
+var activeWindowsVMs = concat(
+  deployControl ? controlWindowsVMs : [],
+  deployWorkload ? workloadWindowsVMs : []
+)
+
+// ------------------------------
+// Windows VM Module Deployment
+// ------------------------------
+
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
-  for (vm, i) in windowsVMList: {
+  for (vm, i) in activeWindowsVMs: {
     name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
@@ -427,13 +514,14 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
           ? serverAdminPassword
           : clientAdminPassword)
 
+      
       subnetId: vm.type == 'dc'
-        ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.dc.id
+        ? subnetResourceIds[indexOf(regionKeys, vm.regionKey)].dc
         : vm.type == 'jmp'
-          ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.jumpbox.id
+          ? subnetResourceIds[indexOf(regionKeys, vm.regionKey)].jumpbox
           : vm.type == 'srvwin'
-            ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id
-            : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
+            ? subnetResourceIds[indexOf(regionKeys, vm.regionKey)].server
+            : subnetResourceIds[indexOf(regionKeys, vm.regionKey)].client
 
       assignPublicIp: vm.type == 'jmp'
 
@@ -462,8 +550,10 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 
 // Same ordering guarantee as Windows VMs: network pathing is established first.
 
+var activeLinuxVMs = deployWorkload ? linuxVMList : []
+
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
-  for vm in linuxVMList: {
+  for vm in activeLinuxVMs: {
     name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
@@ -480,7 +570,11 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
       adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
       adminPublicKey: adminPublicKey
 
-      subnetId: vm.type == 'srvlin' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
+      subnetId: vm.type == 'srvlin'
+        ? subnetResourceIds[indexOf(regionKeys, vm.regionKey)].server
+        : subnetResourceIds[indexOf(regionKeys, vm.regionKey)].client
+
+
       assignPublicIp: false
 
       tags: union(finalTags, {

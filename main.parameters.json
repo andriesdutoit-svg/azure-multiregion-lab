@@ -52,6 +52,7 @@
 
     "subnetIndexMap": {
       "value": {
+        "firewall": 0,
         "jumpbox": 1,
         "dc": 2,
         "server": 3,
