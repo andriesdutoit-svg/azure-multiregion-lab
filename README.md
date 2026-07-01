@@ -54,11 +54,11 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 - [Start Guide](#start-guide)
   - [Step 1: Understand the Core Concept](#step-1-understand-the-core-concept)
   - [Step 2: Core Deployment Settings](#step-2-core-deployment-settings)
-  - [Step 3: Region Mapping (VERY IMPORTANT)](#step-3-region-mapping-very-important)
+  - [Step 3: Region Mapping](#step-3-region-mapping)
   - [Step 4a: Subnet Mapping](#step-4a-subnet-mapping)
-  - [Step 4b: deploySubnets (IMPORTANT)](#step-4b-deploysubnets-important)
+  - [Step 4b: deploySubnets](#step-4b-deploysubnets)
   - [Step 5: VM Counts (Controls Scale)](#step-5-vm-counts-controls-scale)
-  - [Step 6: VM Size (CRITICAL)](#step-6-vm-size-critical)
+  - [Step 6: VM Size](#step-6-vm-size)
   - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
   - [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required)
   - [Step 9: Deploy](#step-9-deploy)
@@ -110,7 +110,7 @@ The solution was developed iteratively, with each phase introducing additional a
   Deterministic VM placement, predictable network addressing, capacity-aware distribution, route-table driven traffic control, and pre-deployment validation.
 
 - **Current Version v1.11 — Hub-Spoke Networking**  
-  Hub-and-spoke VNet peering combined with centralized firewall-based routing, spoke route tables, and refined network flow control across regions.
+  Hub-and-spoke VNet peering combined with centralised firewall-based routing, spoke route tables, and refined network flow control across regions.
 
 ---
 
@@ -220,11 +220,11 @@ Each selected region contains:
 ### Network Architecture
 
 - Spoke server and client subnets use user-defined routes (UDRs) to direct traffic through the hub firewall
-- Hub firewall provides centralized east-west traffic inspection and acts as the control point for inter-region communication
+- Hub firewall provides centralised east-west traffic inspection and acts as the control point for inter-region communication
 - Controlled administrative access via regional jumpboxes (only tier with public exposure)
 - Subnet-level traffic segmentation enforced using Network Security Groups (NSGs)
 
-This design enforces centralized security by preventing direct spoke-to-spoke communication and routing all inter-network traffic through the hub firewall.
+This design enforces centralised security by preventing direct spoke-to-spoke communication and routing all inter-network traffic through the hub firewall.
 
 ### Network Architecture Diagram
 
@@ -316,7 +316,7 @@ This same ordered DNS server list is applied consistently across all VNets.
 
 ### Design Approach
 
-DNS configuration is based on deterministic infrastructure behavior rather than dynamic discovery:
+DNS configuration is based on deterministic infrastructure behaviour rather than dynamic discovery:
 
 - Bicep does not support runtime lookup of assigned IP addresses
 - Each DC subnet is isolated and contains only Domain Controllers
@@ -430,7 +430,7 @@ The project is structured to separate concerns and promote modular reuse.
   Converts region mappings into a deterministic ordered list
 
 - **Placement Engine**  
-  Assigns each VM to a region using role-aware deterministic placement with explicit hub pinning and spoke-first control-plane behavior
+  Assigns each VM to a region using role-aware deterministic placement with explicit hub pinning and spoke-first control-plane behaviour
 
 - **Validation Engine**  
   Invokes `modules/logic/validation.bicep` and surfaces validation outputs at the top level
@@ -493,7 +493,7 @@ maxVmsPerRegion = 2
 
 ---
 
-## Step 3: Region Mapping (VERY IMPORTANT)
+## Step 3: Region Mapping
 
 For example:
 
@@ -553,7 +553,7 @@ Leave these values as-is unless redesigning networking.
 
 ---
 
-## Step 4b: `deploySubnets` (IMPORTANT)
+## Step 4b: `deploySubnets`
 
 ```json
 "deploySubnets": { "value": true }
@@ -614,7 +614,7 @@ totalVMs ≤ regionCount × maxVmsPerRegion
 
 ---
 
-## Step 6: VM Size (CRITICAL)
+## Step 6: VM Size
 
 ```json
 "vmSize": { "value": "Standard_B2ls_v2" }
@@ -817,13 +817,13 @@ Use the outputs to fix configuration issues rather than troubleshooting failed r
 3. non-control VMs (not dc/jmp) → always placed on spoke regions (never hub)
 4. additional DC/JMP VMs → prefer spokes first, then may use hub after spoke-first pass
 
-Note: Bicep does not track real-time regional capacity during deployment. “Spoke-first” behavior is implemented using deterministic index-based placement rather than dynamic slot tracking.
+Note: Bicep does not track real-time regional capacity during deployment. “Spoke-first” behaviour is implemented using deterministic index-based placement rather than dynamic slot tracking.
 
 ---
 
 ## Placement Decision Flow
 
-Current placement behavior:
+Current placement behaviour:
 
 ```
 if vmType not in [dc, jmp]:
