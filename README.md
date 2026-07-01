@@ -224,13 +224,15 @@ This removes the need for complex static IP calculations while maintaining predi
 
 ### DNS Configuration
 
-Each Virtual Network is configured with up to three DNS servers using deterministic `.4` DC subnet addresses and a fixed priority order:
+Each Virtual Network is configured with up to three DNS servers, using deterministic `.4` addresses from DC subnets.
 
-1. Local region DC (`.4`) when the region has a non-hub DC
-2. Hub region DC (`.4`)
-3. Fallback non-local DC (`.4`) from another region (if available)
+The DNS server list is derived dynamically from domain controller placements and ordered as follows:
 
-This ensures local-first resolution where possible, with consistent cross-region resiliency.
+1. The hub region DC (`.4`) is prioritised when present
+2. Remaining regions containing DCs are included in deterministic order
+3. The list is truncated to a maximum of three DNS servers
+
+This same ordered DNS server list is applied consistently across all VNets.
 
 ### Design Approach
 
@@ -243,9 +245,9 @@ DNS configuration is based on deterministic infrastructure behavior rather than 
 
 ### Behaviour
 
-- DNS order is priority-based: local -> hub -> fallback
-- A VNet may have 2 or 3 DNS entries depending on DC placement and region count
-- DNS redundancy is maintained through hub and fallback regional DCs
+- DNS order is hub-first, then remaining DC regions
+- A VNet may have 1, 2, or 3 DNS entries depending on DC placement and region count
+- DNS redundancy is maintained by including multiple regional DCs when available
 
 ### Active Directory Integration
 
@@ -270,7 +272,7 @@ After AD DS installation:
 ### Workload Distribution
 
 - Domain Controllers are placed first using deterministic rules  
-- All other VMs are distributed using an offset-based round-robin model  
+- Remaining VMs use deterministic round-robin candidate placement with hub-avoidance for non-control workloads  
 - Each region is constrained by a maximum VM limit to prevent over-allocation  
 
   [Back to top](#table-of-contents)
@@ -340,7 +342,7 @@ The project is structured to separate concerns and promote modular reuse.
   Converts region mappings into a deterministic ordered list
 
 - **Placement Engine**  
-  Assigns each VM to a region using offset-based round-robin logic
+  Assigns each VM to a region using deterministic candidate placement with explicit hub pinning and hub-avoidance rules
 
 - **Validation Engine**  
   Ensures that configuration is valid before deployment begins
@@ -711,31 +713,32 @@ Use the outputs to fix configuration issues rather than troubleshooting failed r
 ## Rules
 
 1. dc01 → primary region
-2. remaining DCs → evenly distributed
-3. all other VMs → offset-based round-robin
+2. jmp01 → primary region
+3. all remaining VMs → round-robin candidate across regions
+4. non-control VMs (not dc/jmp) are redirected away from hub when candidate lands in hub
 
 ---
 
 ## Offset-Based Placement (IMPORTANT)
 
-Round-robin is offset by number of DCs:
+Current placement behavior:
 
 ```
-finalIndex = (nonDcIndex + dcCount) % regionCount
+candidateRegion = regionKeys[roundRobinVmIndex % regionCount]
+
+if candidateRegion == primaryRegion and vmType not in [dc, jmp]:
+  finalRegion = regionKeys[(roundRobinVmIndex % (regionCount - 1)) + 1]
+else:
+  finalRegion = candidateRegion
 ```
 
 ---
 
 ## Why this matters
 
-Without offset:
-- Regions pre-filled by DCs get extra VMs
-- Regions overflow
-
-With offset:
-- Distribution starts in empty regions
-- Balanced placement achieved
-- No region exceeds limits
+- Control-plane placement stays deterministic (dc01 and jmp01 pinned to hub)
+- Non-control workloads are prevented from accumulating in hub
+- Regional spread remains predictable and capacity checks still apply
 
 ---
 

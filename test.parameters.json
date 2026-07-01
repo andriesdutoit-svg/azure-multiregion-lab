@@ -67,9 +67,9 @@
 
     "vmCounts": {
       "value": {
-        "dc": 2,
+        "dc": 4,
         "jumpbox": 2,
-        "windowsServer": 2,
+        "windowsServer": 0,
         "windowsClient": 0,
         "linuxServer": 0,
         "linuxClient": 0

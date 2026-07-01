@@ -152,16 +152,24 @@ var vmPlacements = [
     type: vm.type
     index: vm.index
     dcSlot: 0
+
     regionKey: isSingleRegion
       ? regionKeys[0]
-      // Pin the first DC to the primary region.
+
+      // Pin first DC to hub
       : (vm.type == 'dc' && vm.index == 0)
         ? primaryRegion
-        // Pin the first jumpbox to the primary region.
-        : (vm.type == 'jmp' && vm.index == 0)
-          ? primaryRegion
-          // Place all remaining VMs across non-primary regions only.
-          : regionKeys[(roundRobinVmIndexList[i] % (regionCount - 1)) + 1]
+
+      // Pin first jumpbox to hub
+      : (vm.type == 'jmp' && vm.index == 0)
+        ? primaryRegion
+
+      // Redirect non-control VMs away from hub
+      : (regionKeys[roundRobinVmIndexList[i] % regionCount] == primaryRegion && !(vm.type == 'dc' || vm.type == 'jmp'))
+        ? regionKeys[(roundRobinVmIndexList[i] % (regionCount - 1)) + 1]
+
+      // Otherwise use candidate region
+      : regionKeys[roundRobinVmIndexList[i] % regionCount]
   }
 ]
 
@@ -206,11 +214,29 @@ var subnetPrefixesArray = [
   }
 ]
 
-var nonHubDcCandidates = [
-  for region in regionKeys: region != hubRegion && length(filter(vmPlacements, vm => vm.type == 'dc' && vm.regionKey == region)) > 0 ? region : ''
+// Collect the region key for each DC placement entry.
+// Non-DC VMs emit an empty marker that gets removed later.
+var dcPlacements = [
+  for vm in vmPlacements: vm.type == 'dc' ? vm.regionKey : ''
 ]
 
-var nonHubDcRegions = filter(nonHubDcCandidates, r => !empty(r))
+// Remove empty markers and de-duplicate region keys.
+var dcRegions = filter(union(dcPlacements, []), region => !empty(region))
+
+// Keep hub DC first, then append remaining DC regions.
+// This preserves deterministic DNS ordering for all VNets.
+var orderedDcRegions = concat(
+  contains(dcRegions, primaryRegion) ? [primaryRegion] : [],
+  filter(dcRegions, r => r != primaryRegion)
+)
+
+// Build candidate DNS server IPs from the DC subnet (.4) in each ordered DC region.
+var dnsCandidates = [
+  for region in orderedDcRegions: '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.4'
+]
+
+// Each VNet supports up to 3 custom DNS servers.
+var dnsServers = take(dnsCandidates, 3)
 
 var jumpboxSubnets = [
   for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
@@ -327,22 +353,7 @@ module vnets 'modules/networking/vnet.bicep' = [
       addressPrefix: addressPrefixes[i]
       subnetPrefix: subnetPrefixesArray[i]
 
-      dnsServers: take(concat(
-        // 1. Local DC
-        (region != hubRegion && length(filter(vmPlacements, vm => vm.type == 'dc' && vm.regionKey == region)) > 0) ? [
-          '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.4'
-        ] : [],
-
-        // 2. Hub DC
-        [
-          '10.${regionIndexMap[hubRegion]}.${subnetIndexMap.dc}.4'
-        ],
-
-        // 3. Remote DC fallback
-        length(filter(nonHubDcRegions, x => x != region)) > 0 ? [
-          '10.${regionIndexMap[filter(nonHubDcRegions, x => x != region)[0]]}.${subnetIndexMap.dc}.4'
-        ] : []
-      ), 3)
+      dnsServers: dnsServers
       jumpboxSubnets: jumpboxSubnets
       jumpboxAllowedSources: jumpboxAllowedSources
       enableClientSsh: enableClientSsh
