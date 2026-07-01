@@ -88,7 +88,13 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 
 The solution was developed iteratively, with each phase introducing additional architectural capability:
 
-- **v1.6 — Foundation Layer**  
+- **v1.0 — IaC Baseline**  
+  Introduced the initial Bicep-based multi-region deployment baseline with static VNet peering and CLI-driven execution.
+
+- **v1.5 — Automation and Validation**  
+  Standardised and automated subscription-scope deployments with repeatable validation and cross-region connectivity testing.
+
+- **v1.6 — Core Network Foundation**  
   Multi-region networking, subnet segmentation, and DNS structure.
 
 - **v1.7 — Security and Modularity**  
