@@ -47,6 +47,7 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
     - [Networking](#networking)
     - [Compute](#compute)
     - [Peering](#peering)
+    - [Logic](#logic)
   - [Supporting Logic in main.bicep](#supporting-logic-in-mainbicep)
   - [Foundation Layer (External)](#foundation-layer-external)
 
@@ -362,7 +363,7 @@ The project is structured to separate concerns and promote modular reuse.
 ### Root Files
 
 - **main.bicep**  
-  Entry point for the deployment. Defines orchestration, placement logic, validation, and module calls.
+  Entry point for the deployment. Defines orchestration, placement logic, and module calls.
 
 - **main.parameters.json**  
   Contains all configurable inputs such as regions, VM counts, and sizes.
@@ -407,6 +408,13 @@ The project is structured to separate concerns and promote modular reuse.
 
 ---
 
+#### Logic
+
+- **modules/logic/validation.bicep**  
+  Evaluates placement and configuration checks and emits validation outputs used by `main.bicep`.
+
+---
+
 ### Supporting Logic in main.bicep
 
 - **VM Model Construction**  
@@ -419,7 +427,7 @@ The project is structured to separate concerns and promote modular reuse.
   Assigns each VM to a region using role-aware deterministic placement with explicit hub pinning and spoke-first control-plane behavior
 
 - **Validation Engine**  
-  Ensures that configuration is valid before deployment begins
+  Invokes `modules/logic/validation.bicep` and surfaces validation outputs at the top level
 
 ---
 
@@ -857,6 +865,7 @@ The following checks are performed:
 
 Validation results are exposed using:
 
+- `validationSummary` → concise status string (`Validation passed.` or first detected validation issue)  
 - `validationMessage` → first detected validation issue  
 - `validationDebug` → detailed boolean values for all validation checks  
 
@@ -878,6 +887,9 @@ The deployment provides several outputs to assist with validation, debugging, an
 
 - `validationMessage`  
   Human-readable validation error (empty if valid)  
+
+- `validationSummary`  
+  Human-readable one-line status for quick review in Portal Outputs  
 
 - `validationDebug`  
   Detailed validation flags for all rules  

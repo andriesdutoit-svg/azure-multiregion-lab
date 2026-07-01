@@ -253,83 +253,25 @@ var jumpboxSubnets = [
 
 //
 // ========================================
-// PER-REGION CAPACITY VALIDATION
-// ========================================
-
-var vmPerRegionCounts = [
-  for region in regionKeys: length(filter(vmPlacements, vm => vm.regionKey == region))
-]
-
-var regionOverflowFlags = [
-  for count in vmPerRegionCounts: count > maxVmsPerRegion
-]
-
-var hasRegionOverflow = contains(regionOverflowFlags, true)
-
-//
-// ========================================
 // VALIDATION ENGINE
-// Ensures configuration is valid BEFORE deployment
+// Delegated to modules/logic/validation.bicep
 // ========================================
-//
 
-var invalidMinimums = vmCounts.dc < 1 || vmCounts.jumpbox < 1
-
-var invalidRegionCount = regionCount > length(regionIndexMap)
-
-var missingPinnedDc = empty(filter(vmPlacements, vm => vm.type == 'dc' && vm.index == 0 && vm.regionKey == primaryRegion))
-var missingPinnedJumpbox = empty(filter(vmPlacements, vm => vm.type == 'jmp' && vm.index == 0 && vm.regionKey == primaryRegion))
-var invalidPrimaryPinning = missingPinnedDc || missingPinnedJumpbox
-
-var hasNonControlInHub = length(filter(vmPlacements, vm => !(vm.type == 'dc' || vm.type == 'jmp') && vm.regionKey == hubRegion)) > 0
-
-var totalVMs = vmCounts.dc + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
-
-var totalCapacity = regionCount * maxVmsPerRegion
-
-// Capacity validation is VM-count based; it does not evaluate subscription vCPU quota.
-var invalidCapacity = totalVMs > totalCapacity
-
-var hasInvalidRegionIndex = [
-  for region in regionKeys: contains(regionIndexMap, region) ? false : true
-]
-
-var missingRegionIndex = contains(hasInvalidRegionIndex, true)
-
-var hasInvalidSubnetIndex = !(contains(subnetIndexMap, 'jumpbox') && contains(subnetIndexMap, 'dc') && contains(subnetIndexMap, 'server') && contains(subnetIndexMap, 'client'))
-
-var hasMissingIndexes = [
-  for i in range(1, length(regionIndexMap) + 1): empty(filter(items(regionIndexMap), r => r.value == i))
-]
-
-var invalidIndexSequence = contains(hasMissingIndexes, true)
-
-var validationFlags = {
-  invalidMinimums: invalidMinimums
-  invalidRegionCount: invalidRegionCount
-  invalidPrimaryPinning: invalidPrimaryPinning
-  hasNonControlInHub: hasNonControlInHub
-  invalidCapacity: invalidCapacity
-  missingRegionIndex: missingRegionIndex
-  hasInvalidSubnetIndex: hasInvalidSubnetIndex
-  invalidIndexSequence: invalidIndexSequence
-  hasRegionOverflow: hasRegionOverflow
-  hasTooManyDcs: hasTooManyDcs
+module validationEngine 'modules/logic/validation.bicep' = {
+  name: 'validation-engine'
+  params: {
+    vmCounts: vmCounts
+    regionCount: regionCount
+    regionIndexMap: regionIndexMap
+    subnetIndexMap: subnetIndexMap
+    vmPlacements: vmPlacements
+    regionKeys: regionKeys
+    maxVmsPerRegion: maxVmsPerRegion
+    primaryRegion: primaryRegion
+    hubRegion: hubRegion
+    hasTooManyDcs: hasTooManyDcs
+  }
 }
-
-var msg1 = invalidMinimums ? 'At least 1 DC and 1 Jumpbox are required.' : ''
-var msg2 = invalidRegionCount ? 'Region count exceeds available regions.' : ''
-var msg3 = invalidPrimaryPinning ? 'Primary pinning failed: dc01 and jmp01 must be placed in the primary region.' : ''
-var msg4 = hasNonControlInHub ? 'One or more non-control VMs were placed in the hub region.' : ''
-var msg5 = missingRegionIndex ? 'One or more regions are missing in regionIndexMap.' : ''
-var msg6 = hasInvalidSubnetIndex ? 'Subnet index map must include dc, jumpbox, server, and client.' : ''
-var msg7 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : ''
-var msg8 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
-var msg9 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
-var msg10 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
-
-// Emit only the first failing validation message so operators get one clear primary failure reason.
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : ''
 
 // ========================================
 // DEPLOYMENT STAGE 1: RESOURCE GROUPS
@@ -561,33 +503,36 @@ output vmPlacement array = vmPlacements
 
 // Validation message describing why deployment failed (empty if no validation errors)
 
-output validationDebug object = validationFlags
-output validationMessage string = validationMessage
+output validationDebug object = validationEngine.outputs.validationFlags
+output validationMessage string = validationEngine.outputs.validationMessage
+output validationSummary string = empty(validationEngine.outputs.validationMessage)
+  ? 'Validation passed.'
+  : validationEngine.outputs.validationMessage
 
 // Per-region VM count after placement
 // Useful for confirming even distribution and ensuring no region exceeds limits
 output vmCountPerRegion array = [
-  for region in regionKeys: {
+  for (region, i) in regionKeys: {
     region: region
-    count: length(filter(vmPlacements, vm => vm.regionKey == region))
+    count: validationEngine.outputs.vmPerRegionCounts[i]
   }
 ]
 
 // Summary of capacity vs requested VMs
 // Helps quickly determine if deployment is within allowed limits
 output capacityCheck object = {
-  totalVMs: totalVMs
-  capacity: totalCapacity
-  withinLimit: totalVMs <= totalCapacity
+  totalVMs: validationEngine.outputs.totalVMs
+  capacity: validationEngine.outputs.totalCapacity
+  withinLimit: validationEngine.outputs.totalVMs <= validationEngine.outputs.totalCapacity
 }
 
 output selectedRegionsOutput array = regionKeys
 
 // Total number of VMs requested across all types
-output totalVmRequested int = totalVMs
+output totalVmRequested int = validationEngine.outputs.totalVMs
 
 // Maximum number of VMs that can be deployed based on region count and per-region limit
-output totalCapacityAvailable int = totalCapacity
+output totalCapacityAvailable int = validationEngine.outputs.totalCapacity
 
 output regionSummary array = [
   for (region, i) in regionKeys: {
