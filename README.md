@@ -54,9 +54,9 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 - [Start Guide](#start-guide)
   - [Step 1: Understand the Core Concept](#step-1-understand-the-core-concept)
   - [Step 2: Core Deployment Settings](#step-2-core-deployment-settings)
-  - [Step 3: Region Mapping (VERY IMPORTANT)](#step-3-region-mapping-very-important)
+  - [Step 3: Region Mapping](#step-3-region-mapping)
   - [Step 4a: Subnet Mapping](#step-4a-subnet-mapping)
-  - [Step 4b: deploySubnets (IMPORTANT)](#step-4b-deploysubnets-important)
+  - [Step 4b: deploySubnets](#step-4b-deploysubnets)
   - [Step 5: VM Counts (Controls Scale)](#step-5-vm-counts-controls-scale)
   - [Step 6: VM Size (CRITICAL)](#step-6-vm-size-critical)
   - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
@@ -493,7 +493,7 @@ maxVmsPerRegion = 2
 
 ---
 
-## Step 3: Region Mapping (VERY IMPORTANT)
+## Step 3: Region Mapping
 
 For example:
 
@@ -553,7 +553,7 @@ Leave these values as-is unless redesigning networking.
 
 ---
 
-## Step 4b: `deploySubnets` (IMPORTANT)
+## Step 4b: `deploySubnets`
 
 ```json
 "deploySubnets": { "value": true }
