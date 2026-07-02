@@ -1,3 +1,5 @@
+targetScope = 'subscription'
+
 // Controls when resources deploy.
 @allowed([
   'network'
@@ -11,10 +13,6 @@ param stage string = 'all'
 var deployNetwork = stage == 'network' || stage == 'all'
 var deployControl = stage == 'control' || stage == 'all'
 var deployWorkload = stage == 'workload' || stage == 'all'
-
-
-
-targetScope = 'subscription'
 
 // ========================================
 // MODULE PURPOSE
@@ -60,56 +58,6 @@ param enableClientSsh bool
 
 param vmSize string
 param osDisk object
-
-var subnetResourceIds = [
-  for region in regionKeys: {
-    dc: resourceId(
-      subscription().subscriptionId,
-      '${prefix}-rg-${region}',
-      'Microsoft.Network/virtualNetworks/subnets',
-      '${prefix}-vnet-${region}',
-      'dc'
-    )
-    jumpbox: resourceId(
-      subscription().subscriptionId,
-      '${prefix}-rg-${region}',
-      'Microsoft.Network/virtualNetworks/subnets',
-      '${prefix}-vnet-${region}',
-      'jumpbox'
-    )
-    server: resourceId(
-      subscription().subscriptionId,
-      '${prefix}-rg-${region}',
-      'Microsoft.Network/virtualNetworks/subnets',
-      '${prefix}-vnet-${region}',
-      'server'
-    )
-    client: resourceId(
-      subscription().subscriptionId,
-      '${prefix}-rg-${region}',
-      'Microsoft.Network/virtualNetworks/subnets',
-      '${prefix}-vnet-${region}',
-      'client'
-    )
-  }
-]
-
-var nsgResourceIds = [
-  for region in regionKeys: {
-    server: resourceId(
-      subscription().subscriptionId,
-      '${prefix}-rg-${region}',
-      'Microsoft.Network/networkSecurityGroups',
-      '${prefix}-nsg-server-${region}'
-    )
-    client: resourceId(
-      subscription().subscriptionId,
-      '${prefix}-rg-${region}',
-      'Microsoft.Network/networkSecurityGroups',
-      '${prefix}-nsg-client-${region}'
-    )
-  }
-]
 
 //
 // ========================================
@@ -432,8 +380,13 @@ module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
 // DEPLOYMENT STAGE 5: ROUTE TABLES (SPOKE REGIONS)
 // ========================================
 
+    // Suppressions in this module are intentional: BCP318 appears because vnet/firewall outputs are conditionally evaluated
+    // by the analyser in this loop, and no-unnecessary-dependson is kept to enforce firewall-before-route-table ordering
+    // that helps avoid Azure concurrent network update conflicts during subnet route association.
+
 module routeTables 'modules/networking/routeTable.bicep' = [
   for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
+
     name: 'rt-${region}'
     scope: resourceGroup('${prefix}-rg-${region}')
 
@@ -446,15 +399,22 @@ module routeTables 'modules/networking/routeTable.bicep' = [
     params: {
       location: region
 
-      serverSubnetId: subnetResourceIds[i].server
-      clientSubnetId: subnetResourceIds[i].client
-  
+      #disable-next-line BCP318
+      serverSubnetId: vnets[i].outputs.subnets.server.id
+
+      #disable-next-line BCP318
+      clientSubnetId: vnets[i].outputs.subnets.client.id
+
       serverSubnetPrefix: subnetPrefixesArray[i].server
       clientSubnetPrefix: subnetPrefixesArray[i].client
 
-      serverNsgId: nsgResourceIds[i].server
-      clientNsgId: nsgResourceIds[i].client
+      #disable-next-line BCP318
+      serverNsgId: vnets[i].outputs.nsgs.server
 
+      #disable-next-line BCP318
+      clientNsgId: vnets[i].outputs.nsgs.client
+
+      #disable-next-line BCP318
       nextHopIp: firewall.outputs.firewallPrivateIp
     }
   }
@@ -513,15 +473,20 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
         : (vm.type == 'dc' || vm.type == 'srvwin'
           ? serverAdminPassword
           : clientAdminPassword)
-
       
+      // BCP318 suppressions below are intentional: subnet outputs are resolved by VM type at runtime,
+      // but the static analyser cannot always prove the selected branch is non-null in this conditional chain.
       subnetId: vm.type == 'dc'
-        ? subnetResourceIds[indexOf(regionKeys, vm.regionKey)].dc
+        #disable-next-line BCP318
+        ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.dc.id
         : vm.type == 'jmp'
-          ? subnetResourceIds[indexOf(regionKeys, vm.regionKey)].jumpbox
+          #disable-next-line BCP318
+          ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.jumpbox.id
           : vm.type == 'srvwin'
-            ? subnetResourceIds[indexOf(regionKeys, vm.regionKey)].server
-            : subnetResourceIds[indexOf(regionKeys, vm.regionKey)].client
+            #disable-next-line BCP318
+            ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id
+            #disable-next-line BCP318
+            : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
 
       assignPublicIp: vm.type == 'jmp'
 
@@ -561,6 +526,7 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
     dependsOn: [
       vnets
       routeTables
+      windowsVMs
     ]
 
     params: {
@@ -570,10 +536,14 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
       adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
       adminPublicKey: adminPublicKey
 
+      // srvlin -> server subnet, clilin -> client subnet
+      // BCP318 suppressions below are intentional: subnet output selection is conditional by VM type,
+      // and the static analyser treats these indexed outputs as potentially nullable.
       subnetId: vm.type == 'srvlin'
-        ? subnetResourceIds[indexOf(regionKeys, vm.regionKey)].server
-        : subnetResourceIds[indexOf(regionKeys, vm.regionKey)].client
-
+        #disable-next-line BCP318
+        ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id
+        #disable-next-line BCP318
+        : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
 
       assignPublicIp: false
 

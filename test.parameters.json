@@ -1,0 +1,170 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+      
+    "prefix": {
+      "value": "A4"
+    },
+
+    "tags": {
+      "value": {
+        "environment": "lab"
+      }
+    },   
+     
+    "regionIndexMap": {
+        "value": {
+          "southafricanorth": 19,
+          "australiaeast": 8,
+          "australiasoutheast": 26,
+          "austriaeast": 16,
+          "belgiumcentral": 14,
+          "canadaeast": 6,
+          "centralindia": 7,
+          "chilecentral": 10,
+          "denmarkeast": 9,
+          "eastasia": 2,
+          "indonesiacentral": 1,
+          "israelcentral": 12,
+          "japaneast": 13,
+          "japanwest": 5,
+          "koreacentral": 15,
+          "koreasouth": 4,
+          "malaysiawest": 17,
+          "mexicocentral": 11,
+          "newzealandnorth": 18,
+          "polandcentral": 20,
+          "southindia": 21,
+          "southeastasia": 3,
+          "spaincentral": 23,
+          "swedencentral": 24,
+          "uaenorth": 25,
+          "westcentralus": 22,
+          "westus2": 27,
+          "westeurope": 28
+        }
+      },
+
+    "hubSubnetIndex": {
+      "value": 0
+    },  
+
+    "subnetIndexMap": {
+      "value": {
+        "firewall": 0,
+        "jumpbox": 1,
+        "dc": 2,
+        "server": 3,
+        "client": 4
+      }
+    },
+
+        "regionCount": {
+      "value": 5
+    },
+
+    "maxVmsPerRegion": {
+      "value": 2
+    },
+
+    "vmCounts": {
+      "value": {
+        "dc": 4,
+        "jumpbox": 2,
+        "windowsServer": 1,
+        "windowsClient": 1,
+        "linuxServer": 1,
+        "linuxClient": 1
+      }
+    },
+
+    "jumpboxAllowedSources": {
+      "value": [
+        "168.210.156.45",
+        "137.158.0.0/16",
+        "197.239.0.0/16",
+        "196.24.0.0/16",
+        "196.42.0.0/16",
+        "196.47.0.0/16"
+      ]
+    },
+
+    "deploySubnets": {
+      "value": true
+    },
+
+    "enableClientSsh": {
+      "value": true
+    },
+
+    "windowsServerImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsServer",
+        "offer": "WindowsServer",
+        "sku": "2022-datacenter-g2",
+        "version": "latest"
+      }
+    },
+    "windowsClientImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsDesktop",
+        "offer": "windows-10",
+        "sku": "win10-22h2-ent-g2",
+        "version": "latest"
+      }
+    },
+    "ubuntuImage": {
+      "value": {
+        "publisher": "Canonical",
+        "offer": "0001-com-ubuntu-server-jammy",
+        "sku": "22_04-lts-gen2",
+        "version": "latest"
+      }
+    },
+    "vmSize": {
+      "value": "Standard_B2ls_v2"
+    },
+    "osDisk": {
+      "value": {
+        "storageAccountType": "Standard_LRS"
+      }
+    },
+    "adminPublicKey": {
+      "value": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO5JidQnbZ4LWITUUPbydIRe9QuSV8ID4kiWEHXmZ1jU"
+    },
+    "jumpboxAdminUsername": {
+      "value": "azureadmin"
+    },
+    "jumpboxAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/1f3e6e09-53d2-487c-bca6-e9f60495d521/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
+        },
+        "secretName": "jumpboxAdminPassword"
+      }
+    },
+    "serverAdminUsername": {
+      "value": "azureadmin"
+    },
+    "serverAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/1f3e6e09-53d2-487c-bca6-e9f60495d521/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
+        },
+        "secretName": "serverAdminPassword"
+      }
+    },
+    "clientAdminUsername": {
+      "value": "azureadmin"
+    },
+    "clientAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/1f3e6e09-53d2-487c-bca6-e9f60495d521/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
+        },
+        "secretName": "clientAdminPassword"
+      }
+    }
+  }
+}

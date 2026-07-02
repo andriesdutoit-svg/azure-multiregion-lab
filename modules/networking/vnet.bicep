@@ -401,7 +401,7 @@ var jumpboxNsgId = deploySubnets ? nsgJumpbox!.outputs.nsgId : nsgJumpboxExistin
 
 // ========================================
 // OUTPUTS
-// VNet metadata plus normalized NSG/subnet objects for downstream modules.
+// VNet metadata plus normalised NSG/subnet objects for downstream modules.
 // ========================================
 
 output vnetId string = vnet.id
