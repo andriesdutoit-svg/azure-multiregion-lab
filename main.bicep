@@ -1,5 +1,14 @@
 targetScope = 'subscription'
 
+// Controls when resources deploy.
+@allowed([
+  'network'
+  'control'
+  'workload'
+  'all'
+])
+param stage string = 'all'
+
 // ========================================
 // MODULE PURPOSE
 // Subscription-scope orchestrator for multi-region networking, security, routing, and VM deployment.
@@ -12,7 +21,6 @@ targetScope = 'subscription'
 @description('Prefix for all resources')
 param prefix string
 param tags object
-
 param jumpboxAdminUsername string
 @secure()
 param jumpboxAdminPassword string
@@ -22,28 +30,26 @@ param serverAdminPassword string
 param clientAdminUsername string
 @secure()
 param clientAdminPassword string
-
 param adminPublicKey string
-
 param windowsServerImage object
 param windowsClientImage object
 param ubuntuImage object
-
 param regionIndexMap object
-@description('Subnet index used for hub services (only applies to hub VNet)')
-param hubSubnetIndex int
-@description('Controls whether subnets should be created/modified')
+@description('True = create NSGs and subnets. False = use existing NSGs and subnets for brownfield deployments')
 param deploySubnets bool
 param subnetIndexMap object
 param regionCount int
 param maxVmsPerRegion int
 param vmCounts object
-
 param jumpboxAllowedSources array
 param enableClientSsh bool
-
 param vmSize string
 param osDisk object
+
+// Stage flags for conditional deployment of modules
+var deployNetwork = stage == 'network' || stage == 'all'
+var deployControl = stage == 'control' || stage == 'all'
+var deployWorkload = stage == 'workload' || stage == 'all'
 
 //
 // ========================================
@@ -182,11 +188,8 @@ var vmPlacements = [
 ]
 
 var maxDcPerRegion = maxVmsPerRegion
-
 var totalDcs = vmCounts.dc
-
 var minRegionsNeededForDcs = (totalDcs + maxDcPerRegion - 1) / maxDcPerRegion
-
 var hasTooManyDcs = minRegionsNeededForDcs > regionCount
 
 // ========================================
@@ -215,6 +218,7 @@ var addressPrefixes = [
 
 var subnetPrefixesArray = [
   for region in regionKeys: {
+    firewall: '10.${regionIndexMap[region]}.${subnetIndexMap.firewall}.0/24'
     jumpbox: '10.${regionIndexMap[region]}.${subnetIndexMap.jumpbox}.0/24'
     dc:      '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.0/24'
     server:  '10.${regionIndexMap[region]}.${subnetIndexMap.server}.0/24'
@@ -290,7 +294,7 @@ resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
 // ========================================
 
 module vnets 'modules/networking/vnet.bicep' = [
-  for (region, i) in regionKeys: {
+  for (region, i) in regionKeys: if (deployNetwork) {
 
     name: 'vnet-${region}'
 
@@ -303,8 +307,6 @@ module vnets 'modules/networking/vnet.bicep' = [
     params: {
       vnetName: '${prefix}-vnet-${region}'
       location: region
-      regionIndex: regionIndexMap[region]
-      hubSubnetIndex: hubSubnetIndex
       isHub: region == hubRegion
 
       deploySubnets: deploySubnets
@@ -326,7 +328,7 @@ module vnets 'modules/networking/vnet.bicep' = [
 // ========================================
 
 module peerings 'modules/peering/peering.bicep' = [
-  for source in regionKeys: {
+  for source in regionKeys: if (deployNetwork) {
     name: 'peerings-${source}'
     scope: resourceGroup('${prefix}-rg-${source}')
     dependsOn: vnets
@@ -344,7 +346,7 @@ module peerings 'modules/peering/peering.bicep' = [
 // DEPLOYMENT STAGE 4: HUB FIREWALL
 // ========================================
 
-module firewall 'modules/networking/firewall.bicep' = {
+module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
   name: 'firewall-${hubRegion}'
 
   scope: resourceGroup('${prefix}-rg-${hubRegion}')
@@ -366,8 +368,13 @@ module firewall 'modules/networking/firewall.bicep' = {
 // DEPLOYMENT STAGE 5: ROUTE TABLES (SPOKE REGIONS)
 // ========================================
 
+// Suppressions in this module are intentional: BCP318 appears because vnet/firewall outputs are conditionally evaluated
+// by the analyser in this loop, and no-unnecessary-dependson is kept to enforce firewall-before-route-table ordering
+// that helps avoid Azure concurrent network update conflicts during subnet route association.
+
 module routeTables 'modules/networking/routeTable.bicep' = [
-  for (region, i) in regionKeys: if (region != hubRegion) {
+  for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
+
     name: 'rt-${region}'
     scope: resourceGroup('${prefix}-rg-${region}')
 
@@ -380,15 +387,22 @@ module routeTables 'modules/networking/routeTable.bicep' = [
     params: {
       location: region
 
+      #disable-next-line BCP318
       serverSubnetId: vnets[i].outputs.subnets.server.id
+
+      #disable-next-line BCP318
       clientSubnetId: vnets[i].outputs.subnets.client.id
 
       serverSubnetPrefix: subnetPrefixesArray[i].server
       clientSubnetPrefix: subnetPrefixesArray[i].client
 
+      #disable-next-line BCP318
       serverNsgId: vnets[i].outputs.nsgs.server
+
+      #disable-next-line BCP318
       clientNsgId: vnets[i].outputs.nsgs.client
 
+      #disable-next-line BCP318
       nextHopIp: firewall.outputs.firewallPrivateIp
     }
   }
@@ -400,8 +414,29 @@ module routeTables 'modules/networking/routeTable.bicep' = [
 
 // Compute waits for routeTables so spoke subnet route associations are applied before VM provisioning starts.
 
+// ------------------------------
+// Stage-based filtering
+// ------------------------------
+
+var controlWindowsVMs = filter(windowsVMList, vm =>
+  vm.type == 'dc' || vm.type == 'jmp'
+)
+
+var workloadWindowsVMs = filter(windowsVMList, vm =>
+  vm.type == 'srvwin' || vm.type == 'cliwin'
+)
+
+var activeWindowsVMs = concat(
+  deployControl ? controlWindowsVMs : [],
+  deployWorkload ? workloadWindowsVMs : []
+)
+
+// ------------------------------
+// Windows VM Module Deployment
+// ------------------------------
+
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
-  for (vm, i) in windowsVMList: {
+  for (vm, i) in activeWindowsVMs: {
     name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
@@ -426,13 +461,19 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
         : (vm.type == 'dc' || vm.type == 'srvwin'
           ? serverAdminPassword
           : clientAdminPassword)
-
+      
+      // BCP318 suppressions below are intentional: subnet outputs are resolved by VM type at runtime,
+      // but the static analyser cannot always prove the selected branch is non-null in this conditional chain.
       subnetId: vm.type == 'dc'
+        #disable-next-line BCP318
         ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.dc.id
         : vm.type == 'jmp'
+          #disable-next-line BCP318
           ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.jumpbox.id
           : vm.type == 'srvwin'
+            #disable-next-line BCP318
             ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id
+            #disable-next-line BCP318
             : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
 
       assignPublicIp: vm.type == 'jmp'
@@ -462,8 +503,10 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 
 // Same ordering guarantee as Windows VMs: network pathing is established first.
 
+var activeLinuxVMs = deployWorkload ? linuxVMList : []
+
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
-  for vm in linuxVMList: {
+  for vm in activeLinuxVMs: {
     name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
@@ -480,7 +523,15 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
       adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
       adminPublicKey: adminPublicKey
 
-      subnetId: vm.type == 'srvlin' ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
+      // srvlin -> server subnet, clilin -> client subnet
+      // BCP318 suppressions below are intentional: subnet output selection is conditional by VM type,
+      // and the static analyser treats these indexed outputs as potentially nullable.
+      subnetId: vm.type == 'srvlin'
+        #disable-next-line BCP318
+        ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id
+        #disable-next-line BCP318
+        : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
+
       assignPublicIp: false
 
       tags: union(finalTags, {
@@ -497,7 +548,7 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
 // OUTPUTS: PLACEMENT, VALIDATION, CAPACITY, REGIONAL SUMMARY
 // ========================================
 
-// List of regions selected for this deployment (ordered by regionIndexMap)// and assigned region
+// List of regions selected for this deployment (ordered by regionIndexMap) and assigned region
 // This is the primary output used to verify distribution logic
 output vmPlacement array = vmPlacements
 

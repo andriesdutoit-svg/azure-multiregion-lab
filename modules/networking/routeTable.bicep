@@ -1,3 +1,8 @@
+// ========================================
+// PRIMARY INPUTS
+// Location and hub firewall next hop.
+// ========================================
+
 param location string
 param nextHopIp string
 
@@ -48,6 +53,18 @@ var clientSubnetName = last(split(clientSubnetId, '/subnets/'))
 
 resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
   name: vnetName
+}
+
+// ----------------------------------------
+// EXISTING NSG REFERENCES (for dependency)
+// ----------------------------------------
+
+resource serverNsg 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing = {
+  name: last(split(serverNsgId, '/'))
+}
+
+resource clientNsg 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing = {
+  name: last(split(clientNsgId, '/'))
 }
 
 //
@@ -104,6 +121,9 @@ resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
 resource serverSubnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
   name: serverSubnetName
   parent: vnet
+  dependsOn: [
+    serverNsg
+  ]
   properties: {
     addressPrefix: serverSubnetPrefix
 
@@ -123,6 +143,7 @@ resource clientSubnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-0
   parent: vnet
   dependsOn: [
     serverSubnetUpdate
+    clientNsg
   ]
   properties: {
     addressPrefix: clientSubnetPrefix

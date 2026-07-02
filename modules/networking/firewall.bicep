@@ -1,7 +1,20 @@
+// ========================================
+// MODULE PURPOSE
+// Deploys hub firewall components: public IP, policy, firewall instance, and baseline east-west rules.
+// ========================================
+
+// ========================================
+// INPUTS
+// ========================================
+
 param location string
 param firewallName string
 param vnetName string
 param publicIpName string
+
+// ========================================
+// DERIVED VALUES
+// ========================================
 
 // Internal address space used by lab VNets and firewall east-west allow rule.
 var internalRange = '10.0.0.0/8'
@@ -138,7 +151,7 @@ resource policyRuleCollectionGroup 'Microsoft.Network/firewallPolicies/ruleColle
 
 //
 // ========================================
-// OUTPUT
+// OUTPUTS
 // ========================================
 //
 

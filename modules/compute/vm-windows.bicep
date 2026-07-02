@@ -12,7 +12,6 @@ param vmName string
 param subnetId string
 param vmSize string
 param assignPublicIp bool
-
 param adminUsername string
 @secure()
 param adminPassword string

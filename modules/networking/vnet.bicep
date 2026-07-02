@@ -13,8 +13,6 @@ param location string
 param deploySubnets bool
 param addressPrefix string
 param subnetPrefix object
-param regionIndex int
-param hubSubnetIndex int
 param isHub bool
 param dnsServers array
 param jumpboxSubnets array
@@ -200,6 +198,25 @@ var subnetNames = {
 }
 
 // ========================================
+// CORE RESOURCE: VNET
+// Always created by this module.
+// ========================================
+
+resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
+  name: vnetName
+  location: location
+  tags: tags
+  properties: {
+    addressSpace: {
+      addressPrefixes: [addressPrefix]
+    }
+    dhcpOptions: {
+      dnsServers: dnsServers
+    }
+  }
+}
+
+// ========================================
 // CONDITIONAL MODULE DEPLOYMENTS (deploySubnets = true)
 // 1) Optional hub firewall subnet
 // 2) NSGs per role
@@ -314,27 +331,8 @@ module subnetHub 'subnet.bicep' = if (isHub && deploySubnets) {
   params: {
     vnetName: vnetName
     subnetName: 'AzureFirewallSubnet'
-    addressPrefix: '10.${regionIndex}.${hubSubnetIndex}.0/24'
+    addressPrefix: subnetPrefix.firewall
     nsgId: ''
-  }
-}
-
-// ========================================
-// CORE RESOURCE: VNET
-// Always created by this module.
-// ========================================
-
-resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
-  name: vnetName
-  location: location
-  tags: tags
-  properties: {
-    addressSpace: {
-      addressPrefixes: [addressPrefix]
-    }
-    dhcpOptions: {
-      dnsServers: dnsServers
-    }
   }
 }
 
@@ -401,12 +399,11 @@ var jumpboxNsgId = deploySubnets ? nsgJumpbox!.outputs.nsgId : nsgJumpboxExistin
 
 // ========================================
 // OUTPUTS
-// VNet metadata plus normalized NSG/subnet objects for downstream modules.
+// VNet metadata plus normalised NSG/subnet objects for downstream modules.
 // ========================================
 
 output vnetId string = vnet.id
 output vnetName string = vnet.name
-
 output nsgs object = {
   server: serverNsgId
   client: clientNsgId
@@ -420,7 +417,6 @@ output nsgs object = {
 // Resolve subnet IDs using existing resource references.
 // Avoids module.outputs access because subnet modules are conditional (module | null).
 // Works for both new and existing deployments.
-
 
 output subnets object = {
   client: {
