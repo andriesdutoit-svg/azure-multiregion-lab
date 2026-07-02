@@ -113,12 +113,42 @@
         "version": "latest"
       }
     },
-    "vmSize": {
-      "value": "Standard_B2ls_v2"
-    },
-    "osDisk": {
+    "vmSizes": {
       "value": {
-        "storageAccountType": "Standard_LRS"
+        "dc": "<vm-size-for-dc>",
+        "jumpbox": "<vm-size-for-jumpbox>",
+        "windowsServer": "<vm-size-for-windows-server>",
+        "windowsClient": "<vm-size-for-windows-client>",
+        "linuxServer": "<vm-size-for-linux-server>",
+        "linuxClient": "<vm-size-for-linux-client>"
+      }
+    },
+    "osDisks": {
+      "value": {
+        "dc": {
+          "storageAccountType": "<os-disk-sku-for-dc>",
+          "diskSizeGB": 128
+        },
+        "jumpbox": {
+          "storageAccountType": "<os-disk-sku-for-jumpbox>",
+          "diskSizeGB": 64
+        },
+        "windowsServer": {
+          "storageAccountType": "<os-disk-sku-for-windows-server>",
+          "diskSizeGB": 128
+        },
+        "windowsClient": {
+          "storageAccountType": "<os-disk-sku-for-windows-client>",
+          "diskSizeGB": 64
+        },
+        "linuxServer": {
+          "storageAccountType": "<os-disk-sku-for-linux-server>",
+          "diskSizeGB": 128
+        },
+        "linuxClient": {
+          "storageAccountType": "<os-disk-sku-for-linux-client>",
+          "diskSizeGB": 64
+        }
       }
     },
     "adminPublicKey": {

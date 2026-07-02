@@ -94,6 +94,8 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
       imageReference: image
       osDisk: {
         createOption: 'FromImage'
+        // Role-specific OS disk capacity from main.bicep -> roleSizingMap -> osDisks.
+        diskSizeGB: osDisk.diskSizeGB
         managedDisk: {
           storageAccountType: osDisk.storageAccountType
         }

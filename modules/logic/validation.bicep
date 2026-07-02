@@ -10,6 +10,8 @@ targetScope = 'subscription'
 // ========================================
 
 param vmCounts object
+param vmSizes object
+param osDisks object
 param regionCount int
 param regionIndexMap object
 param subnetIndexMap object
@@ -49,6 +51,35 @@ var hasInvalidRegionIndex = [
 
 var missingRegionIndex = contains(hasInvalidRegionIndex, true)
 var hasInvalidSubnetIndex = !(contains(subnetIndexMap, 'firewall') && contains(subnetIndexMap, 'jumpbox') && contains(subnetIndexMap, 'dc') && contains(subnetIndexMap, 'server') && contains(subnetIndexMap, 'client'))
+
+// ========================================
+// ROLE CONFIG VALIDATION
+// Ensures all role-based sizing and disk maps contain the required workload keys.
+// ========================================
+
+// Required role keys for role-based compute configuration.
+var requiredRoleKeys = [
+  'dc'
+  'jumpbox'
+  'windowsServer'
+  'windowsClient'
+  'linuxServer'
+  'linuxClient'
+]
+
+// Flag any missing vmSizes role keys before module/resource evaluation fails deeper in the graph.
+var vmSizeRoleMissingFlags = [
+  for role in requiredRoleKeys: !contains(vmSizes, role)
+]
+
+// Flag any missing osDisks role keys before VM modules consume per-role disk settings.
+var osDiskRoleMissingFlags = [
+  for role in requiredRoleKeys: !contains(osDisks, role)
+]
+
+var hasMissingVmSizeRole = contains(vmSizeRoleMissingFlags, true)
+var hasMissingOsDiskRole = contains(osDiskRoleMissingFlags, true)
+
 var hasMissingIndexes = [
   for i in range(1, length(regionIndexMap) + 1): empty(filter(items(regionIndexMap), r => r.value == i))
 ]
@@ -68,6 +99,8 @@ var validationFlags = {
   invalidCapacity: invalidCapacity
   missingRegionIndex: missingRegionIndex
   hasInvalidSubnetIndex: hasInvalidSubnetIndex
+  hasMissingVmSizeRole: hasMissingVmSizeRole
+  hasMissingOsDiskRole: hasMissingOsDiskRole
   invalidIndexSequence: invalidIndexSequence
   hasRegionOverflow: hasRegionOverflow
   hasTooManyDcs: hasTooManyDcs
@@ -84,12 +117,14 @@ var msg3 = invalidPrimaryPinning ? 'Primary pinning failed: dc01 and jmp01 must 
 var msg4 = hasNonControlInHub ? 'One or more non-control VMs were placed in the hub region.' : ''
 var msg5 = missingRegionIndex ? 'One or more regions are missing in regionIndexMap.' : ''
 var msg6 = hasInvalidSubnetIndex ? 'Subnet index map must include firewall, dc, jumpbox, server, and client.' : ''
-var msg7 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : ''
-var msg8 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
-var msg9 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
-var msg10 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
+var msg7 = hasMissingVmSizeRole ? 'vmSizes must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.' : ''
+var msg8 = hasMissingOsDiskRole ? 'osDisks must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.' : ''
+var msg9 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : ''
+var msg10 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
+var msg11 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
+var msg12 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
 
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : ''
+var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : ''
 
 // ========================================
 // OUTPUTS

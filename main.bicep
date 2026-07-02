@@ -43,8 +43,10 @@ param maxVmsPerRegion int
 param vmCounts object
 param jumpboxAllowedSources array
 param enableClientSsh bool
-param vmSize string
-param osDisk object
+// Role-based VM size map keyed by logical workload roles.
+param vmSizes object
+// Role-based OS disk map (storage SKU + disk size) keyed by logical workload roles.
+param osDisks object
 
 // Stage flags for conditional deployment of modules
 var deployNetwork = stage == 'network' || stage == 'all'
@@ -201,6 +203,39 @@ var finalTags = union(tags, {
 })
 
 // ========================================
+// COMPUTE HELPER VARIABLES
+// ========================================
+
+// Maps deployment VM role keys to their role-specific compute settings.
+// Keys match vm.type values used by the placement engine: dc, jmp, srvwin, cliwin, srvlin, clilin.
+var roleSizingMap = {
+  dc: {
+    vmSize: vmSizes.dc
+    osDisk: osDisks.dc
+  }
+  jmp: {
+    vmSize: vmSizes.jumpbox
+    osDisk: osDisks.jumpbox
+  }
+  srvwin: {
+    vmSize: vmSizes.windowsServer
+    osDisk: osDisks.windowsServer
+  }
+  cliwin: {
+    vmSize: vmSizes.windowsClient
+    osDisk: osDisks.windowsClient
+  }
+  srvlin: {
+    vmSize: vmSizes.linuxServer
+    osDisk: osDisks.linuxServer
+  }
+  clilin: {
+    vmSize: vmSizes.linuxClient
+    osDisk: osDisks.linuxClient
+  }
+}
+
+// ========================================
 // NETWORK HELPER VARIABLES
 // ========================================
 
@@ -265,6 +300,8 @@ module validationEngine 'modules/logic/validation.bicep' = {
   name: 'validation-engine'
   params: {
     vmCounts: vmCounts
+    vmSizes: vmSizes
+    osDisks: osDisks
     regionCount: regionCount
     regionIndexMap: regionIndexMap
     subnetIndexMap: subnetIndexMap
@@ -448,7 +485,8 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 
     params: {
       vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-      vmSize: vmSize
+      // Resolve compute sizing from the role map so each VM role can scale independently.
+      vmSize: roleSizingMap[vm.type].vmSize
 
       adminUsername: vm.type == 'jmp'
         ? jumpboxAdminUsername
@@ -492,7 +530,8 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
         ? windowsClientImage
         : windowsServerImage
 
-      osDisk: osDisk
+      // Resolve OS disk profile per role (SKU + capacity).
+      osDisk: roleSizingMap[vm.type].osDisk
     }
   }
 ]
@@ -518,7 +557,8 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
 
     params: {
       vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-      vmSize: vmSize
+      // Resolve compute sizing from the role map so each VM role can scale independently.
+      vmSize: roleSizingMap[vm.type].vmSize
 
       adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
       adminPublicKey: adminPublicKey
@@ -539,7 +579,8 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
       })
 
       image: ubuntuImage
-      osDisk: osDisk
+      // Resolve OS disk profile per role (SKU + capacity).
+      osDisk: roleSizingMap[vm.type].osDisk
     }
   }
 ]

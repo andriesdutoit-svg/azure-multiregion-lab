@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v1.12
+# Azure Multi-Region Lab (AMRL) v1.13.1
 
 ## Overview
 
@@ -21,6 +21,7 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 
 - [Overview](#overview)
   - [Project Evolution](#project-evolution)
+  - [Breaking Changes](#breaking-changes)
   - [Design Principles](#design-principles)
 
 </details>
@@ -87,7 +88,7 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
     - [Stage Dependency Considerations](#stage-dependency-considerations)
     - [Supported Deployment Models](#supported-deployment-models)
   - [Step 5: VM Counts (Controls Scale)](#step-5-vm-counts-controls-scale)
-  - [Step 6: VM Size](#step-6-vm-size)
+  - [Step 6: Role-Based VM Sizing and Storage](#step-6-role-based-vm-sizing-and-storage)
   - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
   - [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required)
   - [Step 9: Deploy](#step-9-deploy)
@@ -166,8 +167,21 @@ The solution was developed iteratively, with each phase introducing additional a
 - **v1.11 — Hub-Spoke Networking**  
   Hub-and-spoke VNet peering combined with centralised firewall-based routing, spoke route tables, and refined network flow control across regions.
 
-- **Current Version v1.12 — Deployment Stage Control**  
-  Introduces stage-driven deployment control (`network`, `control`, `workload`, `all`) while retaining hub-and-spoke peering, centralised firewall routing, and spoke route table enforcement.
+- **Current Version v1.13.1 — Role-Based VM Sizing and Storage**  
+  Introduces role-based compute sizing and OS disk configuration (`vmSizes`, `osDisks`) with per-role disk size support, while retaining stage-driven deployments and the existing hub-and-spoke architecture.
+
+---
+
+### Breaking Changes
+
+This release is a breaking change with no backward compatibility for v1.12 parameter files.
+
+- Removed: `vmSize`
+- Removed: `osDisk`
+- Required: `vmSizes`
+- Required: `osDisks`
+
+Existing v1.12 parameter files must be updated to the v1.13.1 schema before deployment.
 
 ---
 
@@ -693,7 +707,8 @@ These features can be used independently or together, provided the required netw
 The following changes are generally supported:
 
 - VM counts (`vmCounts`)
-- VM sizes (`vmSize`)
+- VM sizes (`vmSizes`)
+- OS disk settings (`osDisks`)
 - Operating system images (`windowsServerImage`, `windowsClientImage`, `ubuntuImage`)
 - Administrative credentials
 - SSH public keys
@@ -751,7 +766,7 @@ Control and workload deployments rely on networking structures defined by this d
 | Redeploy existing environment created by this framework | Yes |
 | Reuse existing networking that follows the framework structure | Yes |
 | Disaster recovery and VM rebuilds | Yes |
-| Modify VM counts, sizes, images, tags, and access settings | Yes |
+| Modify VM counts, role-based sizes/disks, images, tags, and access settings | Yes |
 | Deploy into arbitrary existing networking | No |
 
   [Back to top](#table-of-contents)
@@ -809,31 +824,75 @@ totalVMs ≤ regionCount × maxVmsPerRegion
 
 ---
 
-## Step 6: VM Size
+## Step 6: Role-Based VM Sizing and Storage
 
 ```json
-"vmSize": { "value": "Standard_B2ls_v2" }
+"vmSizes": {
+  "value": {
+    "dc": "Standard_B2ms",
+    "jumpbox": "Standard_B2s_v2",
+    "windowsServer": "Standard_B2s_v2",
+    "windowsClient": "Standard_B2ls_v2",
+    "linuxServer": "Standard_B2s_v2",
+    "linuxClient": "Standard_B1ms"
+  }
+},
+"osDisks": {
+  "value": {
+    "dc": {
+      "storageAccountType": "Premium_LRS",
+      "diskSizeGB": 128
+    },
+    "jumpbox": {
+      "storageAccountType": "StandardSSD_LRS",
+      "diskSizeGB": 64
+    },
+    "windowsServer": {
+      "storageAccountType": "Premium_LRS",
+      "diskSizeGB": 128
+    },
+    "windowsClient": {
+      "storageAccountType": "StandardSSD_LRS",
+      "diskSizeGB": 64
+    },
+    "linuxServer": {
+      "storageAccountType": "Premium_LRS",
+      "diskSizeGB": 128
+    },
+    "linuxClient": {
+      "storageAccountType": "StandardSSD_LRS",
+      "diskSizeGB": 64
+    }
+  }
+}
 ```
 
 ### What this does
 
-Defines the size of every VM (CPU + RAM).
+Defines VM size and OS disk settings per role.
+
+- `vmSizes` controls CPU and memory by role.
+- `osDisks.storageAccountType` controls the disk performance tier by role.
+- `osDisks.diskSizeGB` controls OS disk capacity by role.
+
+### Supported OS disk properties
+
+- `storageAccountType`
+- `diskSizeGB`
 
 ### Why this matters
 
-Manual pre-check: Azure limits vCPU per region.
+This enables right-sizing by role instead of forcing all VMs to use one shared compute profile.
 
-Example:
+Manual pre-check: Azure regional vCPU quota still applies. Plan role choices according to subscription quota and target region limits.
 
-- VM size = 2 cores
-- Region quota = 4 cores
+### Upgrade note (v1.12 -> v1.13.1)
 
-Max safe:
-```
-2 VMs per region
-```
+If you are upgrading from v1.12:
 
-This is a planning check only. Actual quota validation must be done against your subscription and region before deployment.
+1. Remove `vmSize` and `osDisk` from your parameter file.
+2. Add `vmSizes` with all six required role keys.
+3. Add `osDisks` with all six required role keys, each including `storageAccountType` and `diskSizeGB`.
 
   [Back to top](#table-of-contents)
 

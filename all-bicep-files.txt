@@ -1,0 +1,2457 @@
+﻿===== FILE: main.bicep =====
+
+targetScope = 'subscription'
+
+// Controls when resources deploy.
+@allowed([
+  'network'
+  'control'
+  'workload'
+  'all'
+])
+param stage string = 'all'
+
+// ========================================
+// MODULE PURPOSE
+// Subscription-scope orchestrator for multi-region networking, security, routing, and VM deployment.
+// ========================================
+
+// ========================================
+// INPUTS
+// ========================================
+
+@description('Prefix for all resources')
+param prefix string
+param tags object
+param jumpboxAdminUsername string
+@secure()
+param jumpboxAdminPassword string
+param serverAdminUsername string
+@secure()
+param serverAdminPassword string
+param clientAdminUsername string
+@secure()
+param clientAdminPassword string
+param adminPublicKey string
+param windowsServerImage object
+param windowsClientImage object
+param ubuntuImage object
+param regionIndexMap object
+@description('True = create NSGs and subnets. False = use existing NSGs and subnets for brownfield deployments')
+param deploySubnets bool
+param subnetIndexMap object
+param regionCount int
+param maxVmsPerRegion int
+param vmCounts object
+param jumpboxAllowedSources array
+param enableClientSsh bool
+param vmSize string
+param osDisk object
+
+// Stage flags for conditional deployment of modules
+var deployNetwork = stage == 'network' || stage == 'all'
+var deployControl = stage == 'control' || stage == 'all'
+var deployWorkload = stage == 'workload' || stage == 'all'
+
+//
+// ========================================
+// VM MODEL (builds unified list of all VMs)
+// ========================================
+//
+
+var dcArray = [
+  for i in range(0, vmCounts.dc): {
+    type: 'dc'
+    index: i
+  }
+]
+var jumpboxArray = [
+  for i in range(0, vmCounts.jumpbox): {
+    type: 'jmp'
+    index: i
+  }
+]
+var windowsServerArray = [
+  for i in range(0, vmCounts.windowsServer): {
+    type: 'srvwin'
+    index: i
+  }
+]
+var windowsClientArray = [
+  for i in range(0, vmCounts.windowsClient): {
+    type: 'cliwin'
+    index: i
+  }
+]
+var linuxServerArray = [
+  for i in range(0, vmCounts.linuxServer): {
+    type: 'srvlin'
+    index: i
+  }
+]
+var linuxClientArray = [
+  for i in range(0, vmCounts.linuxClient): {
+    type: 'clilin'
+    index: i
+  }
+]
+
+var vmList = concat(
+  dcArray,
+  jumpboxArray,
+  windowsServerArray,
+  windowsClientArray,
+  linuxServerArray,
+  linuxClientArray
+)
+
+//
+// ========================================
+// REGION ORDERING (Index-Based Sorting)
+// Converts regionIndexMap â†’ ordered region list
+// ========================================
+//
+
+// Extract regions in order of their index value (1 â†’ N)
+var regionPairs = [
+  for r in items(regionIndexMap): {
+    key: r.key
+    index: r.value
+  }
+]
+
+var sortedRegionPairs = sort(regionPairs, (a, b) => a.index < b.index)
+
+var sortedRegions = [
+  for r in sortedRegionPairs: r.key
+]
+
+// Select only the required number of regions
+// This allows regionIndexMap to define more regions than are active in a given run.
+var regionKeys = take(sortedRegions, regionCount)
+
+var primaryRegion = regionKeys[0]
+var isSingleRegion = regionCount == 1
+
+// Pinned primary-region VMs are excluded from round-robin placement.
+var roundRobinVmList = filter(vmList, vm =>
+  !(vm.type == 'dc' && vm.index == 0) && !(vm.type == 'jmp' && vm.index == 0)
+)
+
+// Compute global index for VMs that are still eligible for round-robin placement.
+// -1 marks pinned VMs so they are never used in modulo placement math.
+var roundRobinVmIndexList = [
+  for vm in vmList: (vm.type == 'dc' && vm.index == 0) || (vm.type == 'jmp' && vm.index == 0) ? -1 : indexOf(roundRobinVmList, vm)
+]
+
+// ========================================
+// HUB MODEL
+// ========================================
+
+var hubRegion = primaryRegion
+
+//
+// ========================================
+// PLACEMENT ENGINE
+// Assigns each VM to a region using rules
+// ========================================
+//
+
+var vmPlacements = [
+  for (vm, i) in vmList: {
+    type: vm.type
+    index: vm.index
+    dcSlot: 0
+
+    regionKey: isSingleRegion
+      ? regionKeys[0]
+
+      // Branch order is intentional:
+      // single-region override -> pinned hub control-plane -> spoke-only workloads -> spoke-first DC/JMP -> hub-eligible fallback.
+
+      // Always pin first DC and jumpbox
+      : (vm.type == 'dc' && vm.index == 0)
+        ? primaryRegion
+
+      : (vm.type == 'jmp' && vm.index == 0)
+        ? primaryRegion
+
+      // Workloads NEVER go to hub
+      : !(vm.type == 'dc' || vm.type == 'jmp')
+        ? regionKeys[(roundRobinVmIndexList[i] % (regionCount - 1)) + 1]
+
+      // DC/JMP prefer spokes first
+      : vm.index < (regionCount - 1)
+        ? regionKeys[(roundRobinVmIndexList[i] % (regionCount - 1)) + 1]
+
+      // After spokes are â€œlikely filledâ€ â†’ allow hub
+      : regionKeys[roundRobinVmIndexList[i] % regionCount]
+  }
+]
+
+var maxDcPerRegion = maxVmsPerRegion
+var totalDcs = vmCounts.dc
+var minRegionsNeededForDcs = (totalDcs + maxDcPerRegion - 1) / maxDcPerRegion
+var hasTooManyDcs = minRegionsNeededForDcs > regionCount
+
+// ========================================
+// VM GROUPING + SUPPORT VARIABLES
+// ========================================
+
+var finalTags = union(tags, {
+  project: prefix
+})
+
+// ========================================
+// NETWORK HELPER VARIABLES
+// ========================================
+
+var windowsVMList = filter(vmPlacements, vm =>
+  vm.type == 'dc' || vm.type == 'jmp' || vm.type == 'srvwin' || vm.type == 'cliwin'
+)
+
+var linuxVMList = filter(vmPlacements, vm =>
+  vm.type == 'srvlin' || vm.type == 'clilin'
+)
+
+var addressPrefixes = [
+  for region in regionKeys: '10.${regionIndexMap[region]}.0.0/16'
+]
+
+var subnetPrefixesArray = [
+  for region in regionKeys: {
+    firewall: '10.${regionIndexMap[region]}.${subnetIndexMap.firewall}.0/24'
+    jumpbox: '10.${regionIndexMap[region]}.${subnetIndexMap.jumpbox}.0/24'
+    dc:      '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.0/24'
+    server:  '10.${regionIndexMap[region]}.${subnetIndexMap.server}.0/24'
+    client:  '10.${regionIndexMap[region]}.${subnetIndexMap.client}.0/24'
+  }
+]
+
+// Collect the region key for each DC placement entry.
+// Non-DC VMs emit an empty marker that gets removed later.
+var dcPlacements = [
+  for vm in vmPlacements: vm.type == 'dc' ? vm.regionKey : ''
+]
+
+// Remove empty markers and de-duplicate region keys.
+var dcRegions = filter(union(dcPlacements, []), region => !empty(region))
+
+// Keep hub DC first, then append remaining DC regions.
+// This preserves deterministic DNS ordering for all VNets.
+var orderedDcRegions = concat(
+  contains(dcRegions, primaryRegion) ? [primaryRegion] : [],
+  filter(dcRegions, r => r != primaryRegion)
+)
+
+// Build candidate DNS server IPs from the DC subnet (.4) in each ordered DC region.
+// This derives DNS from where DCs are actually placed, rather than from static region assumptions.
+var dnsCandidates = [
+  for region in orderedDcRegions: '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.4'
+]
+
+// Each VNet supports up to 3 custom DNS servers.
+var dnsServers = take(dnsCandidates, 3)
+
+var jumpboxSubnets = [
+  for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
+]
+
+//
+// ========================================
+// VALIDATION ENGINE
+// Delegated to modules/logic/validation.bicep
+// ========================================
+
+module validationEngine 'modules/logic/validation.bicep' = {
+  name: 'validation-engine'
+  params: {
+    vmCounts: vmCounts
+    regionCount: regionCount
+    regionIndexMap: regionIndexMap
+    subnetIndexMap: subnetIndexMap
+    vmPlacements: vmPlacements
+    regionKeys: regionKeys
+    maxVmsPerRegion: maxVmsPerRegion
+    primaryRegion: primaryRegion
+    hubRegion: hubRegion
+    hasTooManyDcs: hasTooManyDcs
+  }
+}
+
+// ========================================
+// DEPLOYMENT STAGE 1: RESOURCE GROUPS
+// ========================================
+
+resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
+  for region in regionKeys: {
+    name: '${prefix}-rg-${region}'
+    location: region
+    tags: finalTags
+  }
+]
+
+// ========================================
+// DEPLOYMENT STAGE 2: VNETS + NSGS + SUBNETS
+// ========================================
+
+module vnets 'modules/networking/vnet.bicep' = [
+  for (region, i) in regionKeys: if (deployNetwork) {
+
+    name: 'vnet-${region}'
+
+    scope: resourceGroup('${prefix}-rg-${region}')
+
+    dependsOn: [
+      rgs
+    ]
+
+    params: {
+      vnetName: '${prefix}-vnet-${region}'
+      location: region
+      isHub: region == hubRegion
+
+      deploySubnets: deploySubnets
+
+      addressPrefix: addressPrefixes[i]
+      subnetPrefix: subnetPrefixesArray[i]
+
+      dnsServers: dnsServers
+      jumpboxSubnets: jumpboxSubnets
+      jumpboxAllowedSources: jumpboxAllowedSources
+      enableClientSsh: enableClientSsh
+      tags: finalTags
+    }
+  }
+]
+
+// ========================================
+// DEPLOYMENT STAGE 3: VNET PEERING
+// ========================================
+
+module peerings 'modules/peering/peering.bicep' = [
+  for source in regionKeys: if (deployNetwork) {
+    name: 'peerings-${source}'
+    scope: resourceGroup('${prefix}-rg-${source}')
+    dependsOn: vnets
+    params: {
+      vnetName: '${prefix}-vnet-${source}'
+      regionKeys: regionKeys
+      sourceRegion: source
+      prefix: prefix
+      hubRegion: hubRegion
+    }
+  }
+]
+
+// ========================================
+// DEPLOYMENT STAGE 4: HUB FIREWALL
+// ========================================
+
+module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
+  name: 'firewall-${hubRegion}'
+
+  scope: resourceGroup('${prefix}-rg-${hubRegion}')
+
+  dependsOn: [
+    rgs
+    vnets
+  ]
+
+  params: {
+    location: hubRegion
+    firewallName: '${prefix}-fw-${hubRegion}'
+    vnetName: '${prefix}-vnet-${hubRegion}'
+    publicIpName: '${prefix}-fw-pip-${hubRegion}'
+  }
+}
+
+// ========================================
+// DEPLOYMENT STAGE 5: ROUTE TABLES (SPOKE REGIONS)
+// ========================================
+
+// Suppressions in this module are intentional: BCP318 appears because vnet/firewall outputs are conditionally evaluated
+// by the analyser in this loop, and no-unnecessary-dependson is kept to enforce firewall-before-route-table ordering
+// that helps avoid Azure concurrent network update conflicts during subnet route association.
+
+module routeTables 'modules/networking/routeTable.bicep' = [
+  for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
+
+    name: 'rt-${region}'
+    scope: resourceGroup('${prefix}-rg-${region}')
+
+    dependsOn: [
+      #disable-next-line no-unnecessary-dependson
+      firewall
+      vnets[i]
+    ]
+
+    params: {
+      location: region
+
+      #disable-next-line BCP318
+      serverSubnetId: vnets[i].outputs.subnets.server.id
+
+      #disable-next-line BCP318
+      clientSubnetId: vnets[i].outputs.subnets.client.id
+
+      serverSubnetPrefix: subnetPrefixesArray[i].server
+      clientSubnetPrefix: subnetPrefixesArray[i].client
+
+      #disable-next-line BCP318
+      serverNsgId: vnets[i].outputs.nsgs.server
+
+      #disable-next-line BCP318
+      clientNsgId: vnets[i].outputs.nsgs.client
+
+      #disable-next-line BCP318
+      nextHopIp: firewall.outputs.firewallPrivateIp
+    }
+  }
+]
+
+// ========================================
+// DEPLOYMENT STAGE 6: WINDOWS VMS
+// ========================================
+
+// Compute waits for routeTables so spoke subnet route associations are applied before VM provisioning starts.
+
+// ------------------------------
+// Stage-based filtering
+// ------------------------------
+
+var controlWindowsVMs = filter(windowsVMList, vm =>
+  vm.type == 'dc' || vm.type == 'jmp'
+)
+
+var workloadWindowsVMs = filter(windowsVMList, vm =>
+  vm.type == 'srvwin' || vm.type == 'cliwin'
+)
+
+var activeWindowsVMs = concat(
+  deployControl ? controlWindowsVMs : [],
+  deployWorkload ? workloadWindowsVMs : []
+)
+
+// ------------------------------
+// Windows VM Module Deployment
+// ------------------------------
+
+module windowsVMs 'modules/compute/vm-windows.bicep' = [
+  for (vm, i) in activeWindowsVMs: {
+    name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+
+    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
+
+    dependsOn: [
+      vnets
+      routeTables
+    ]
+
+    params: {
+      vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+      vmSize: vmSize
+
+      adminUsername: vm.type == 'jmp'
+        ? jumpboxAdminUsername
+        : (vm.type == 'dc' || vm.type == 'srvwin'
+          ? serverAdminUsername
+          : clientAdminUsername)
+
+      adminPassword: vm.type == 'jmp'
+        ? jumpboxAdminPassword
+        : (vm.type == 'dc' || vm.type == 'srvwin'
+          ? serverAdminPassword
+          : clientAdminPassword)
+      
+      // BCP318 suppressions below are intentional: subnet outputs are resolved by VM type at runtime,
+      // but the static analyser cannot always prove the selected branch is non-null in this conditional chain.
+      subnetId: vm.type == 'dc'
+        #disable-next-line BCP318
+        ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.dc.id
+        : vm.type == 'jmp'
+          #disable-next-line BCP318
+          ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.jumpbox.id
+          : vm.type == 'srvwin'
+            #disable-next-line BCP318
+            ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id
+            #disable-next-line BCP318
+            : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
+
+      assignPublicIp: vm.type == 'jmp'
+
+      tags: union(finalTags, {
+        role: vm.type == 'dc'
+          ? 'domain-controller'
+          : vm.type == 'jmp'
+            ? 'jumpbox'
+            : vm.type == 'srvwin'
+              ? 'server'
+              : 'client'
+      })
+
+      image: vm.type == 'cliwin'
+        ? windowsClientImage
+        : windowsServerImage
+
+      osDisk: osDisk
+    }
+  }
+]
+
+// ========================================
+// DEPLOYMENT STAGE 7: LINUX VMS
+// ========================================
+
+// Same ordering guarantee as Windows VMs: network pathing is established first.
+
+var activeLinuxVMs = deployWorkload ? linuxVMList : []
+
+module linuxVMs 'modules/compute/vm-linux.bicep' = [
+  for vm in activeLinuxVMs: {
+    name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+
+    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
+
+    dependsOn: [
+      vnets
+      routeTables
+    ]
+
+    params: {
+      vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+      vmSize: vmSize
+
+      adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
+      adminPublicKey: adminPublicKey
+
+      // srvlin -> server subnet, clilin -> client subnet
+      // BCP318 suppressions below are intentional: subnet output selection is conditional by VM type,
+      // and the static analyser treats these indexed outputs as potentially nullable.
+      subnetId: vm.type == 'srvlin'
+        #disable-next-line BCP318
+        ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id
+        #disable-next-line BCP318
+        : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
+
+      assignPublicIp: false
+
+      tags: union(finalTags, {
+        role: vm.type == 'srvlin' ? 'server' : 'client'
+      })
+
+      image: ubuntuImage
+      osDisk: osDisk
+    }
+  }
+]
+
+// ========================================
+// OUTPUTS: PLACEMENT, VALIDATION, CAPACITY, REGIONAL SUMMARY
+// ========================================
+
+// List of regions selected for this deployment (ordered by regionIndexMap) and assigned region
+// This is the primary output used to verify distribution logic
+output vmPlacement array = vmPlacements
+
+// Validation message describing why deployment failed (empty if no validation errors)
+
+output validationDebug object = validationEngine.outputs.validationFlags
+output validationMessage string = validationEngine.outputs.validationMessage
+output validationSummary string = empty(validationEngine.outputs.validationMessage)
+  ? 'Validation passed.'
+  : validationEngine.outputs.validationMessage
+
+// Per-region VM count after placement
+// Useful for confirming even distribution and ensuring no region exceeds limits
+output vmCountPerRegion array = [
+  for (region, i) in regionKeys: {
+    region: region
+    count: validationEngine.outputs.vmPerRegionCounts[i]
+  }
+]
+
+// Summary of capacity vs requested VMs
+// Helps quickly determine if deployment is within allowed limits
+output capacityCheck object = {
+  totalVMs: validationEngine.outputs.totalVMs
+  capacity: validationEngine.outputs.totalCapacity
+  withinLimit: validationEngine.outputs.totalVMs <= validationEngine.outputs.totalCapacity
+}
+
+output selectedRegionsOutput array = regionKeys
+
+// Total number of VMs requested across all types
+output totalVmRequested int = validationEngine.outputs.totalVMs
+
+// Maximum number of VMs that can be deployed based on region count and per-region limit
+output totalCapacityAvailable int = validationEngine.outputs.totalCapacity
+
+output regionSummary array = [
+  for (region, i) in regionKeys: {
+    region: region
+    addressSpace: addressPrefixes[i]
+    subnets: subnetPrefixesArray[i]
+    vmCount: length(filter(vmPlacements, vm => vm.regionKey == region))
+  }
+]
+
+
+===== FILE: test.parameters.json =====
+
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+      
+    "prefix": {
+      "value": "AMRL"
+    },
+
+    "tags": {
+      "value": {
+        "environment": "lab"
+      }
+    },   
+     
+    "regionIndexMap": {
+        "value": {
+          "southafricanorth": 1,
+          "australiaeast": 2,
+          "australiasoutheast": 3,
+          "austriaeast": 4,
+          "belgiumcentral": 5,
+          "canadaeast": 6,
+          "centralindia": 7,
+          "chilecentral": 8,
+          "denmarkeast": 9,
+          "eastasia": 10,
+          "indonesiacentral": 11,
+          "israelcentral": 12,
+          "japaneast": 13,
+          "japanwest": 14,
+          "koreacentral": 15,
+          "koreasouth": 16,
+          "malaysiawest": 17,
+          "mexicocentral": 18,
+          "newzealandnorth": 19,
+          "polandcentral": 20,
+          "southindia": 21,
+          "southeastasia": 22,
+          "spaincentral": 23,
+          "swedencentral": 24,
+          "uaenorth": 25,
+          "westcentralus": 26,
+          "westus2": 27,
+          "westeurope": 28
+        }
+      },
+
+    "subnetIndexMap": {
+      "value": {
+        "firewall": 0,
+        "jumpbox": 1,
+        "dc": 2,
+        "server": 3,
+        "client": 4
+      }
+    },
+
+        "regionCount": {
+      "value": 28
+    },
+
+    "maxVmsPerRegion": {
+      "value": 2
+    },
+
+    "vmCounts": {
+      "value": {
+        "dc": 28,
+        "jumpbox": 4,
+        "windowsServer": 6,
+        "windowsClient": 6,
+        "linuxServer": 6,
+        "linuxClient": 6
+      }
+    },
+
+        "jumpboxAllowedSources": {
+          "value": [
+            "168.210.156.45",
+            "137.158.0.0/16",
+            "197.239.0.0/16",
+            "196.24.0.0/16",
+            "196.42.0.0/16",
+            "196.47.0.0/16"
+          ]
+        },
+
+    "deploySubnets": {
+      "value": true
+    },
+
+    "enableClientSsh": {
+      "value": true
+    },
+
+    "windowsServerImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsServer",
+        "offer": "WindowsServer",
+        "sku": "2022-datacenter-g2",
+        "version": "latest"
+      }
+    },
+    "windowsClientImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsDesktop",
+        "offer": "windows-10",
+        "sku": "win10-22h2-ent-g2",
+        "version": "latest"
+      }
+    },
+    "ubuntuImage": {
+      "value": {
+        "publisher": "Canonical",
+        "offer": "0001-com-ubuntu-server-jammy",
+        "sku": "22_04-lts-gen2",
+        "version": "latest"
+      }
+    },
+    "vmSize": {
+      "value": "Standard_B2ls_v2"
+    },
+    "osDisk": {
+      "value": {
+        "storageAccountType": "Standard_LRS"
+      }
+    },
+    "adminPublicKey": {
+      "value": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO5JidQnbZ4LWITUUPbydIRe9QuSV8ID4kiWEHXmZ1jU"
+    },
+    "jumpboxAdminUsername": {
+      "value": "azureadmin"
+    },
+    "jumpboxAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/1f3e6e09-53d2-487c-bca6-e9f60495d521/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
+        },
+        "secretName": "jumpboxAdminPassword"
+      }
+    },
+    "serverAdminUsername": {
+      "value": "azureadmin"
+    },
+    "serverAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/1f3e6e09-53d2-487c-bca6-e9f60495d521/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
+        },
+        "secretName": "serverAdminPassword"
+      }
+    },
+    "clientAdminUsername": {
+      "value": "azureadmin"
+    },
+    "clientAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/1f3e6e09-53d2-487c-bca6-e9f60495d521/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
+        },
+        "secretName": "clientAdminPassword"
+      }
+    }
+  }
+}
+
+
+===== FILE: README.md =====
+
+# Azure Multi-Region Lab (AMRL) v1.12
+
+## Overview
+
+This project implements a multi-region Azure lab environment using Bicep. It demonstrates a structured evolution from basic infrastructure deployment into a secure, modular, capacity-aware, and production-aligned platform.
+
+The lab is designed to showcase real-world Infrastructure as Code practices, including:
+
+- Deterministic and repeatable deployments  
+- Modular architecture using reusable components  
+- Secure-by-default design principles  
+- Controlled workload distribution across multiple regions  
+- Validation-first deployment to prevent configuration errors
+
+---
+
+## Table of Contents
+
+<details open>
+<summary><strong>Overview</strong></summary>
+
+- [Overview](#overview)
+  - [Project Evolution](#project-evolution)
+  - [Design Principles](#design-principles)
+
+</details>
+
+<details>
+<summary><strong>Design Decisions & Trade-offs</strong></summary>
+
+- [Design Decisions & Trade-offs](#design-decisions--trade-offs)
+  - [Deterministic `.4` DNS](#deterministic-4-dns)
+  - [Index-Based Placement](#index-based-placement)
+  - [Controlled Hub Placement for Control-Plane Workloads](#controlled-hub-placement-for-control-plane-workloads)
+  - [Hub Role Restriction](#hub-role-restriction)
+  - [Parallel Deployment Reality](#parallel-deployment-reality)
+  - [Global DNS](#global-dns)
+
+</details>
+
+<details>
+<summary><strong>Architecture Overview</strong></summary>
+
+- [Architecture Overview](#architecture-overview)
+  - [Regional Architecture](#regional-architecture)
+  - [Network Architecture](#network-architecture)
+  - [Network Architecture Diagram](#network-architecture-diagram)
+  - [Traffic Flow](#traffic-flow)
+  - [IP Addressing Strategy](#ip-addressing-strategy)
+  - [DNS Configuration](#dns-configuration)
+  - [Design Approach](#design-approach)
+  - [Behaviour](#behaviour)
+  - [Active Directory Integration](#active-directory-integration)
+  - [Security Model](#security-model)
+  - [Workload Distribution](#workload-distribution)
+
+</details>
+
+<details>
+<summary><strong>File Structure</strong></summary>
+
+- [File Structure](#file-structure)
+  - [Root Files](#root-files)
+  - [Modules](#modules)
+    - [Networking](#networking)
+    - [Compute](#compute)
+    - [Peering](#peering)
+    - [Logic](#logic)
+  - [Supporting Logic in main.bicep](#supporting-logic-in-mainbicep)
+  - [Foundation Layer (External)](#foundation-layer-external)
+
+</details>
+
+<details>
+<summary><strong>Start Guide</strong></summary>
+
+- [Start Guide](#start-guide)
+  - [Step 1: Understand the Core Concept](#step-1-understand-the-core-concept)
+  - [Step 2: Core Deployment Settings](#step-2-core-deployment-settings)
+  - [Step 3: Region Mapping](#step-3-region-mapping)
+  - [Step 4a: Subnet Mapping](#step-4a-subnet-mapping)
+  - [Step 4b: Greenfield and Brownfield Deployments](#step-4b-greenfield-and-brownfield-deployments)
+    - [deploySubnets](#deploysubnets)
+    - [Greenfield Deployments](#greenfield-deployments)
+    - [Brownfield Deployments](#brownfield-deployments)
+    - [Relationship Between Stages and Brownfield Deployments](#relationship-between-stages-and-brownfield-deployments)
+    - [Stage Dependency Considerations](#stage-dependency-considerations)
+    - [Supported Deployment Models](#supported-deployment-models)
+  - [Step 5: VM Counts (Controls Scale)](#step-5-vm-counts-controls-scale)
+  - [Step 6: VM Size](#step-6-vm-size)
+  - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
+  - [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required)
+  - [Step 9: Deploy](#step-9-deploy)
+    - [Full Deployment (Default)](#full-deployment-default)
+    - [Network Stage](#network-stage)
+    - [Control Stage](#control-stage)
+    - [Workload Stage](#workload-stage)
+    - [Recommended Deployment Order](#recommended-deployment-order)
+  - [Step 10: Validate Results](#step-10-validate-results)
+
+</details>
+
+<details>
+<summary><strong>Placement Engine</strong></summary>
+
+- [Placement Engine](#placement-engine)
+  - [Rules](#rules)
+  - [Placement Decision Flow](#placement-decision-flow)
+  - [Why this matters](#why-this-matters)
+
+</details>
+
+<details>
+<summary><strong>Validation</strong></summary>
+
+- [Validation](#validation)
+  - [Validation Rules](#validation-rules)
+  - [Validation Outputs](#validation-outputs)
+
+</details>
+
+<details>
+<summary><strong>Outputs</strong></summary>
+
+- [Outputs](#outputs)
+  - [Core Outputs](#core-outputs)
+  - [Purpose](#purpose)
+  - [Best Practice](#best-practice)
+
+</details>
+
+<details>
+<summary><strong>Future Plans</strong></summary>
+
+- [Future Plans](#future-plans)
+
+</details>
+
+---
+
+### Project Evolution
+
+The solution was developed iteratively, with each phase introducing additional architectural capability:
+
+- **v1.0 — IaC Baseline**  
+  Introduced the initial Bicep-based multi-region deployment baseline with static VNet peering and CLI-driven execution.
+
+- **v1.5 — Automation and Validation**  
+  Standardised and automated subscription-scope deployments with repeatable validation and cross-region connectivity testing.
+
+- **v1.6 — Core Network Foundation**  
+  Multi-region networking, subnet segmentation, and DNS structure.
+
+- **v1.7 — Security and Modularity**  
+  Network Security Groups, role-based segmentation, and VNet peering.
+
+- **v1.8 — Modular Architecture**  
+  Separation of components into reusable modules and integration with Azure Key Vault.
+
+- **v1.9 — Security Hardening and Identity**  
+  Introduction of a jumpbox model, private-only workloads, hub firewall routing, and hardened authentication.
+
+- **v1.10 — Placement and Validation Engine**  
+  Deterministic VM placement, predictable network addressing, capacity-aware distribution, route-table driven traffic control, and pre-deployment validation.
+
+- **v1.11 — Hub-Spoke Networking**  
+  Hub-and-spoke VNet peering combined with centralised firewall-based routing, spoke route tables, and refined network flow control across regions.
+
+- **Current Version v1.12 — Deployment Stage Control**  
+  Introduces stage-driven deployment control (`network`, `control`, `workload`, `all`) while retaining hub-and-spoke peering, centralised firewall routing, and spoke route table enforcement.
+
+---
+
+### Design Principles
+
+The design is based on the following principles:
+
+- **Deterministic deployment**  
+  The same inputs always produce the same infrastructure layout.
+
+- **Separation of concerns**  
+  Networking, compute, security, and placement logic are clearly separated.
+
+- **Data-driven design**  
+  Deployment behaviour is controlled through parameter configuration.
+
+- **Validation before deployment**  
+  Invalid configurations are detected and blocked early.
+
+- **Balanced multi-region distribution**  
+  Workloads are evenly distributed while respecting regional constraints.
+
+- **Security-first approach**  
+  Minimal exposure, controlled access paths, and secure credential handling.
+
+  [Back to top](#table-of-contents)
+
+---
+
+## Design Decisions & Trade-offs
+
+### Deterministic `.4` DNS
+Use `.4` from each DC subnet for DNS.
+
+- Benefit: Predictable and valid.  
+- Limitation: Not all DC IPs are listed.  
+
+---
+
+### Index-Based Placement
+Placement uses deterministic indexing instead of real capacity tracking.
+
+- Benefit: Repeatable.  
+- Limitation: Approximate, not dynamic.  
+
+---
+
+### Controlled Hub Placement for Control-Plane Workloads
+The first Domain Controller and jumpbox are pinned to the hub region.  
+Additional DCs and jumpboxes are placed in spokes first, with the hub used as a fallback.
+
+- Benefit: Guarantees control-plane presence in the hub.  
+- Benefit: Distributes additional instances for resilience.  
+- Benefit: Protects limited hub capacity.  
+- Benefit: Allows additional hub placement when capacity permits.  
+- Limitation: Based on index ordering, not real-time capacity.  
+
+---
+
+### Hub Role Restriction
+Only DCs and jumpboxes are allowed in the hub.
+
+- Benefit: Clear control-plane separation.  
+- Benefit: Improved security posture.  
+- Limitation: Reduces general capacity in the hub.  
+
+---
+
+### Parallel Deployment Reality
+Placement does not rely on deployment order.
+
+- Benefit: Deterministic behaviour.  
+- Limitation: Must account for concurrent deployments.  
+
+---
+
+### Global DNS
+All VNets share the same DNS list derived from DC placement.
+
+- Benefit: Simple and consistent.  
+- Limitation: Not latency-optimised per region.  
+
+  [Back to top](#table-of-contents)
+
+## Architecture Overview
+
+The deployment creates a consistent infrastructure footprint across multiple Azure regions.
+
+### Regional Architecture
+
+Each selected region contains:
+
+- A dedicated Resource Group  
+- A Virtual Network (VNet)  
+- Segmented subnets:
+  - Domain Controller (dc)
+  - Server
+  - Client
+  - Jumpbox  
+- Network Security Groups (NSGs) applied per subnet  
+- Virtual Machines based on configured roles  
+
+  [Back to top](#table-of-contents)
+
+---
+
+### Network Architecture
+
+- Spoke server and client subnets use user-defined routes (UDRs) to direct traffic through the hub firewall
+- Hub firewall provides centralised east-west traffic inspection and acts as the control point for inter-region communication
+- Controlled administrative access via regional jumpboxes (only tier with public exposure)
+- Subnet-level traffic segmentation enforced using Network Security Groups (NSGs)
+
+This design enforces centralised security by preventing direct spoke-to-spoke communication and routing all inter-network traffic through the hub firewall.
+
+### Network Architecture Diagram
+
+```mermaid
+flowchart TB
+  subgraph HUB[Hub VNet - Primary Region]
+    FW[Azure Firewall\nHub control point]
+  end
+
+  subgraph A[Spoke VNet A - Region A]
+    AJ[Jumpbox Subnet\nPublic admin access]
+    AD[DC Subnet\nAD + DNS]
+    AS[Server Subnet\nUDR to Hub Firewall]
+    AC[Client Subnet\nUDR to Hub Firewall]
+  end
+
+  subgraph B[Spoke VNet B - Region B]
+    BJ[Jumpbox Subnet\nPublic admin access]
+    BD[DC Subnet\nAD + DNS]
+    BS[Server Subnet\nUDR to Hub Firewall]
+    BC[Client Subnet\nUDR to Hub Firewall]
+  end
+
+  subgraph C[Spoke VNet C - Region C]
+    CJ[Jumpbox Subnet\nPublic admin access]
+    CD[DC Subnet\nAD + DNS]
+    CS[Server Subnet\nUDR to Hub Firewall]
+    CC[Client Subnet\nUDR to Hub Firewall]
+  end
+
+  FW <--> A
+  FW <--> B
+  FW <--> C
+
+  AS --> FW
+  AC --> FW
+  BS --> FW
+  BC --> FW
+  CS --> FW
+  CC --> FW
+```
+
+Traffic path: Spoke VM -> UDR -> Hub Firewall -> Destination Spoke VM (no direct spoke-to-spoke path).
+
+  [Back to top](#table-of-contents)
+
+---
+
+### Traffic Flow
+
+Spoke workloads do not talk directly to each other by default. Instead:
+
+- Server and client subnets in spoke regions use route tables to send internal traffic to the hub firewall
+- The hub firewall applies the central routing and security control point
+- Jumpboxes remain the entry point for administration
+- NSGs still enforce subnet-level access rules
+
+  [Back to top](#table-of-contents)
+
+---
+
+### IP Addressing Strategy
+
+All virtual machines use **Dynamic private IP allocation**.
+
+Domain Controllers are deployed into dedicated **DC subnets per region**. Azure assigns IP addresses deterministically within each subnet:
+
+- `.0–.3` are reserved by Azure  
+- `.4` is the first usable IP address  
+
+Because Domain Controllers are deployed first into their subnets, each region’s primary DC consistently receives the `.4` address.
+
+This removes the need for complex static IP calculations while maintaining predictable addressing.
+
+---
+
+### DNS Configuration
+
+Each Virtual Network is configured with up to three DNS servers, using deterministic `.4` addresses from DC subnets.
+
+The DNS server list is derived dynamically from domain controller placements and ordered as follows:
+
+1. The hub region DC (`.4`) is prioritised when present
+2. Remaining regions containing DCs are included in deterministic order
+3. The list is truncated to a maximum of three DNS servers
+
+This same ordered DNS server list is applied consistently across all VNets.
+
+### Design Approach
+
+DNS configuration is based on deterministic infrastructure behaviour rather than dynamic discovery:
+
+- Bicep does not support runtime lookup of assigned IP addresses
+- Each DC subnet is isolated and contains only Domain Controllers
+- The first deployed VM in each subnet always receives `.4`
+- Domain Controllers are deployed first, ensuring correct assignment
+
+### Behaviour
+
+- DNS order is hub-first, then remaining DC regions
+- Each VNet may have between one and three DNS entries depending on DC placement and region count
+- DNS redundancy is maintained by including multiple regional DCs when available
+
+### Active Directory Integration
+
+After AD DS installation:
+
+- Domain Controllers automatically register themselves in DNS
+- Clients can discover all DCs using AD-integrated DNS
+
+---
+
+### Security Model
+
+- Public access is restricted to jumpboxes only  
+- All other VMs are private   
+
+
+===== FILE: modules\logic\validation.bicep =====
+
+targetScope = 'subscription'
+
+// ========================================
+// MODULE PURPOSE
+// Evaluates placement and configuration rules and returns deterministic validation outputs.
+// ========================================
+
+// ========================================
+// INPUTS
+// ========================================
+
+param vmCounts object
+param regionCount int
+param regionIndexMap object
+param subnetIndexMap object
+param vmPlacements array
+param regionKeys array
+param maxVmsPerRegion int
+param primaryRegion string
+param hubRegion string
+param hasTooManyDcs bool
+
+// ========================================
+// DERIVED METRICS
+// Counts and boolean checks used by validation rules.
+// ========================================
+
+var vmPerRegionCounts = [
+  for region in regionKeys: length(filter(vmPlacements, vm => vm.regionKey == region))
+]
+
+var regionOverflowFlags = [
+  for count in vmPerRegionCounts: count > maxVmsPerRegion
+]
+
+var hasRegionOverflow = contains(regionOverflowFlags, true)
+var invalidMinimums = vmCounts.dc < 1 || vmCounts.jumpbox < 1
+var invalidRegionCount = regionCount > length(regionIndexMap)
+var missingPinnedDc = empty(filter(vmPlacements, vm => vm.type == 'dc' && vm.index == 0 && vm.regionKey == primaryRegion))
+var missingPinnedJumpbox = empty(filter(vmPlacements, vm => vm.type == 'jmp' && vm.index == 0 && vm.regionKey == primaryRegion))
+var invalidPrimaryPinning = missingPinnedDc || missingPinnedJumpbox
+var hasNonControlInHub = length(filter(vmPlacements, vm => !(vm.type == 'dc' || vm.type == 'jmp') && vm.regionKey == hubRegion)) > 0
+var totalVMs = vmCounts.dc + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
+var totalCapacity = regionCount * maxVmsPerRegion
+var invalidCapacity = totalVMs > totalCapacity
+var hasInvalidRegionIndex = [
+  for region in regionKeys: contains(regionIndexMap, region) ? false : true
+]
+
+var missingRegionIndex = contains(hasInvalidRegionIndex, true)
+var hasInvalidSubnetIndex = !(contains(subnetIndexMap, 'firewall') && contains(subnetIndexMap, 'jumpbox') && contains(subnetIndexMap, 'dc') && contains(subnetIndexMap, 'server') && contains(subnetIndexMap, 'client'))
+var hasMissingIndexes = [
+  for i in range(1, length(regionIndexMap) + 1): empty(filter(items(regionIndexMap), r => r.value == i))
+]
+
+var invalidIndexSequence = contains(hasMissingIndexes, true)
+
+// ========================================
+// VALIDATION FLAG MODEL
+// Consolidated rule state emitted for diagnostics.
+// ========================================
+
+var validationFlags = {
+  invalidMinimums: invalidMinimums
+  invalidRegionCount: invalidRegionCount
+  invalidPrimaryPinning: invalidPrimaryPinning
+  hasNonControlInHub: hasNonControlInHub
+  invalidCapacity: invalidCapacity
+  missingRegionIndex: missingRegionIndex
+  hasInvalidSubnetIndex: hasInvalidSubnetIndex
+  invalidIndexSequence: invalidIndexSequence
+  hasRegionOverflow: hasRegionOverflow
+  hasTooManyDcs: hasTooManyDcs
+}
+
+// ========================================
+// MESSAGE COMPOSITION
+// First-match message preserves stable and concise feedback.
+// ========================================
+
+var msg1 = invalidMinimums ? 'At least 1 DC and 1 Jumpbox are required.' : ''
+var msg2 = invalidRegionCount ? 'Region count exceeds available regions.' : ''
+var msg3 = invalidPrimaryPinning ? 'Primary pinning failed: dc01 and jmp01 must be placed in the primary region.' : ''
+var msg4 = hasNonControlInHub ? 'One or more non-control VMs were placed in the hub region.' : ''
+var msg5 = missingRegionIndex ? 'One or more regions are missing in regionIndexMap.' : ''
+var msg6 = hasInvalidSubnetIndex ? 'Subnet index map must include firewall, dc, jumpbox, server, and client.' : ''
+var msg7 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : ''
+var msg8 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
+var msg9 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
+var msg10 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
+
+var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : ''
+
+// ========================================
+// OUTPUTS
+// ========================================
+
+output validationFlags object = validationFlags
+output validationMessage string = validationMessage
+output totalVMs int = totalVMs
+output totalCapacity int = totalCapacity
+output vmPerRegionCounts array = vmPerRegionCounts
+
+
+===== FILE: modules\networking\firewall.bicep =====
+
+// ========================================
+// MODULE PURPOSE
+// Deploys hub firewall components: public IP, policy, firewall instance, and baseline east-west rules.
+// ========================================
+
+// ========================================
+// INPUTS
+// ========================================
+
+param location string
+param firewallName string
+param vnetName string
+param publicIpName string
+
+// ========================================
+// DERIVED VALUES
+// ========================================
+
+// Internal address space used by lab VNets and firewall east-west allow rule.
+var internalRange = '10.0.0.0/8'
+
+//
+// ========================================
+// RESOURCE CREATED: PUBLIC IP
+// Required for Azure Firewall deployment in VNet mode.
+// ========================================
+//
+
+resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = {
+  name: publicIpName
+  location: location
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    publicIPAllocationMethod: 'Static'
+  }
+}
+
+//
+// ========================================
+// EXISTING DEPENDENCIES
+// VNet and AzureFirewallSubnet are expected to exist already.
+// ========================================
+//
+
+resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
+  name: vnetName
+}
+
+//
+// ========================================
+// RESOURCE CREATED: FIREWALL POLICY
+// Modern control plane for firewall rules.
+// ========================================
+//
+
+resource firewallSubnet 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
+  parent: vnet
+  name: 'AzureFirewallSubnet'
+}
+
+resource firewallPolicy 'Microsoft.Network/firewallPolicies@2023-02-01' = {
+  name: '${firewallName}-policy'
+  location: location
+  properties: {
+    sku: {
+      tier: 'Standard'
+    }
+  }
+}
+
+//
+// ========================================
+// RESOURCE CREATED: FIREWALL INSTANCE
+// Data plane attached to the policy above.
+// ========================================
+//
+
+resource firewall 'Microsoft.Network/azureFirewalls@2023-02-01' = {
+  name: firewallName
+  location: location
+  properties: {
+    sku: {
+      name: 'AZFW_VNet'
+      tier: 'Standard'
+    }
+
+    firewallPolicy: {
+      id: firewallPolicy.id
+    }
+
+    ipConfigurations: [
+      {
+        name: 'firewall-ipconfig'
+        properties: {
+          subnet: {
+            id: firewallSubnet.id
+          }
+          publicIPAddress: {
+            id: publicIp.id
+          }
+        }
+      }
+    ]
+  }
+}
+
+//
+// ========================================
+// POLICY RULES
+// Allow east-west internal traffic across 10.0.0.0/8.
+// ========================================
+//
+
+resource policyRuleCollectionGroup 'Microsoft.Network/firewallPolicies/ruleCollectionGroups@2023-02-01' = {
+  name: 'default-network-rules'
+  parent: firewallPolicy
+  properties: {
+    priority: 100
+    ruleCollections: [
+      {
+        name: 'allow-internal-traffic'
+        priority: 100
+        ruleCollectionType: 'FirewallPolicyFilterRuleCollection'
+        action: {
+          type: 'Allow'
+        }
+        rules: [
+          {
+            ruleType: 'NetworkRule'
+            name: 'allow-all-internal'
+            ipProtocols: [
+              'Any'
+            ]
+            sourceAddresses: [
+              internalRange
+            ]
+            destinationAddresses: [
+              internalRange
+            ]
+            destinationPorts: [
+              '*'
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+
+//
+// ========================================
+// OUTPUTS
+// ========================================
+//
+
+// NOTE: Azure Firewall has a single IP configuration by design
+output firewallPrivateIp string = firewall.properties.ipConfigurations[0].properties.privateIPAddress
+
+
+===== FILE: modules\networking\nsg.bicep =====
+
+// ========================================
+// MODULE PURPOSE
+// Creates an NSG and expands simplified inbound rule definitions into security rules.
+// Expected rule fields: name, port, access, source.
+// ========================================
+
+// ========================================
+// INPUTS
+// ========================================
+
+param nsgName string
+param location string
+param tags object = {}
+
+@description('Array of NSG rules')
+param rules array
+
+// ========================================
+// RESOURCE CREATED: NETWORK SECURITY GROUP
+// ========================================
+
+resource nsg 'Microsoft.Network/networkSecurityGroups@2022-09-01' = {
+  name: nsgName
+  location: location
+  tags: tags
+  properties: {
+    securityRules: [
+      for (rule, index) in rules: {
+        name: rule.name
+        properties: {
+          // Deterministic rule ordering: starts at 1000 and increments by 1 per rule.
+          priority: 1000 + index
+          access: rule.access
+          direction: 'Inbound'
+          protocol: '*'
+          sourcePortRange: '*'
+          destinationPortRange: rule.port
+          sourceAddressPrefixes: rule.source
+          destinationAddressPrefix: '*'
+        }
+      }
+    ]
+  }
+}
+
+// ========================================
+// OUTPUTS
+// ========================================
+
+output nsgId string = nsg.id
+
+
+===== FILE: modules\networking\routeTable.bicep =====
+
+// ========================================
+// PRIMARY INPUTS
+// Location and hub firewall next hop.
+// ========================================
+
+param location string
+param nextHopIp string
+
+// ========================================
+// INPUTS
+// Next hop + subnet identity/prefix + NSG IDs for server and client paths.
+// ========================================
+
+// Server subnet inputs
+param serverSubnetId string
+param serverSubnetPrefix string
+param serverNsgId string
+
+// Client subnet inputs
+param clientSubnetId string
+param clientSubnetPrefix string
+param clientNsgId string
+
+//
+// ========================================
+// MODULE PURPOSE
+// Creates server/client route tables and attaches them to existing subnets.
+// Routes internal traffic (10.0.0.0/8) to the hub firewall next hop.
+// ========================================
+//
+
+// ========================================
+// DERIVED IDENTIFIERS
+// Parse VNet and subnet names from subnet ARM IDs.
+// Assumes subnet IDs are valid full ARM resource IDs.
+// ========================================
+//
+
+var vnetId = substring(serverSubnetId, 0, indexOf(serverSubnetId, '/subnets/'))
+var vnetName = last(split(vnetId, '/virtualNetworks/'))
+
+// Server subnet name from ARM ID
+var serverSubnetName = last(split(serverSubnetId, '/subnets/'))
+
+// Client subnet name from ARM ID
+var clientSubnetName = last(split(clientSubnetId, '/subnets/'))
+
+//
+// ========================================
+// EXISTING DEPENDENCY: TARGET VNET
+// ========================================
+//
+
+resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
+  name: vnetName
+}
+
+// ----------------------------------------
+// EXISTING NSG REFERENCES (for dependency)
+// ----------------------------------------
+
+resource serverNsg 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing = {
+  name: last(split(serverNsgId, '/'))
+}
+
+resource clientNsg 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing = {
+  name: last(split(clientNsgId, '/'))
+}
+
+//
+// ========================================
+// RESOURCE CREATED: ROUTE TABLES
+// One route table per subnet role (server/client).
+// ========================================
+//
+
+// Server route table
+resource rtServer 'Microsoft.Network/routeTables@2023-02-01' = {
+  name: '${serverSubnetName}-rt'
+  location: location
+  properties: {
+    routes: [
+      {
+        name: 'route-all-to-hub'
+        properties: {
+          addressPrefix: '10.0.0.0/8'
+          nextHopType: 'VirtualAppliance'
+          nextHopIpAddress: nextHopIp
+        }
+      }
+    ]
+  }
+}
+
+// Client route table
+resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
+  name: '${clientSubnetName}-rt'
+  location: location
+  properties: {
+    routes: [
+      {
+        name: 'route-all-to-hub'
+        properties: {
+          addressPrefix: '10.0.0.0/8'
+          nextHopType: 'VirtualAppliance'
+          nextHopIpAddress: nextHopIp
+        }
+      }
+    ]
+  }
+}
+
+//
+// ========================================
+// SUBNET UPDATES
+// Re-apply subnet prefix + NSG and attach route table association.
+// ========================================
+//
+
+// Server subnet update
+resource serverSubnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
+  name: serverSubnetName
+  parent: vnet
+  dependsOn: [
+    serverNsg
+  ]
+  properties: {
+    addressPrefix: serverSubnetPrefix
+
+    networkSecurityGroup: {
+      id: serverNsgId
+    }
+
+    routeTable: {
+      id: rtServer.id
+    }
+  }
+}
+
+// Client subnet update
+resource clientSubnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
+  name: clientSubnetName
+  parent: vnet
+  dependsOn: [
+    serverSubnetUpdate
+    clientNsg
+  ]
+  properties: {
+    addressPrefix: clientSubnetPrefix
+
+    networkSecurityGroup: {
+      id: clientNsgId
+    }
+
+    routeTable: {
+      id: rtClient.id
+    }
+  }
+}
+
+
+===== FILE: modules\networking\subnet.bicep =====
+
+// ========================================
+// MODULE PURPOSE
+// Creates a subnet in an existing VNet, with optional NSG association.
+// ========================================
+
+// ========================================
+// INPUTS
+// ========================================
+
+param vnetName string
+param subnetName string
+param addressPrefix string
+param nsgId string
+
+// ========================================
+// EXISTING DEPENDENCY: PARENT VNET
+// ========================================
+
+resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
+  name: vnetName
+}
+
+// ========================================
+// RESOURCE CREATED: SUBNET
+// ========================================
+
+resource subnet 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
+  name: subnetName
+  parent: vnet
+  properties: {
+    addressPrefix: addressPrefix
+    // Optional NSG binding: if nsgId is empty, subnet is created without NSG.
+    networkSecurityGroup: empty(nsgId) ? null : {
+      id: nsgId
+    }
+  }
+}
+
+// ========================================
+// OUTPUTS
+// ========================================
+
+output subnetId string = subnet.id
+
+
+===== FILE: modules\networking\vnet.bicep =====
+
+// ========================================
+// MODULE PURPOSE
+// Creates a VNet and, optionally, NSGs/subnets for role-based segmentation.
+// Supports greenfield (create) and brownfield (reuse existing) flows.
+// ========================================
+
+// ========================================
+// INPUTS
+// ========================================
+
+param vnetName string
+param location string
+param deploySubnets bool
+param addressPrefix string
+param subnetPrefix object
+param isHub bool
+param dnsServers array
+param jumpboxSubnets array
+param jumpboxAllowedSources array
+param enableClientSsh bool
+param tags object = {}
+
+// ========================================
+// SECURITY RULE BUILDING BLOCKS
+// Base rule arrays reused to build role-specific NSG rule sets.
+// ========================================
+
+var internalNetworkRange = '10.0.0.0/8'
+
+var adRules = [
+  {
+    name: 'Allow-DNS'
+    port: '53'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-Kerberos'
+    port: '88'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-LDAP'
+    port: '389'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+]
+
+var adAdvancedRules = [
+  {
+    name: 'Allow-NTP'
+    port: '123'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-Kerberos-Password-Change'
+    port: '464'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-SMB'
+    port: '445'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-Global-Catalog'
+    port: '3268'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-Global-Catalog-SSL'
+    port: '3269'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-LDAPS'
+    port: '636'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-RPC-Endpoint-Mapper'
+    port: '135'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-RPC-Dynamic'
+    port: '49152-65535'
+    access: 'Allow'
+    source: [
+      internalNetworkRange
+    ]
+  }
+]
+
+var rdpRules = [
+  {
+    name: 'Allow-RDP-From-Jumpbox'
+    port: '3389'
+    access: 'Allow'
+    source: jumpboxSubnets
+  }
+  {
+    name: 'Deny-RDP-From-Others'
+    port: '3389'
+    access: 'Deny'
+    source: [
+      internalNetworkRange
+    ]
+  }
+]
+
+var sshRules = [
+  {
+    name: 'Allow-SSH-From-Jumpbox'
+    port: '22'
+    access: 'Allow'
+    source: jumpboxSubnets
+  }
+  {
+    name: 'Deny-SSH-From-Others'
+    port: '22'
+    access: 'Deny'
+    source: [
+      internalNetworkRange
+    ]
+  }
+]
+
+// ========================================
+// ROLE-BASED NSG RULE COMPOSITION
+// Final NSG policy payloads per subnet role.
+// ========================================
+
+var nsgRules = {
+  dc: concat(
+    adRules,
+    adAdvancedRules,
+    rdpRules
+  )
+  jumpbox: [
+    {
+      name: 'Allow-RDP-From-Approved-Internet'
+      port: '3389'
+      access: 'Allow'
+      source: jumpboxAllowedSources
+    }
+  ]
+  server: concat(
+    sshRules,
+    rdpRules,
+    adRules
+  )  
+  client: concat(
+    enableClientSsh ? sshRules : [],
+    rdpRules
+  )
+}
+
+// ========================================
+// NAMING MODEL
+// Deterministic subnet names derived from vnetName.
+// ========================================
+
+var subnetNames = {
+  dc: '${vnetName}-subnet-dc'
+  server: '${vnetName}-subnet-server'
+  client: '${vnetName}-subnet-client'
+  jumpbox: '${vnetName}-subnet-jumpbox'
+}
+
+// ========================================
+// CORE RESOURCE: VNET
+// Always created by this module.
+// ========================================
+
+resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
+  name: vnetName
+  location: location
+  tags: tags
+  properties: {
+    addressSpace: {
+      addressPrefixes: [addressPrefix]
+    }
+    dhcpOptions: {
+      dnsServers: dnsServers
+    }
+  }
+}
+
+// ========================================
+// CONDITIONAL MODULE DEPLOYMENTS (deploySubnets = true)
+// 1) Optional hub firewall subnet
+// 2) NSGs per role
+// 3) Subnets per role with NSG association
+// ========================================
+
+module nsgDc 'nsg.bicep' = if (deploySubnets) {
+  name: '${vnetName}-nsg-dc'
+  params: {
+    nsgName: '${vnetName}-nsg-dc'
+    location: location
+    tags: union(tags, {
+      role: 'dc-nsg'
+    })
+    rules: nsgRules.dc
+  }
+}
+
+module nsgJumpbox 'nsg.bicep' = if (deploySubnets) {
+  name: '${vnetName}-nsg-jumpbox'
+  params: {
+    nsgName: '${vnetName}-nsg-jumpbox'
+    location: location
+    tags: union(tags, {
+      role: 'jumpbox-nsg'
+    })
+    rules: nsgRules.jumpbox
+  }
+}
+
+module nsgServer 'nsg.bicep' = if (deploySubnets) {
+  name: '${vnetName}-nsg-server'
+  params: {
+    nsgName: '${vnetName}-nsg-server'
+    location: location
+    tags: union(tags, {
+      role: 'server-nsg'
+    })
+    rules: nsgRules.server
+  }
+}
+
+module nsgClient 'nsg.bicep' = if (deploySubnets) {
+  name: '${vnetName}-nsg-client'
+  params: {
+    nsgName: '${vnetName}-nsg-client'
+    location: location
+    tags: union(tags, {
+      role: 'client-nsg'
+    })
+    rules: nsgRules.client
+  }
+}
+
+module subnetDc 'subnet.bicep' = if (deploySubnets) {
+  name: '${vnetName}-subnet-dc'
+  dependsOn: [
+    vnet
+  ]
+  params: {
+    vnetName: vnetName
+    subnetName: subnetNames.dc
+    addressPrefix: subnetPrefix.dc
+    nsgId: nsgDc!.outputs.nsgId
+  }
+}
+
+module subnetJumpbox 'subnet.bicep' = if (deploySubnets) {
+  name: '${vnetName}-subnet-jumpbox'
+  dependsOn: [
+    subnetDc
+  ]
+  params: {
+    vnetName: vnetName
+    subnetName: subnetNames.jumpbox
+    addressPrefix: subnetPrefix.jumpbox
+    nsgId: nsgJumpbox!.outputs.nsgId
+  }
+}
+
+module subnetServer 'subnet.bicep' = if (deploySubnets) {
+  name: '${vnetName}-subnet-server'
+  dependsOn: [
+    subnetJumpbox
+  ]
+  params: {
+    vnetName: vnetName
+    subnetName: subnetNames.server
+    addressPrefix: subnetPrefix.server
+    nsgId: nsgServer!.outputs.nsgId
+  }
+}
+
+module subnetClient 'subnet.bicep' = if (deploySubnets) {
+  name: '${vnetName}-subnet-client'
+  dependsOn: [
+    subnetServer
+  ]
+  params: {
+    vnetName: vnetName
+    subnetName: subnetNames.client
+    addressPrefix: subnetPrefix.client
+    nsgId: nsgClient!.outputs.nsgId
+  }
+}
+
+module subnetHub 'subnet.bicep' = if (isHub && deploySubnets) {
+  name: 'AzureFirewallSubnet'
+  dependsOn: [
+    subnetClient
+  ]
+  params: {
+    vnetName: vnetName
+    subnetName: 'AzureFirewallSubnet'
+    addressPrefix: subnetPrefix.firewall
+    nsgId: ''
+  }
+}
+
+// ========================================
+// EXISTING RESOURCE REFERENCES
+// Used for safe ID resolution and brownfield compatibility.
+// Avoids module.outputs access in conditional-module paths.
+// ========================================
+
+resource subnetClientExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
+  parent: vnet
+  name: '${vnetName}-subnet-client'
+}
+
+resource subnetDcExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
+  parent: vnet
+  name: '${vnetName}-subnet-dc'
+}
+
+resource subnetJumpboxExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
+  parent: vnet
+  name: '${vnetName}-subnet-jumpbox'
+}
+
+resource subnetServerExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
+  parent: vnet
+  name: '${vnetName}-subnet-server'
+}
+
+resource nsgDcExisting 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing = {
+  name: '${vnetName}-nsg-dc'
+}
+
+resource nsgJumpboxExisting 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing = {
+  name: '${vnetName}-nsg-jumpbox'
+}
+
+resource nsgServerExisting 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing = {
+  name: '${vnetName}-nsg-server'
+}
+
+resource nsgClientExisting 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing = {
+  name: '${vnetName}-nsg-client'
+}
+
+// ========================================
+// ID RESOLUTION
+// Unified IDs for both create and reuse paths.
+// ========================================
+
+var clientSubnetId = subnetClientExisting.id
+var dcSubnetId = subnetDcExisting.id
+var jumpboxSubnetId = subnetJumpboxExisting.id
+var serverSubnetId = subnetServerExisting.id
+
+// ========================================
+// NSG ID RESOLUTION (GREENFIELD + BROWNFIELD)
+// ========================================
+
+var serverNsgId = deploySubnets ? nsgServer!.outputs.nsgId : nsgServerExisting.id
+var clientNsgId = deploySubnets ? nsgClient!.outputs.nsgId : nsgClientExisting.id
+var dcNsgId = deploySubnets ? nsgDc!.outputs.nsgId : nsgDcExisting.id
+var jumpboxNsgId = deploySubnets ? nsgJumpbox!.outputs.nsgId : nsgJumpboxExisting.id
+
+// ========================================
+// OUTPUTS
+// VNet metadata plus normalised NSG/subnet objects for downstream modules.
+// ========================================
+
+output vnetId string = vnet.id
+output vnetName string = vnet.name
+output nsgs object = {
+  server: serverNsgId
+  client: clientNsgId
+  dc: dcNsgId
+  jumpbox: jumpboxNsgId
+}
+
+// ========================================
+// SUBNET OUTPUTS
+// ========================================
+// Resolve subnet IDs using existing resource references.
+// Avoids module.outputs access because subnet modules are conditional (module | null).
+// Works for both new and existing deployments.
+
+output subnets object = {
+  client: {
+    id: clientSubnetId
+  }
+  dc: {
+    id: dcSubnetId
+  }
+  jumpbox: {
+    id: jumpboxSubnetId
+  }
+  server: {
+    id: serverSubnetId
+  }
+}
+
+
+===== FILE: modules\peering\peering.bicep =====
+
+targetScope = 'resourceGroup'
+
+// ========================================
+// MODULE PURPOSE
+// Creates hub-to-spoke and spoke-to-hub peering.
+// Does not create full-mesh peering between spokes.
+// ========================================
+
+// ========================================
+// INPUTS
+// VNet name, deployment region set, source region, and naming prefix.
+// ========================================
+
+param vnetName string
+param regionKeys array
+param sourceRegion string
+param prefix string
+param hubRegion string
+
+// ========================================
+// EXISTING DEPENDENCY: LOCAL VNET
+// ========================================
+
+resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
+  name: vnetName
+}
+
+// ========================================
+// PEERING RULE
+// Hub peers with every spoke.
+// Each spoke peers only with the hub.
+// ========================================
+
+// ========================================
+// RESOURCE CREATED: VNET PEERINGS
+// ========================================
+
+resource peerings 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2022-07-01' = [
+  for target in regionKeys: if (sourceRegion == hubRegion && target != hubRegion || sourceRegion != hubRegion && target == hubRegion) {
+    name: '${vnet.name}-to-${prefix}-vnet-${target}'
+    parent: vnet
+    properties: {
+      remoteVirtualNetwork: {
+        id: resourceId(
+          '${prefix}-rg-${target}',
+          'Microsoft.Network/virtualNetworks',
+          '${prefix}-vnet-${target}'
+        )
+      }
+      allowVirtualNetworkAccess: true
+      allowForwardedTraffic: true
+      allowGatewayTransit: false
+      useRemoteGateways: false
+    }
+  }
+]
+
+
+===== FILE: modules\compute\vm-linux.bicep =====
+
+// ========================================
+// MODULE PURPOSE
+// Deploys a Linux VM with SSH key authentication and optional public IP.
+// ========================================
+
+// ========================================
+// INPUTS
+// VM identity, networking, image, disk, and access mode.
+// ========================================
+
+param vmName string
+param subnetId string
+param vmSize string
+param adminUsername string
+param adminPublicKey string
+param tags object = {}
+param image object
+param osDisk object
+param assignPublicIp bool
+
+// ========================================
+// RESOURCE CREATED: NETWORK INTERFACE
+// Always created; attaches to target subnet.
+// ========================================
+
+resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
+  name: '${vmName}-nic'
+  location: resourceGroup().location
+  tags: tags
+  properties: {
+    ipConfigurations: [
+      {
+        name: 'ipconfig1'
+        properties: {
+          subnet: {
+            id: subnetId
+          }
+          privateIPAllocationMethod: 'Dynamic'
+          // Optional public IP attachment based on assignPublicIp.
+          publicIPAddress: assignPublicIp ? {
+            id: publicIp.id
+          } : null
+        }
+      }
+    ]
+  }
+}
+
+// ========================================
+// RESOURCE CREATED: LINUX VM
+// System-assigned identity + Trusted Launch + SSH-only authentication.
+// ========================================
+
+resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
+  name: vmName
+  location: resourceGroup().location
+  identity: {
+    type: 'SystemAssigned'
+  }
+  tags: tags
+  properties: {
+    diagnosticsProfile: {
+      bootDiagnostics: {
+        enabled: true
+      }
+    }
+    securityProfile: {
+      securityType: 'TrustedLaunch'
+      uefiSettings: {
+        secureBootEnabled: true
+        vTpmEnabled: true
+      }
+    }
+    hardwareProfile: {
+      vmSize: vmSize
+    }
+    osProfile: {
+      computerName: vmName
+      adminUsername: adminUsername
+      linuxConfiguration: {
+        disablePasswordAuthentication: true
+        ssh: {
+          publicKeys: [
+            {
+              path: '/home/${adminUsername}/.ssh/authorized_keys'
+              keyData: adminPublicKey
+            }
+          ]
+        }
+        provisionVMAgent: true
+      }
+    }
+    storageProfile: {
+      imageReference: image
+      osDisk: {
+        createOption: 'FromImage'
+        managedDisk: {
+          storageAccountType: osDisk.storageAccountType
+        }
+      }
+    }
+    networkProfile: {
+      networkInterfaces: [
+        {
+          id: nic.id
+        }
+      ]
+    }
+  }
+}
+
+// ========================================
+// CONDITIONAL RESOURCE: PUBLIC IP
+// Created only when assignPublicIp is true.
+// ========================================
+
+resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (assignPublicIp) {
+  name: '${vmName}-pip'
+  location: resourceGroup().location
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    publicIPAllocationMethod: 'Static'
+  }
+}
+
+
+===== FILE: modules\compute\vm-windows.bicep =====
+
+// ========================================
+// MODULE PURPOSE
+// Deploys a Windows VM with Trusted Launch and optional public IP exposure.
+// ========================================
+
+// ========================================
+// INPUTS
+// VM identity, networking, image, disk, admin credentials, and access mode.
+// ========================================
+
+param vmName string
+param subnetId string
+param vmSize string
+param assignPublicIp bool
+param adminUsername string
+@secure()
+param adminPassword string
+param tags object = {}
+param image object
+param osDisk object
+
+// ========================================
+// RESOURCE CREATED: NETWORK INTERFACE
+// Always created; attaches VM to the target subnet.
+// ========================================
+
+resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
+  name: '${vmName}-nic'
+  location: resourceGroup().location
+  tags: tags
+  properties: {
+    ipConfigurations: [
+      {
+        name: 'ipconfig1'
+        properties: {
+          subnet: {
+            id: subnetId
+          }
+          privateIPAllocationMethod: 'Dynamic'
+          // Optional public IP attachment based on assignPublicIp.
+          publicIPAddress: assignPublicIp ? {
+            id: publicIp.id
+          } : null
+        }
+      }
+    ]
+  }
+}
+
+// ========================================
+// RESOURCE CREATED: WINDOWS VM
+// System-assigned identity, Trusted Launch, and boot diagnostics enabled.
+// ========================================
+
+resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
+  name: vmName
+  location: resourceGroup().location
+  identity: {
+    type: 'SystemAssigned'
+  }
+  tags: tags
+  properties: {
+    diagnosticsProfile: {
+      bootDiagnostics: {
+        enabled: true
+      }
+    }
+    securityProfile: {
+      securityType: 'TrustedLaunch'
+      uefiSettings: {
+        secureBootEnabled: true
+        vTpmEnabled: true
+      }
+    }
+    hardwareProfile: {
+      vmSize: vmSize
+    }
+    osProfile: {
+      computerName: vmName
+      adminUsername: adminUsername
+      adminPassword: adminPassword
+      windowsConfiguration: {
+        provisionVMAgent: true
+      }
+    }
+    storageProfile: {
+      imageReference: image
+      osDisk: {
+        createOption: 'FromImage'
+        managedDisk: {
+          storageAccountType: osDisk.storageAccountType
+        }
+      }
+    }
+    networkProfile: {
+      networkInterfaces: [
+        {
+          id: nic.id
+        }
+      ]
+    }
+  }
+}
+
+// ========================================
+// CONDITIONAL RESOURCE: PUBLIC IP
+// Created only when assignPublicIp is true.
+// ========================================
+
+resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (assignPublicIp) {
+  name: '${vmName}-pip'
+  location: resourceGroup().location
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    publicIPAllocationMethod: 'Static'
+  }
+}
+
+
