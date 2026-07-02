@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "1722863976841616539"
+      "templateHash": "2492278483939163060"
     }
   },
   "parameters": {
@@ -61,16 +61,10 @@
     "regionIndexMap": {
       "type": "object"
     },
-    "hubSubnetIndex": {
-      "type": "int",
-      "metadata": {
-        "description": "Subnet index used for hub services (only applies to hub VNet)"
-      }
-    },
     "deploySubnets": {
       "type": "bool",
       "metadata": {
-        "description": "Controls whether subnets should be created/modified"
+        "description": "True = create NSGs and subnets. False = use existing NSGs and subnets for brownfield deployments"
       }
     },
     "subnetIndexMap": {
@@ -185,6 +179,7 @@
         "name": "subnetPrefixesArray",
         "count": "[length(variables('regionKeys'))]",
         "input": {
+          "firewall": "[format('10.{0}.{1}.0/24', parameters('regionIndexMap')[variables('regionKeys')[copyIndex('subnetPrefixesArray')]], parameters('subnetIndexMap').firewall)]",
           "jumpbox": "[format('10.{0}.{1}.0/24', parameters('regionIndexMap')[variables('regionKeys')[copyIndex('subnetPrefixesArray')]], parameters('subnetIndexMap').jumpbox)]",
           "dc": "[format('10.{0}.{1}.0/24', parameters('regionIndexMap')[variables('regionKeys')[copyIndex('subnetPrefixesArray')]], parameters('subnetIndexMap').dc)]",
           "server": "[format('10.{0}.{1}.0/24', parameters('regionIndexMap')[variables('regionKeys')[copyIndex('subnetPrefixesArray')]], parameters('subnetIndexMap').server)]",
@@ -293,7 +288,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "17191465024265902168"
+              "templateHash": "7814991663697650581"
             }
           },
           "parameters": {
@@ -362,7 +357,7 @@
             "totalCapacity": "[mul(parameters('regionCount'), parameters('maxVmsPerRegion'))]",
             "invalidCapacity": "[greater(variables('totalVMs'), variables('totalCapacity'))]",
             "missingRegionIndex": "[contains(variables('hasInvalidRegionIndex'), true())]",
-            "hasInvalidSubnetIndex": "[not(and(and(and(contains(parameters('subnetIndexMap'), 'jumpbox'), contains(parameters('subnetIndexMap'), 'dc')), contains(parameters('subnetIndexMap'), 'server')), contains(parameters('subnetIndexMap'), 'client')))]",
+            "hasInvalidSubnetIndex": "[not(and(and(and(and(contains(parameters('subnetIndexMap'), 'firewall'), contains(parameters('subnetIndexMap'), 'jumpbox')), contains(parameters('subnetIndexMap'), 'dc')), contains(parameters('subnetIndexMap'), 'server')), contains(parameters('subnetIndexMap'), 'client')))]",
             "invalidIndexSequence": "[contains(variables('hasMissingIndexes'), true())]",
             "validationFlags": {
               "invalidMinimums": "[variables('invalidMinimums')]",
@@ -381,7 +376,7 @@
             "msg3": "[if(variables('invalidPrimaryPinning'), 'Primary pinning failed: dc01 and jmp01 must be placed in the primary region.', '')]",
             "msg4": "[if(variables('hasNonControlInHub'), 'One or more non-control VMs were placed in the hub region.', '')]",
             "msg5": "[if(variables('missingRegionIndex'), 'One or more regions are missing in regionIndexMap.', '')]",
-            "msg6": "[if(variables('hasInvalidSubnetIndex'), 'Subnet index map must include dc, jumpbox, server, and client.', '')]",
+            "msg6": "[if(variables('hasInvalidSubnetIndex'), 'Subnet index map must include firewall, dc, jumpbox, server, and client.', '')]",
             "msg7": "[if(variables('hasRegionOverflow'), 'One or more regions exceed the maximum allowed VMs per region.', '')]",
             "msg8": "[if(variables('invalidCapacity'), 'Too many VMs for the allowed capacity per region.', '')]",
             "msg9": "[if(variables('invalidIndexSequence'), 'Region index map must have continuous values starting at 1.', '')]",
@@ -436,12 +431,6 @@
           "location": {
             "value": "[variables('regionKeys')[copyIndex()]]"
           },
-          "regionIndex": {
-            "value": "[parameters('regionIndexMap')[variables('regionKeys')[copyIndex()]]]"
-          },
-          "hubSubnetIndex": {
-            "value": "[parameters('hubSubnetIndex')]"
-          },
           "isHub": {
             "value": "[equals(variables('regionKeys')[copyIndex()], variables('hubRegion'))]"
           },
@@ -477,7 +466,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "4353816274523629333"
+              "templateHash": "5278038027491851599"
             }
           },
           "parameters": {
@@ -495,12 +484,6 @@
             },
             "subnetPrefix": {
               "type": "object"
-            },
-            "regionIndex": {
-              "type": "int"
-            },
-            "hubSubnetIndex": {
-              "type": "int"
             },
             "isHub": {
               "type": "bool"
@@ -1360,7 +1343,7 @@
                     "value": "AzureFirewallSubnet"
                   },
                   "addressPrefix": {
-                    "value": "[format('10.{0}.{1}.0/24', parameters('regionIndex'), parameters('hubSubnetIndex'))]"
+                    "value": "[parameters('subnetPrefix').firewall]"
                   },
                   "nsgId": {
                     "value": ""
@@ -2229,8 +2212,7 @@
       },
       "dependsOn": [
         "routeTables",
-        "vnets",
-        "windowsVMs"
+        "vnets"
       ]
     }
   ],

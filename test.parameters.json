@@ -44,11 +44,7 @@
           "westus2": 27,
           "westeurope": 28
         }
-      },
-
-    "hubSubnetIndex": {
-      "value": 0
-    },  
+      }, 
 
     "subnetIndexMap": {
       "value": {

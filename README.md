@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v1.11
+# Azure Multi-Region Lab (AMRL) v1.12
 
 ## Overview
 
@@ -16,9 +16,17 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 
 ## Table of Contents
 
+<details open>
+<summary><strong>Overview</strong></summary>
+
 - [Overview](#overview)
   - [Project Evolution](#project-evolution)
   - [Design Principles](#design-principles)
+
+</details>
+
+<details>
+<summary><strong>Design Decisions & Trade-offs</strong></summary>
 
 - [Design Decisions & Trade-offs](#design-decisions--trade-offs)
   - [Deterministic `.4` DNS](#deterministic-4-dns)
@@ -27,6 +35,11 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
   - [Hub Role Restriction](#hub-role-restriction)
   - [Parallel Deployment Reality](#parallel-deployment-reality)
   - [Global DNS](#global-dns)
+
+</details>
+
+<details>
+<summary><strong>Architecture Overview</strong></summary>
 
 - [Architecture Overview](#architecture-overview)
   - [Regional Architecture](#regional-architecture)
@@ -41,6 +54,11 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
   - [Security Model](#security-model)
   - [Workload Distribution](#workload-distribution)
 
+</details>
+
+<details>
+<summary><strong>File Structure</strong></summary>
+
 - [File Structure](#file-structure)
   - [Root Files](#root-files)
   - [Modules](#modules)
@@ -51,36 +69,72 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
   - [Supporting Logic in main.bicep](#supporting-logic-in-mainbicep)
   - [Foundation Layer (External)](#foundation-layer-external)
 
+</details>
+
+<details>
+<summary><strong>Start Guide</strong></summary>
+
 - [Start Guide](#start-guide)
   - [Step 1: Understand the Core Concept](#step-1-understand-the-core-concept)
   - [Step 2: Core Deployment Settings](#step-2-core-deployment-settings)
   - [Step 3: Region Mapping](#step-3-region-mapping)
   - [Step 4a: Subnet Mapping](#step-4a-subnet-mapping)
-  - [Step 4b: deploySubnets](#step-4b-deploysubnets)
+  - [Step 4b: Greenfield and Brownfield Deployments](#step-4b-greenfield-and-brownfield-deployments)
+    - [deploySubnets](#deploysubnets)
+    - [Greenfield Deployments](#greenfield-deployments)
+    - [Brownfield Deployments](#brownfield-deployments)
+    - [Relationship Between Stages and Brownfield Deployments](#relationship-between-stages-and-brownfield-deployments)
+    - [Stage Dependency Considerations](#stage-dependency-considerations)
+    - [Supported Deployment Models](#supported-deployment-models)
   - [Step 5: VM Counts (Controls Scale)](#step-5-vm-counts-controls-scale)
   - [Step 6: VM Size](#step-6-vm-size)
   - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
   - [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required)
   - [Step 9: Deploy](#step-9-deploy)
+    - [Full Deployment (Default)](#full-deployment-default)
+    - [Network Stage](#network-stage)
+    - [Control Stage](#control-stage)
+    - [Workload Stage](#workload-stage)
+    - [Recommended Deployment Order](#recommended-deployment-order)
   - [Step 10: Validate Results](#step-10-validate-results)
+
+</details>
+
+<details>
+<summary><strong>Placement Engine</strong></summary>
 
 - [Placement Engine](#placement-engine)
   - [Rules](#rules)
   - [Placement Decision Flow](#placement-decision-flow)
   - [Why this matters](#why-this-matters)
 
+</details>
+
+<details>
+<summary><strong>Validation</strong></summary>
+
 - [Validation](#validation)
   - [Validation Rules](#validation-rules)
   - [Validation Outputs](#validation-outputs)
+
+</details>
+
+<details>
+<summary><strong>Outputs</strong></summary>
 
 - [Outputs](#outputs)
   - [Core Outputs](#core-outputs)
   - [Purpose](#purpose)
   - [Best Practice](#best-practice)
 
-- [Final Tip](#final-tip)
+</details>
+
+<details>
+<summary><strong>Future Plans</strong></summary>
 
 - [Future Plans](#future-plans)
+
+</details>
 
 ---
 
@@ -109,8 +163,11 @@ The solution was developed iteratively, with each phase introducing additional a
 - **v1.10 — Placement and Validation Engine**  
   Deterministic VM placement, predictable network addressing, capacity-aware distribution, route-table driven traffic control, and pre-deployment validation.
 
-- **Current Version v1.11 — Hub-Spoke Networking**  
+- **v1.11 — Hub-Spoke Networking**  
   Hub-and-spoke VNet peering combined with centralised firewall-based routing, spoke route tables, and refined network flow control across regions.
+
+- **Current Version v1.12 — Deployment Stage Control**  
+  Introduces stage-driven deployment control (`network`, `control`, `workload`, `all`) while retaining hub-and-spoke peering, centralised firewall routing, and spoke route table enforcement.
 
 ---
 
@@ -268,7 +325,6 @@ flowchart TB
 ```
 
 Traffic path: Spoke VM -> UDR -> Hub Firewall -> Destination Spoke VM (no direct spoke-to-spoke path).
-
 
   [Back to top](#table-of-contents)
 
@@ -524,6 +580,8 @@ The placement engine uses this order to distribute VMs.
 - Must increase by `1` each time
 - No gaps allowed
 
+  [Back to top](#table-of-contents)
+
 ---
 
 ## Step 4a: Subnet Mapping
@@ -531,6 +589,7 @@ The placement engine uses this order to distribute VMs.
 ```json
 "subnetIndexMap": {
   "value": {
+    "firewall": 0,
     "jumpbox": 1,
     "dc": 2,
     "server": 3,
@@ -544,6 +603,7 @@ The placement engine uses this order to distribute VMs.
 Defines how subnets are created and ordered within each region.
 
 The numbering determines:
+- The firewall subnet index used for AzureFirewallSubnet in the hub VNet
 - The logical order of subnets
 - The subnet index used when calculating IP address ranges
 
@@ -551,30 +611,164 @@ The numbering determines:
 
 Leave these values as-is unless redesigning networking.
 
+  [Back to top](#table-of-contents)
+
 ---
 
-## Step 4b: `deploySubnets`
+## Step 4b: Greenfield and Brownfield Deployments
+
+### `deploySubnets`
 
 ```json
 "deploySubnets": { "value": true }
 ```
 
-### What this does
+This parameter controls whether networking resources are created or reused.
 
-This switch controls whether the networking modules create subnets and NSGs, or whether they expect those resources to already exist.
+| Value | Behaviour |
+|---------|------------|
+| `true` | Creates NSGs, subnets, and the Azure Firewall subnet. |
+| `false` | Reuses existing networking resources instead of creating them. |
 
-### Behaviour
+---
 
-- `true` = create the subnets and NSGs as part of the deployment
-- `false` = reuse existing subnets and NSGs instead of creating them
+### Greenfield Deployments
 
-### Why it matters
+A greenfield deployment creates all networking components required by the solution:
 
-For a fresh lab deployment, `deploySubnets` must stay `true`. If you set it to `false` without pre-existing subnets, the deployment will fail when VMs or the firewall try to reference subnets that do not exist yet.
+- VNets
+- Subnets
+- NSGs
+- Azure Firewall subnet
+- Route tables
+- Virtual machines
 
-### When to use `false`
+For new lab environments, leave `deploySubnets` set to `true`.
 
-Only use `false` if you have already built the VNet, subnets, and NSGs separately and want the lab to attach to that existing network.
+---
+
+### Brownfield Deployments
+
+A brownfield deployment reuses existing networking resources rather than creating new ones.
+
+This solution supports deployment framework-managed brownfield scenarios, including:
+
+- Redeployment of an existing environment.
+- Recovery or rebuild of virtual machines.
+- Incremental deployment of additional workloads.
+- Separate execution of the `network`, `control`, and `workload` stages within environments created and managed by this deployment framework.
+
+The existing networking resources should either:
+
+- Have been created by a previous deployment of this solution, or
+- Follow the same naming conventions, subnet structure, and resource relationships expected by the modules.
+
+  [Back to top](#table-of-contents)
+
+---
+
+### Relationship Between Stages and Brownfield Deployments
+
+Stages and brownfield support serve different purposes:
+
+| Feature | Purpose |
+|----------|---------|
+| `stage` | Controls when resources are deployed |
+| `deploySubnets` | Controls whether networking resources are created or reused |
+
+Examples:
+
+- `stage=network` → Deploy networking only.
+- `stage=control` → Deploy control-plane virtual machines (Domain Controllers and jumpboxes) only.
+- `stage=workload` → Deploy workload VMs only.
+- `deploySubnets=false` → Reuse existing networking resources.
+
+These features can be used independently or together, provided the required networking resources and deployment framework assumptions are already in place.
+
+---
+
+### Parameters That Can Be Changed Between Deployments
+
+The following changes are generally supported:
+
+- VM counts (`vmCounts`)
+- VM sizes (`vmSize`)
+- Operating system images (`windowsServerImage`, `windowsClientImage`, `ubuntuImage`)
+- Administrative credentials
+- SSH public keys
+- Tags
+- Jumpbox access restrictions (`jumpboxAllowedSources`)
+- Client SSH settings (`enableClientSsh`)
+- Deployment stage (`stage`)
+
+Typical examples include:
+
+- Increasing workload VM counts
+- Adding additional Domain Controllers
+- Updating operating system images
+- Resizing virtual machines
+
+---
+
+### Changes Requiring Careful Planning
+
+The following parameters may significantly affect topology or addressing:
+
+- `prefix`
+- `regionCount`
+- `regionIndexMap`
+- `subnetIndexMap` (including the `firewall` index)
+
+Changing these values after deployment may require resource recreation or migration planning.
+
+---
+
+### Current Limitation
+
+This solution is designed around the networking structure produced by its own modules.
+
+The following scenarios are not currently supported without additional customization:
+
+- Existing corporate VNets with different subnet structures
+- Existing NSGs with different naming conventions
+- Networking environments created by unrelated templates
+- Arbitrary existing network topologies
+
+### Stage Dependency Considerations
+
+Control and workload deployments rely on networking structures defined by this deployment framework. While the stages can be executed independently after networking has been established, the current implementation is not intended for deploying compute resources into arbitrary pre-existing networking environments without additional customization.
+
+---
+
+### Supported Deployment Models
+
+| Scenario | Supported |
+|-----------|-----------|
+| Greenfield deployment | Yes |
+| Full deployment (`stage=all`) | Yes |
+| Staged deployment (`network → control → workload`) within framework-managed environments | Yes |
+| Redeploy existing environment created by this framework | Yes |
+| Reuse existing networking that follows the framework structure | Yes |
+| Disaster recovery and VM rebuilds | Yes |
+| Modify VM counts, sizes, images, tags, and access settings | Yes |
+| Deploy into arbitrary existing networking | No |
+
+  [Back to top](#table-of-contents)
+
+---
+
+### Design Principle
+
+The VNet module (`vnet.bicep`) is the authoritative source of truth for:
+
+- Subnet creation
+- NSG creation
+- Subnet IDs
+- NSG IDs
+
+Other modules consume these outputs instead of reconstructing names or resource IDs. This prevents naming drift and ensures consistency across the deployment.
+
+  [Back to top](#table-of-contents)
 
 ---
 
@@ -640,6 +834,8 @@ Max safe:
 
 This is a planning check only. Actual quota validation must be done against your subscription and region before deployment.
 
+  [Back to top](#table-of-contents)
+
 ---
 
 ## Step 7: Jumpbox Allowed Sources
@@ -665,6 +861,8 @@ Defines the list of public IP addresses or ranges that are allowed to access the
 - If not configured correctly, you will not be able to access the jumpboxes
 - Jumpboxes are the only entry point to access the rest of the virtual machines in the environment
 
+  [Back to top](#table-of-contents)
+
 ---
 
 ## Step 8: Key Vault Setup (Required)
@@ -682,7 +880,7 @@ They are securely stored in Azure Key Vault.
 az group create --name traininglab-rg-foundation --location westeurope
 ```
 
-Ensure that the name of this resource group does not start with the prefix selected earlier, as it will also be deleted if a bulk resource group deletion command is used to cleanup the lab.
+Ensure that the name of this resource group does not start with the prefix selected earlier, as it will also be deleted if a bulk resource group deletion command is used to clean up the lab.
 
 ---
 
@@ -723,9 +921,17 @@ az keyvault secret set --vault-name traininglab-kv --name clientAdminPassword --
 
 Repeat for other passwords.
 
+  [Back to top](#table-of-contents)
+
 ---
 
 ## Step 9: Deploy
+
+The solution supports both full and staged deployments through the `stage` parameter.
+
+### Full Deployment (Default)
+
+Deploy all networking and compute resources:
 
 ```bash
 az deployment sub create \
@@ -735,11 +941,74 @@ az deployment sub create \
   --parameters main.parameters.json
 ```
 
+The default value for `stage` is `all`, so no additional stage parameter is required.
+
+---
+
+### Network Stage
+
+Deploy only networking resources:
+
+```bash
+az deployment sub create \
+  --name amrl-network \
+  --location westeurope \
+  --template-file main.bicep \
+  --parameters main.parameters.json \
+  --parameters stage=network
+```
+
+---
+
+### Control Stage
+
+Deploy only control-plane virtual machines (Domain Controllers and jumpboxes):
+
+```bash
+az deployment sub create \
+  --name amrl-control \
+  --location westeurope \
+  --template-file main.bicep \
+  --parameters main.parameters.json \
+  --parameters stage=control
+```
+
+---
+
+### Workload Stage
+
+Deploy only workload virtual machines:
+
+```bash
+az deployment sub create \
+  --name amrl-workload \
+  --location westeurope \
+  --template-file main.bicep \
+  --parameters main.parameters.json \
+  --parameters stage=workload
+```
+
+  [Back to top](#table-of-contents)
+
+---
+
+### Recommended Deployment Order
+
+For staged deployments:
+
+```text
+1. network
+2. control
+3. workload
+```
+
+  [Back to top](#table-of-contents)
+
 ---
 
 ## Step 10: Validate Results
 
-After deployment validation (or during development), review the outputs to confirm correctness and troubleshoot issues.
+After deployment (or during development validation), review the outputs to confirm correctness and troubleshoot issues.
 
 ### Key Outputs
 
@@ -750,6 +1019,9 @@ After deployment validation (or during development), review the outputs to confi
 - `vmCountPerRegion`  
   Displays VM distribution per region.  
   Confirms that no region exceeds capacity limits.
+
+- `validationSummary`  
+  Provides a concise one-line validation status (`Validation passed.` or first detected validation issue).
 
 - `validationMessage`  
   Provides a human-readable explanation of the first validation failure (empty if valid).
@@ -765,9 +1037,12 @@ After deployment validation (or during development), review the outputs to confi
 
 ### How to Use These Outputs
 
-1. Check `validationMessage` for a quick explanation  
-2. Use `validationDebug` to see which rule failed  
-3. Review `vmPlacement` and `vmCountPerRegion` to validate distribution logic  
+1. Check `validationSummary` for a quick pass/fail status  
+2. Review `validationMessage` for the first detected issue when validation fails  
+3. Use `validationDebug` to identify exactly which validation rule failed  
+4. Review `vmPlacement` and `vmCountPerRegion` to validate distribution logic  
+5. Verify core configuration inputs if results are unexpected: VM sizes vs regional quota, `regionCount` vs available regions, and `vmCounts` vs total capacity.  
+6. Confirm Key Vault configuration and secret references if credential-based deployment steps fail  
 
 ---
 
@@ -775,34 +1050,6 @@ After deployment validation (or during development), review the outputs to confi
 
 During development, validation errors are exposed via outputs instead of blocking deployment.  
 In production scenarios, assertions can be enabled to prevent invalid deployments.
-
-  [Back to top](#table-of-contents)
-
----
-
-# Final Tip
-
-If deployment validation fails or produces unexpected results:
-
-1. Check `validationMessage` for a high-level explanation  
-2. Inspect `validationDebug` to identify the exact failing condition  
-3. Validate VM distribution using:
-   - `vmPlacement`
-   - `vmCountPerRegion`  
-
-4. Verify configuration inputs:
-   - VM sizes vs regional quota  
-   - `regionCount` vs available regions  
-   - `vmCounts` vs total capacity  
-
-5. Confirm Key Vault configuration and secret references  
-
----
-
-### Important
-
-Validation is designed to catch errors **before deployment**.  
-Use the outputs to fix configuration issues rather than troubleshooting failed resources.
 
   [Back to top](#table-of-contents)
 
@@ -860,7 +1107,7 @@ The following checks are performed:
 - Non-control VMs (server/client roles) are not allowed in the hub region  
 - Total VM count does not exceed regional capacity  
 - All regions defined in `regionKeys` exist in `regionIndexMap`  
-- Subnet index map includes required roles (dc, jumpbox, server, client)  
+- Subnet index map includes required roles (firewall, dc, jumpbox, server, client)  
 - Region index values are continuous and start at 1  
 - No region exceeds the maximum VM capacity  
 - Domain Controller distribution fits within region constraints  
@@ -935,11 +1182,10 @@ Always review validation outputs before proceeding with further configuration st
 
 ## Future Plans
 
-- Introduce staged deployments to control execution order and reduce concurrency risks  
-- Extend placement logic toward more accurate capacity-aware behaviour  
-- Add Azure Bastion as a secure alternative to jumpboxes  
-- Implement CI/CD pipelines for automated validation and deployment  
-- Enhance monitoring and logging for operational visibility  
+- Extend placement logic toward more accurate capacity-aware behaviour
+- Add Azure Bastion as a secure alternative to jumpboxes
+- Implement CI/CD pipelines for automated validation and deployment
+- Enhance monitoring and logging for operational visibility 
 
   [Back to top](#table-of-contents)
 

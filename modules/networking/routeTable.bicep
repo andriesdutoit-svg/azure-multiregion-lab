@@ -1,3 +1,8 @@
+// ========================================
+// PRIMARY INPUTS
+// Location and hub firewall next hop.
+// ========================================
+
 param location string
 param nextHopIp string
 

@@ -9,11 +9,6 @@ targetScope = 'subscription'
 ])
 param stage string = 'all'
 
-// Stage flags for conditional deployment of modules
-var deployNetwork = stage == 'network' || stage == 'all'
-var deployControl = stage == 'control' || stage == 'all'
-var deployWorkload = stage == 'workload' || stage == 'all'
-
 // ========================================
 // MODULE PURPOSE
 // Subscription-scope orchestrator for multi-region networking, security, routing, and VM deployment.
@@ -26,7 +21,6 @@ var deployWorkload = stage == 'workload' || stage == 'all'
 @description('Prefix for all resources')
 param prefix string
 param tags object
-
 param jumpboxAdminUsername string
 @secure()
 param jumpboxAdminPassword string
@@ -36,28 +30,26 @@ param serverAdminPassword string
 param clientAdminUsername string
 @secure()
 param clientAdminPassword string
-
 param adminPublicKey string
-
 param windowsServerImage object
 param windowsClientImage object
 param ubuntuImage object
-
 param regionIndexMap object
-@description('Subnet index used for hub services (only applies to hub VNet)')
-param hubSubnetIndex int
-@description('Controls whether subnets should be created/modified')
+@description('True = create NSGs and subnets. False = use existing NSGs and subnets for brownfield deployments')
 param deploySubnets bool
 param subnetIndexMap object
 param regionCount int
 param maxVmsPerRegion int
 param vmCounts object
-
 param jumpboxAllowedSources array
 param enableClientSsh bool
-
 param vmSize string
 param osDisk object
+
+// Stage flags for conditional deployment of modules
+var deployNetwork = stage == 'network' || stage == 'all'
+var deployControl = stage == 'control' || stage == 'all'
+var deployWorkload = stage == 'workload' || stage == 'all'
 
 //
 // ========================================
@@ -196,11 +188,8 @@ var vmPlacements = [
 ]
 
 var maxDcPerRegion = maxVmsPerRegion
-
 var totalDcs = vmCounts.dc
-
 var minRegionsNeededForDcs = (totalDcs + maxDcPerRegion - 1) / maxDcPerRegion
-
 var hasTooManyDcs = minRegionsNeededForDcs > regionCount
 
 // ========================================
@@ -229,6 +218,7 @@ var addressPrefixes = [
 
 var subnetPrefixesArray = [
   for region in regionKeys: {
+    firewall: '10.${regionIndexMap[region]}.${subnetIndexMap.firewall}.0/24'
     jumpbox: '10.${regionIndexMap[region]}.${subnetIndexMap.jumpbox}.0/24'
     dc:      '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.0/24'
     server:  '10.${regionIndexMap[region]}.${subnetIndexMap.server}.0/24'
@@ -317,8 +307,6 @@ module vnets 'modules/networking/vnet.bicep' = [
     params: {
       vnetName: '${prefix}-vnet-${region}'
       location: region
-      regionIndex: regionIndexMap[region]
-      hubSubnetIndex: hubSubnetIndex
       isHub: region == hubRegion
 
       deploySubnets: deploySubnets
@@ -380,9 +368,9 @@ module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
 // DEPLOYMENT STAGE 5: ROUTE TABLES (SPOKE REGIONS)
 // ========================================
 
-    // Suppressions in this module are intentional: BCP318 appears because vnet/firewall outputs are conditionally evaluated
-    // by the analyser in this loop, and no-unnecessary-dependson is kept to enforce firewall-before-route-table ordering
-    // that helps avoid Azure concurrent network update conflicts during subnet route association.
+// Suppressions in this module are intentional: BCP318 appears because vnet/firewall outputs are conditionally evaluated
+// by the analyser in this loop, and no-unnecessary-dependson is kept to enforce firewall-before-route-table ordering
+// that helps avoid Azure concurrent network update conflicts during subnet route association.
 
 module routeTables 'modules/networking/routeTable.bicep' = [
   for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
@@ -526,7 +514,6 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
     dependsOn: [
       vnets
       routeTables
-      windowsVMs
     ]
 
     params: {
@@ -561,7 +548,7 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
 // OUTPUTS: PLACEMENT, VALIDATION, CAPACITY, REGIONAL SUMMARY
 // ========================================
 
-// List of regions selected for this deployment (ordered by regionIndexMap)// and assigned region
+// List of regions selected for this deployment (ordered by regionIndexMap) and assigned region
 // This is the primary output used to verify distribution logic
 output vmPlacement array = vmPlacements
 

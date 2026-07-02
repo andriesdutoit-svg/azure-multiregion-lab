@@ -46,10 +46,6 @@
         }
       },
 
-    "hubSubnetIndex": {
-      "value": 0
-    },  
-
     "subnetIndexMap": {
       "value": {
         "firewall": 0,
