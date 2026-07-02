@@ -427,8 +427,8 @@ The project is structured to separate concerns and promote modular reuse.
 - **main.bicep**  
   Entry point for the deployment. Defines orchestration, placement logic, and module calls.
 
-- **main.parameters.json**  
-  Contains all configurable inputs such as regions, VM counts, and sizes.
+- **main.parameters.example.json**  
+  GitHub-safe sample parameter file with placeholder values for subscription IDs, Key Vault names, public keys, and source ranges. Copy or rename this file locally to create your own `main.parameters.json`.
 
 ---
 
@@ -517,7 +517,8 @@ This deployment spreads Virtual Machines across multiple Azure regions while ens
 - Distribution is balanced
 - Certain roles (like Domain Controllers) are placed intentionally
 
-To control this behaviour, you configure a few key parameters in `main.parameters.json`.
+To control this behaviour, you configure a few key parameters in a `main.parameters.json` file.
+Start by copying or renaming `main.parameters.example.json` to `main.parameters.json`, then edit the local copy with your own values.
 
 ---
 
@@ -843,8 +844,8 @@ This is a planning check only. Actual quota validation must be done against your
 ```json
 "jumpboxAllowedSources": {
   "value": [
-    "198.51.100.25",
-    "203.0.113.0/24"
+    "<your-public-ip>",
+    "<your-public-cidr-range>"
   ]
 }
 ```
@@ -852,6 +853,8 @@ This is a planning check only. Actual quota validation must be done against your
 ### What this does
 
 Defines the list of public IP addresses or ranges that are allowed to access the jumpboxes via RDP. These values are used to configure inbound Network Security Group (NSG) rules, restricting administrative access to only the specified sources.
+
+In the published example file, these values are placeholders. Replace them in your local `main.parameters.json` with your own public IP address or CIDR range.
 
 ---
 
@@ -907,6 +910,8 @@ az keyvault secret set --vault-name traininglab-kv --name clientAdminPassword --
 ---
 
 ### Link Key Vault in Parameters
+
+The GitHub-safe example file uses placeholders for the Key Vault resource ID and for the password-based secrets such as `jumpboxAdminPassword`.
 
 ```json
 "jumpboxAdminPassword": {
