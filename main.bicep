@@ -47,6 +47,7 @@ param enableClientSsh bool
 param vmSizes object
 // Role-based OS disk map (storage SKU + disk size) keyed by logical workload roles.
 param osDisks object
+param vmAutoDeleteOptions object
 
 // Stage flags for conditional deployment of modules
 var deployNetwork = stage == 'network' || stage == 'all'
@@ -615,6 +616,8 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 
       // Resolve OS disk profile per role (SKU + capacity).
       osDisk: roleSizingMap[vm.type].osDisk
+
+      vmAutoDeleteOptions: vmAutoDeleteOptions
     }
   }
 ]
@@ -664,6 +667,8 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
       image: ubuntuImage
       // Resolve OS disk profile per role (SKU + capacity).
       osDisk: roleSizingMap[vm.type].osDisk
+
+      vmAutoDeleteOptions: vmAutoDeleteOptions
     }
   }
 ]

@@ -97,6 +97,7 @@
         "version": "latest"
       }
     },
+
     "windowsClientImage": {
       "value": {
         "publisher": "MicrosoftWindowsDesktop",
@@ -105,6 +106,7 @@
         "version": "latest"
       }
     },
+
     "ubuntuImage": {
       "value": {
         "publisher": "Canonical",
@@ -113,6 +115,7 @@
         "version": "latest"
       }
     },
+
     "vmSizes": {
       "value": {
         "dc": "<vm-size-for-dc>",
@@ -123,6 +126,7 @@
         "linuxClient": "<vm-size-for-linux-client>"
       }
     },
+
     "osDisks": {
       "value": {
         "dc": {
@@ -151,6 +155,15 @@
         }
       }
     },
+
+    "vmAutoDeleteOptions": {
+      "value": {
+        "nic": true,
+        "publicIp": true,
+        "osDisk": true
+      }
+    },
+
     "adminPublicKey": {
       "value": "ssh-ed25519 <public-key>"
     },

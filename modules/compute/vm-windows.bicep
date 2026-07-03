@@ -18,6 +18,7 @@ param adminPassword string
 param tags object = {}
 param image object
 param osDisk object
+param vmAutoDeleteOptions object
 
 // ========================================
 // RESOURCE CREATED: NETWORK INTERFACE
@@ -87,7 +88,9 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
       imageReference: image
       osDisk: {
         createOption: 'FromImage'
-        deleteOption: 'Delete'
+        deleteOption: vmAutoDeleteOptions.osDisk
+        ? 'Delete'
+        : 'Detach'
         // Role-specific OS disk capacity from main.bicep -> roleSizingMap -> osDisks.
         diskSizeGB: osDisk.diskSizeGB
         managedDisk: {
@@ -100,7 +103,9 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
         {
           id: nic.id
           properties: {
-            deleteOption: 'Delete'
+            deleteOption: vmAutoDeleteOptions.nic
+            ? 'Delete'
+            : 'Detach'
           }
         }
       ]
@@ -121,6 +126,8 @@ resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (assignP
   }
   properties: {
     publicIPAllocationMethod: 'Static'
-    deleteOption: 'Delete'
+    deleteOption: vmAutoDeleteOptions.publicIp
+      ? 'Delete'
+      : 'Detach'
   }
 }
