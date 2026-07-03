@@ -26,4 +26,9 @@ jobs:
         run: az version
 
       - name: Build Main Bicep
-        run: az bicep build --file main.bicep
+        run: |
+          az bicep build --file main.bicep
+
+      - name: Lint Main Bicep
+        run: |
+          az bicep lint --file main.bicep
