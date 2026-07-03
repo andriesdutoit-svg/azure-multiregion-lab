@@ -93,9 +93,7 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
   - [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required)
   - [Step 9: Deploy](#step-9-deploy)
     - [Full Deployment (Default)](#full-deployment-default)
-    - [Network Stage](#network-stage)
-    - [Control Stage](#control-stage)
-    - [Workload Stage](#workload-stage)
+    - [Stages](#stages)
     - [Recommended Deployment Order](#recommended-deployment-order)
   - [Step 10: Validate Results](#step-10-validate-results)
 
@@ -546,7 +544,7 @@ Start by copying or renaming `main.parameters.example.json` to `main.parameters.
 ```
 
 ### 🔹 prefix
-- Used to name all resources (e.g. `yourprefix-rg-westeurope`)
+- Used to name all resources (e.g. `yourprefix-rg-<azure-region>`)
 - Change this to something meaningful for your lab or project
 
 ### 🔹 regionCount
@@ -716,6 +714,7 @@ The following changes are generally supported:
 - Tags
 - Jumpbox access restrictions (`jumpboxAllowedSources`)
 - Client SSH settings (`enableClientSsh`)
+- VM auto-delete settings (`vmAutoDeleteOptions`)
 - Deployment stage (`stage`)
 
 Typical examples include:
@@ -891,7 +890,19 @@ Manual pre-check: Azure regional vCPU quota still applies. Plan role choices acc
 
 ### VM Lifecycle Behaviour
 
-The compute modules are configured so dependent resources are cleaned up automatically when a VM is deleted.
+The `vmAutoDeleteOptions` parameter controls whether dependent resources are automatically deleted when a VM is deleted.
+
+```json
+"vmAutoDeleteOptions": {
+  "value": {
+    "nic": true,
+    "publicIp": true,
+    "osDisk": true
+  }
+}
+```
+
+With the default values above:
 
 - NICs are automatically deleted when VMs are deleted.
 - Public IPs are automatically deleted when VMs are deleted.
@@ -942,7 +953,7 @@ They are securely stored in Azure Key Vault.
 ### Create Foundation Resource Group
 
 ```bash
-az group create --name traininglab-rg-foundation --location westeurope
+az group create --name <foundation-rg> --location <azure-region>
 ```
 
 Ensure that the name of this resource group does not start with the prefix selected earlier, as it will also be deleted if a bulk resource group deletion command is used to clean up the lab.
@@ -951,11 +962,13 @@ Ensure that the name of this resource group does not start with the prefix selec
 
 ### Create Key Vault
 
+Ensure that the correct Azure RBAC role is assigned to create the key vault and secrets. For example: [Key Vault Secrets Officer](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/security#key-vault-secrets-officer)
+
 ```bash
 az keyvault create \
-  --name traininglab-kv \
-  --resource-group traininglab-rg-foundation \
-  --location westeurope \
+  --name <key-vault-name> \
+  --resource-group <foundation-rg> \
+  --location <azure-region> \
   --enabled-for-template-deployment true
 ```
 
@@ -964,22 +977,20 @@ az keyvault create \
 ### Add Secrets
 
 ```bash
-az keyvault secret set --vault-name traininglab-kv --name jumpboxAdminPassword --value <password>
-az keyvault secret set --vault-name traininglab-kv --name serverAdminPassword --value <password>
-az keyvault secret set --vault-name traininglab-kv --name clientAdminPassword --value <password>
+az keyvault secret set --vault-name <key-vault-name> --name jumpboxAdminPassword --value <password>
+az keyvault secret set --vault-name <key-vault-name> --name serverAdminPassword --value <password>
+az keyvault secret set --vault-name <key-vault-name> --name clientAdminPassword --value <password>
 ```
 
 ---
 
 ### Link Key Vault in Parameters
 
-The GitHub-safe example file uses placeholders for the Key Vault resource ID and for the password-based secrets such as `jumpboxAdminPassword`.
-
 ```json
 "jumpboxAdminPassword": {
   "reference": {
     "keyVault": {
-      "id": "/subscriptions/<subId>/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/traininglab-kv"
+      "id": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
     },
     "secretName": "jumpboxAdminPassword"
   }
@@ -1002,8 +1013,8 @@ Deploy all networking and compute resources:
 
 ```bash
 az deployment sub create \
-  --name amrl-deployment \
-  --location westeurope \
+  --name <deployment-name> \
+  --location <azure-region> \
   --template-file main.bicep \
   --parameters main.parameters.json
 ```
@@ -1012,47 +1023,24 @@ The default value for `stage` is `all`, so no additional stage parameter is requ
 
 ---
 
-### Network Stage
+### Stages
 
 Deploy only networking resources:
 
 ```bash
-az deployment sub create \
-  --name amrl-network \
-  --location westeurope \
-  --template-file main.bicep \
-  --parameters main.parameters.json \
-  --parameters stage=network
+--parameters stage=network
 ```
-
----
-
-### Control Stage
 
 Deploy only control-plane virtual machines (Domain Controllers and jumpboxes):
 
 ```bash
-az deployment sub create \
-  --name amrl-control \
-  --location westeurope \
-  --template-file main.bicep \
-  --parameters main.parameters.json \
-  --parameters stage=control
+--parameters stage=control
 ```
-
----
-
-### Workload Stage
 
 Deploy only workload virtual machines:
 
 ```bash
-az deployment sub create \
-  --name amrl-workload \
-  --location westeurope \
-  --template-file main.bicep \
-  --parameters main.parameters.json \
-  --parameters stage=workload
+--parameters stage=workload
 ```
 
   [Back to top](#table-of-contents)
@@ -1193,6 +1181,8 @@ The following checks are performed:
 - Region index values are continuous and start at 1  
 - No region exceeds the maximum VM capacity  
 - Domain Controller distribution fits within region constraints  
+- `vmSizes` includes all required role keys (dc, jumpbox, windowsServer, windowsClient, linuxServer, linuxClient)  
+- `osDisks` includes all required role keys (dc, jumpbox, windowsServer, windowsClient, linuxServer, linuxClient)  
 
 ---
 
@@ -1248,6 +1238,9 @@ The deployment provides several outputs to assist with validation, debugging, an
 
 - `totalCapacityAvailable`  
   Maximum allowed VMs based on configuration  
+
+- `regionSummary`  
+  Per-region address space, subnet prefixes, and VM count  
 
 ---
 
