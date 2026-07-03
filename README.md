@@ -170,19 +170,6 @@ The solution was developed iteratively, with each phase introducing additional a
 
 ---
 
-### Breaking Changes
-
-This release is a breaking change with no backward compatibility for v1.12 parameter files.
-
-- Removed: `vmSize`
-- Removed: `osDisk`
-- Required: `vmSizes`
-- Required: `osDisks`
-
-Existing v1.12 parameter files must be updated to the v1.13.1 schema before deployment.
-
----
-
 ### Design Principles
 
 The design is based on the following principles:
