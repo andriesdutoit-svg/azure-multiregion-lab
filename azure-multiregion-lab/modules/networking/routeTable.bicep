@@ -1,15 +1,16 @@
 // ========================================
-// PRIMARY INPUTS
-// Location and hub firewall next hop.
+// MODULE PURPOSE
+// Creates server/client route tables and attaches them to existing subnets.
+// Routes internal traffic (10.0.0.0/8) to the hub firewall next hop.
+// ========================================
+
+// ========================================
+// INPUTS
+// Location, next hop, subnet identity/prefix, and NSG IDs for server and client paths.
 // ========================================
 
 param location string
 param nextHopIp string
-
-// ========================================
-// INPUTS
-// Next hop + subnet identity/prefix + NSG IDs for server and client paths.
-// ========================================
 
 // Server subnet inputs
 param serverSubnetId string
@@ -20,14 +21,6 @@ param serverNsgId string
 param clientSubnetId string
 param clientSubnetPrefix string
 param clientNsgId string
-
-//
-// ========================================
-// MODULE PURPOSE
-// Creates server/client route tables and attaches them to existing subnets.
-// Routes internal traffic (10.0.0.0/8) to the hub firewall next hop.
-// ========================================
-//
 
 // ========================================
 // DERIVED IDENTIFIERS
@@ -45,19 +38,17 @@ var serverSubnetName = last(split(serverSubnetId, '/subnets/'))
 // Client subnet name from ARM ID
 var clientSubnetName = last(split(clientSubnetId, '/subnets/'))
 
-//
 // ========================================
 // EXISTING DEPENDENCY: TARGET VNET
 // ========================================
-//
 
 resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
   name: vnetName
 }
 
-// ----------------------------------------
+// ========================================
 // EXISTING NSG REFERENCES (for dependency)
-// ----------------------------------------
+// ========================================
 
 resource serverNsg 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing = {
   name: last(split(serverNsgId, '/'))
@@ -67,12 +58,10 @@ resource clientNsg 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing
   name: last(split(clientNsgId, '/'))
 }
 
-//
 // ========================================
 // RESOURCE CREATED: ROUTE TABLES
 // One route table per subnet role (server/client).
 // ========================================
-//
 
 // Server route table
 resource rtServer 'Microsoft.Network/routeTables@2023-02-01' = {
@@ -110,12 +99,10 @@ resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
   }
 }
 
-//
 // ========================================
 // SUBNET UPDATES
 // Re-apply subnet prefix + NSG and attach route table association.
 // ========================================
-//
 
 // Server subnet update
 resource serverSubnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {

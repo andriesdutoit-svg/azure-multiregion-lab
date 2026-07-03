@@ -104,8 +104,8 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
           id: nic.id
           properties: {
             deleteOption: vmAutoDeleteOptions.nic
-            ? 'Delete'
-            : 'Detach'
+              ? 'Delete'
+              : 'Detach'
           }
         }
       ]
