@@ -52,11 +52,11 @@ jobs:
           az deployment sub validate \
             --location westeurope \
             --template-file main.bicep \
-            --parameters test.parameters.json
+            --parameters main.parameters.json
 
       - name: What-If
         run: |
           az deployment sub what-if \
             --location westeurope \
             --template-file main.bicep \
-            --parameters test.parameters.json
+            --parameters main.parameters.json
