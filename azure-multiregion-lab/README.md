@@ -222,10 +222,11 @@ Use `.4` from each DC subnet for DNS.
 ---
 
 ### Index-Based Placement
-Placement uses deterministic indexing instead of real capacity tracking.
+Placement uses deterministic indexing and derived remaining spoke capacity instead of runtime capacity tracking.
 
 - Benefit: Repeatable.  
-- Limitation: Approximate, not dynamic.  
+- Benefit: Prevents workloads from being assigned to spokes already filled by control-plane VMs.  
+- Limitation: Deterministic, not runtime-aware.  
 
 ---
 
@@ -826,6 +827,8 @@ totalVMs ≤ regionCount × maxVmsPerRegion
 
 ## Step 6: Role-Based VM Sizing and Storage
 
+For example:
+
 ```json
 "vmSizes": {
   "value": {
@@ -886,13 +889,13 @@ This enables right-sizing by role instead of forcing all VMs to use one shared c
 
 Manual pre-check: Azure regional vCPU quota still applies. Plan role choices according to subscription quota and target region limits.
 
-### Upgrade note (v1.12 -> v1.13.1)
+### VM Lifecycle Behaviour
 
-If you are upgrading from v1.12:
+The compute modules are configured so dependent resources are cleaned up automatically when a VM is deleted.
 
-1. Remove `vmSize` and `osDisk` from your parameter file.
-2. Add `vmSizes` with all six required role keys.
-3. Add `osDisks` with all six required role keys, each including `storageAccountType` and `diskSizeGB`.
+- NICs are automatically deleted when VMs are deleted.
+- Public IPs are automatically deleted when VMs are deleted.
+- OS disks are automatically deleted when VMs are deleted.
 
   [Back to top](#table-of-contents)
 
@@ -1094,6 +1097,12 @@ After deployment (or during development validation), review the outputs to confi
   Displays detailed validation flags for all rules.  
   Useful during development to identify exactly which condition failed.
 
+- `validationCapacityDebug`  
+  Shows non-control VM demand versus remaining spoke workload capacity.
+
+- `validationWorkloadCapacityDebug`  
+  Shows per-region control-plane occupancy and remaining workload slots.
+
 - `capacityCheck`  
   Shows total requested VMs vs total available capacity.
 
@@ -1104,9 +1113,11 @@ After deployment (or during development validation), review the outputs to confi
 1. Check `validationSummary` for a quick pass/fail status  
 2. Review `validationMessage` for the first detected issue when validation fails  
 3. Use `validationDebug` to identify exactly which validation rule failed  
-4. Review `vmPlacement` and `vmCountPerRegion` to validate distribution logic  
-5. Verify core configuration inputs if results are unexpected: VM sizes vs regional quota, `regionCount` vs available regions, and `vmCounts` vs total capacity.  
-6. Confirm Key Vault configuration and secret references if credential-based deployment steps fail  
+4. Use `validationCapacityDebug` to confirm that non-control demand fits within remaining spoke workload capacity  
+5. Use `validationWorkloadCapacityDebug` to inspect how DC/jumpbox placement consumed spoke slots  
+6. Review `vmPlacement` and `vmCountPerRegion` to validate distribution logic  
+7. Verify core configuration inputs if results are unexpected: VM sizes vs regional quota, `regionCount` vs available regions, and `vmCounts` vs total capacity.  
+8. Confirm Key Vault configuration and secret references if credential-based deployment steps fail  
 
 ---
 
@@ -1126,9 +1137,10 @@ In production scenarios, assertions can be enabled to prevent invalid deployment
 1. dc01 → primary region
 2. jmp01 → primary region
 3. non-control VMs (not dc/jmp) → always placed on spoke regions (never hub)
-4. additional DC/JMP VMs → prefer spokes first, then may use hub after spoke-first pass
+4. additional DC/JMP VMs → prefer spokes first, then may use hub after the first spoke pass
+5. workloads consume only remaining spoke capacity after control-plane placement
 
-Note: Bicep does not track real-time regional capacity during deployment. “Spoke-first” behaviour is implemented using deterministic index-based placement rather than dynamic slot tracking.
+Note: Bicep does not track real-time regional capacity during deployment. The template uses deterministic placement plus a derived remaining-capacity model built from planned control-plane placements, not live Azure runtime state.
 
 ---
 
@@ -1137,12 +1149,16 @@ Note: Bicep does not track real-time regional capacity during deployment. “Spo
 Current placement behaviour:
 
 ```
-if vmType not in [dc, jmp]:
-  finalRegion = regionKeys[(roundRobinVmIndex % (regionCount - 1)) + 1]
+if vmType in [dc, jmp] and vmIndex == 0:
+  finalRegion = primaryRegion
 elif vmType in [dc, jmp] and vmIndex < (regionCount - 1):
-  finalRegion = regionKeys[(roundRobinVmIndex % (regionCount - 1)) + 1]
+  finalRegion = nextSpokeByControlPlaneIndex
+elif vmType in [dc, jmp]:
+  finalRegion = nextRegionByControlPlaneIndex
+elif vmType not in [dc, jmp] and remainingSpokeCapacity > 0:
+  finalRegion = firstSpokeWhoseCumulativeRemainingCapacityContains(workloadIndex)
 else:
-  finalRegion = regionKeys[roundRobinVmIndex % regionCount]
+  finalRegion = fallbackSpoke
 ```
 
 ---
@@ -1151,6 +1167,7 @@ else:
 
 - Control-plane placement stays deterministic (dc01 and jmp01 pinned to hub)
 - Non-control workloads are always excluded from hub
+- Workloads cannot spill into a spoke that is already full from control-plane placement
 - Regional spread remains predictable and capacity checks still apply
 
   [Back to top](#table-of-contents)
@@ -1170,6 +1187,7 @@ The following checks are performed:
 - Primary pinning is enforced (`dc01` and `jmp01` must be in the primary region)  
 - Non-control VMs (server/client roles) are not allowed in the hub region  
 - Total VM count does not exceed regional capacity  
+- Non-control VM demand must fit within remaining spoke capacity after DC/jumpbox placement  
 - All regions defined in `regionKeys` exist in `regionIndexMap`  
 - Subnet index map includes required roles (firewall, dc, jumpbox, server, client)  
 - Region index values are continuous and start at 1  
@@ -1185,6 +1203,8 @@ Validation results are exposed using:
 - `validationSummary` → concise status string (`Validation passed.` or first detected validation issue)  
 - `validationMessage` → first detected validation issue  
 - `validationDebug` → detailed boolean values for all validation checks  
+- `validationCapacityDebug` → non-control VM demand vs remaining spoke workload capacity  
+- `validationWorkloadCapacityDebug` → per-region control-plane occupancy and remaining workload slots  
 
   [Back to top](#table-of-contents)
 
@@ -1210,6 +1230,12 @@ The deployment provides several outputs to assist with validation, debugging, an
 
 - `validationDebug`  
   Detailed validation flags for all rules  
+
+- `validationCapacityDebug`  
+  Summary of non-control VM demand versus remaining spoke workload capacity  
+
+- `validationWorkloadCapacityDebug`  
+  Per-region control-plane occupancy and remaining workload capacity  
 
 - `capacityCheck`  
   Summary of total requested VMs vs available capacity  
@@ -1246,7 +1272,7 @@ Always review validation outputs before proceeding with further configuration st
 
 ## Future Plans
 
-- Extend placement logic toward more accurate capacity-aware behaviour
+- Extend placement logic toward richer quota-aware behaviour
 - Add Azure Bastion as a secure alternative to jumpboxes
 - Implement CI/CD pipelines for automated validation and deployment
 - Enhance monitoring and logging for operational visibility 

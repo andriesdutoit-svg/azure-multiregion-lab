@@ -5,7 +5,7 @@
 
 // ========================================
 // INPUTS
-// VM identity, networking, image, disk, and access mode.
+// VM identity, networking, image, role-selected size, role-selected OS disk profile, and access mode.
 // ========================================
 
 param vmName string
@@ -94,6 +94,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
       imageReference: image
       osDisk: {
         createOption: 'FromImage'
+        deleteOption: 'Delete'
         // Role-specific OS disk capacity from main.bicep -> roleSizingMap -> osDisks.
         diskSizeGB: osDisk.diskSizeGB
         managedDisk: {
@@ -105,6 +106,9 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
       networkInterfaces: [
         {
           id: nic.id
+          properties: {
+            deleteOption: 'Delete'
+          }
         }
       ]
     }
@@ -124,5 +128,6 @@ resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (assignP
   }
   properties: {
     publicIPAllocationMethod: 'Static'
+    deleteOption: 'Delete'
   }
 }
