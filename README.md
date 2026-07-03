@@ -32,7 +32,7 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 - [Design Decisions & Trade-offs](#design-decisions--trade-offs)
   - [Deterministic `.4` DNS](#deterministic-4-dns)
   - [Index-Based Placement](#index-based-placement)
-  - [Controlled Hub Placement for Control-Plane Workloads](#controlled-hub-placement-for-control-plane-workloads)
+  - [Controlled Hub Placement for Control-Plane VMs](#controlled-hub-placement-for-control-plane-vms)
   - [Hub Role Restriction](#hub-role-restriction)
   - [Parallel Deployment Reality](#parallel-deployment-reality)
   - [Global DNS](#global-dns)
@@ -165,8 +165,8 @@ The solution was developed iteratively, with each phase introducing additional a
 - **v1.11 — Hub-Spoke Networking**  
   Hub-and-spoke VNet peering combined with centralised firewall-based routing, spoke route tables, and refined network flow control across regions.
 
-- **Current Version v1.13.1 — Role-Based VM Sizing and Storage**  
-  Introduces role-based compute sizing and OS disk configuration (`vmSizes`, `osDisks`) with per-role disk size support, while retaining stage-driven deployments and the existing hub-and-spoke architecture.
+- **v1.13.1 — Role-Based VM Sizing and Storage**  
+  Role-based compute sizing and OS disk configuration (`vmSizes`, `osDisks`) with per-role disk size support.
 
 ---
 
@@ -212,7 +212,7 @@ The design is based on the following principles:
 ## Design Decisions & Trade-offs
 
 ### Deterministic `.4` DNS
-Use `.4` from each DC subnet for DNS.
+Use `.4` from each Domain Controller (DC) subnet for DNS.
 
 - Benefit: Predictable and valid.  
 - Limitation: Not all DC IPs are listed.  
@@ -228,8 +228,8 @@ Placement uses deterministic indexing and derived remaining spoke capacity inste
 
 ---
 
-### Controlled Hub Placement for Control-Plane Workloads
-The first Domain Controller and jumpbox are pinned to the hub region.  
+### Controlled Hub Placement for Control-Plane VMs
+The first DC and jumpbox are pinned to the hub region.  
 Additional DCs and jumpboxes are placed in spokes first, with the hub used as a fallback.
 
 - Benefit: Guarantees control-plane presence in the hub.  
@@ -276,7 +276,7 @@ Each selected region contains:
 - A dedicated Resource Group  
 - A Virtual Network (VNet)  
 - Segmented subnets:
-  - Domain Controller (dc)
+  - DC (dc)
   - Server
   - Client
   - Jumpbox  
@@ -360,14 +360,16 @@ Spoke workloads do not talk directly to each other by default. Instead:
 
 All virtual machines use **Dynamic private IP allocation**.
 
-Domain Controllers are deployed into dedicated **DC subnets per region**. Azure assigns IP addresses deterministically within each subnet:
+DCs are deployed into dedicated **DC subnets per region**. Azure assigns IP addresses deterministically within each subnet:
 
 - `.0–.3` are reserved by Azure  
 - `.4` is the first usable IP address  
 
-Because Domain Controllers are deployed first into their subnets, each region’s primary DC consistently receives the `.4` address.
+Because DCs are deployed first into their subnets, each region’s primary DC consistently receives the `.4` address.
 
 This removes the need for complex static IP calculations while maintaining predictable addressing.
+
+  [Back to top](#table-of-contents)
 
 ---
 
@@ -375,7 +377,7 @@ This removes the need for complex static IP calculations while maintaining predi
 
 Each Virtual Network is configured with up to three DNS servers, using deterministic `.4` addresses from DC subnets.
 
-The DNS server list is derived dynamically from domain controller placements and ordered as follows:
+The DNS server list is derived dynamically from DC placements and ordered as follows:
 
 1. The hub region DC (`.4`) is prioritised when present
 2. Remaining regions containing DCs are included in deterministic order
@@ -388,9 +390,9 @@ This same ordered DNS server list is applied consistently across all VNets.
 DNS configuration is based on deterministic infrastructure behaviour rather than dynamic discovery:
 
 - Bicep does not support runtime lookup of assigned IP addresses
-- Each DC subnet is isolated and contains only Domain Controllers
+- Each DC subnet is isolated and contains only DCs
 - The first deployed VM in each subnet always receives `.4`
-- Domain Controllers are deployed first, ensuring correct assignment
+- DCs are deployed first, ensuring correct assignment
 
 ### Behaviour
 
@@ -402,7 +404,7 @@ DNS configuration is based on deterministic infrastructure behaviour rather than
 
 After AD DS installation:
 
-- Domain Controllers automatically register themselves in DNS
+- DCs automatically register themselves in DNS
 - Clients can discover all DCs using AD-integrated DNS
 
 ---
@@ -420,9 +422,9 @@ After AD DS installation:
 
 ### Workload Distribution
 
-- Domain Controllers are placed first using deterministic rules  
-- Non-control workloads (server/client roles) are always placed on spoke regions  
-- Additional DC/JMP workloads use spoke-first placement, then may use hub after the initial spoke-first placement pass (based on VM index)  
+- DCs are placed first using deterministic rules  
+- Server and client VMs (workloads) are always placed on spoke regions  
+- Additional control-plane VMs (DCs and jumpboxes) use spoke-first placement, then may use the hub after the first spoke pass  
 - Each region is constrained by a maximum VM limit to prevent over-allocation  
 
   [Back to top](#table-of-contents)
@@ -469,7 +471,7 @@ The project is structured to separate concerns and promote modular reuse.
 #### Compute
 
 - **modules/compute/vm-windows.bicep**  
-  Deploys Windows virtual machines, including Domain Controllers, servers, clients, and jumpboxes.
+  Deploys Windows virtual machines, including DCs, servers, clients, and jumpboxes.
 
 - **modules/compute/vm-linux.bicep**  
   Deploys Linux virtual machines with SSH-based authentication.
@@ -528,7 +530,7 @@ This deployment spreads Virtual Machines across multiple Azure regions while ens
 
 - No region gets too many VMs
 - Distribution is balanced
-- Certain roles (like Domain Controllers) are placed intentionally
+- Certain roles (like DCs) are placed intentionally
 
 To control this behaviour, you configure a few key parameters in a `main.parameters.json` file.
 Start by copying or renaming `main.parameters.example.json` to `main.parameters.json`, then edit the local copy with your own values.
@@ -693,7 +695,7 @@ Stages and brownfield support serve different purposes:
 Examples:
 
 - `stage=network` → Deploy networking only.
-- `stage=control` → Deploy control-plane virtual machines (Domain Controllers and jumpboxes) only.
+- `stage=control` → Deploy control-plane virtual machines (DCs and jumpboxes) only.
 - `stage=workload` → Deploy workload VMs only.
 - `deploySubnets=false` → Reuse existing networking resources.
 
@@ -720,7 +722,7 @@ The following changes are generally supported:
 Typical examples include:
 
 - Increasing workload VM counts
-- Adding additional Domain Controllers
+- Adding additional DCs
 - Updating operating system images
 - Resizing virtual machines
 
@@ -809,9 +811,10 @@ Defines HOW MANY VMs of each type to create.
 
 ### Important behaviour
 
-- Domain Controllers (dc) are placed first
-- The first jumpbox is pinned to the primary region
-- Non-control VMs are kept on spokes, while additional DC/JMP VMs follow spoke-first placement before hub fallback
+- DCs and jumpboxes are control-plane VMs and are placed before server and client VMs (workloads)
+- The first DC (`dc01`) and first jumpbox (`jmp01`) are pinned to the hub (primary region)
+- Additional control-plane VMs follow spoke-first placement, with the hub used as a fallback
+- Server and client VMs (workloads) are always placed on spokes, never in the hub
 
 ### How to change safely
 
@@ -821,6 +824,8 @@ Ensure:
 ```
 totalVMs ≤ regionCount × maxVmsPerRegion
 ```
+
+  [Back to top](#table-of-contents)
 
 ---
 
@@ -1031,7 +1036,7 @@ Deploy only networking resources:
 --parameters stage=network
 ```
 
-Deploy only control-plane virtual machines (Domain Controllers and jumpboxes):
+Deploy only control-plane virtual machines (DCs and jumpboxes):
 
 ```bash
 --parameters stage=control
@@ -1102,7 +1107,7 @@ After deployment (or during development validation), review the outputs to confi
 2. Review `validationMessage` for the first detected issue when validation fails  
 3. Use `validationDebug` to identify exactly which validation rule failed  
 4. Use `validationCapacityDebug` to confirm that non-control demand fits within remaining spoke workload capacity  
-5. Use `validationWorkloadCapacityDebug` to inspect how DC/jumpbox placement consumed spoke slots  
+5. Use `validationWorkloadCapacityDebug` to inspect how control-plane (DC and jumpbox) placement consumed spoke slots  
 6. Review `vmPlacement` and `vmCountPerRegion` to validate distribution logic  
 7. Verify core configuration inputs if results are unexpected: VM sizes vs regional quota, `regionCount` vs available regions, and `vmCounts` vs total capacity.  
 8. Confirm Key Vault configuration and secret references if credential-based deployment steps fail  
@@ -1122,10 +1127,10 @@ In production scenarios, assertions can be enabled to prevent invalid deployment
 
 ## Rules
 
-1. dc01 → primary region
-2. jmp01 → primary region
+1. dc01 → pinned to primary region
+2. jmp01 → pinned to primary region
 3. non-control VMs (not dc/jmp) → always placed on spoke regions (never hub)
-4. additional DC/JMP VMs → prefer spokes first, then may use hub after the first spoke pass
+4. additional control-plane VMs (DCs and jumpboxes) → prefer spokes first, then may use hub after the first spoke pass
 5. workloads consume only remaining spoke capacity after control-plane placement
 
 Note: Bicep does not track real-time regional capacity during deployment. The template uses deterministic placement plus a derived remaining-capacity model built from planned control-plane placements, not live Azure runtime state.
@@ -1175,12 +1180,12 @@ The following checks are performed:
 - Primary pinning is enforced (`dc01` and `jmp01` must be in the primary region)  
 - Non-control VMs (server/client roles) are not allowed in the hub region  
 - Total VM count does not exceed regional capacity  
-- Non-control VM demand must fit within remaining spoke capacity after DC/jumpbox placement  
+- Non-control VM demand must fit within remaining spoke capacity after control-plane (DC and jumpbox) placement  
 - All regions defined in `regionKeys` exist in `regionIndexMap`  
 - Subnet index map includes required roles (firewall, dc, jumpbox, server, client)  
 - Region index values are continuous and start at 1  
 - No region exceeds the maximum VM capacity  
-- Domain Controller distribution fits within region constraints  
+- DC distribution fits within region constraints  
 - `vmSizes` includes all required role keys (dc, jumpbox, windowsServer, windowsClient, linuxServer, linuxClient)  
 - `osDisks` includes all required role keys (dc, jumpbox, windowsServer, windowsClient, linuxServer, linuxClient)  
 
