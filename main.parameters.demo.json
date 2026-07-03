@@ -117,12 +117,12 @@
 
     "vmSizes": {
       "value": {
-        "dc": "Standard_B2ms",
-        "jumpbox": "Standard_B2s_v2",
-        "windowsServer": "Standard_B2s_v2",
+        "dc": "Standard_B2ls_v2",
+        "jumpbox": "Standard_B2ls_v2",
+        "windowsServer": "Standard_B2ls_v2",
         "windowsClient": "Standard_B2ls_v2",
-        "linuxServer": "Standard_B2s_v2",
-        "linuxClient": "Standard_B1ms"
+        "linuxServer": "Standard_B2ls_v2",
+        "linuxClient": "Standard_B2ls_v2"
       }
     },
 
