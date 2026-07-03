@@ -46,3 +46,10 @@ jobs:
       - name: Lint Main Bicep
         run: |
           az bicep lint --file main.bicep
+
+      - name: Validate Deployment
+        run: |
+          az deployment sub validate \
+            --location westeurope \
+            --template-file main.bicep \
+            --parameters test.parameters.json

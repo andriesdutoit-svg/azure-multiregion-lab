@@ -135,7 +135,7 @@
         },
         "jumpbox": {
           "storageAccountType": "<os-disk-sku-for-jumpbox>",
-          "diskSizeGB": 64
+          "diskSizeGB": 128
         },
         "windowsServer": {
           "storageAccountType": "<os-disk-sku-for-windows-server>",
@@ -143,7 +143,7 @@
         },
         "windowsClient": {
           "storageAccountType": "<os-disk-sku-for-windows-client>",
-          "diskSizeGB": 64
+          "diskSizeGB": 128
         },
         "linuxServer": {
           "storageAccountType": "<os-disk-sku-for-linux-server>",
@@ -151,7 +151,7 @@
         },
         "linuxClient": {
           "storageAccountType": "<os-disk-sku-for-linux-client>",
-          "diskSizeGB": 64
+          "diskSizeGB": 128
         }
       }
     },
