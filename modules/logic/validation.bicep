@@ -24,7 +24,7 @@ param hasTooManyDcs bool
 
 // ========================================
 // DERIVED METRICS
-// Counts and boolean checks used by validation rules.
+// Counts and boolean checks evaluated from the final placement result.
 // ========================================
 
 var vmPerRegionCounts = [
@@ -42,6 +42,7 @@ var missingPinnedDc = empty(filter(vmPlacements, vm => vm.type == 'dc' && vm.ind
 var missingPinnedJumpbox = empty(filter(vmPlacements, vm => vm.type == 'jmp' && vm.index == 0 && vm.regionKey == primaryRegion))
 var invalidPrimaryPinning = missingPinnedDc || missingPinnedJumpbox
 var hasNonControlInHub = length(filter(vmPlacements, vm => !(vm.type == 'dc' || vm.type == 'jmp') && vm.regionKey == hubRegion)) > 0
+var nonControlVmCount = vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
 var totalVMs = vmCounts.dc + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
 var totalCapacity = regionCount * maxVmsPerRegion
 var invalidCapacity = totalVMs > totalCapacity
@@ -87,6 +88,39 @@ var hasMissingIndexes = [
 var invalidIndexSequence = contains(hasMissingIndexes, true)
 
 // ========================================
+// WORKLOAD CAPACITY VALIDATION
+// Confirms that spokes still have enough remaining workload slots after control-plane placement.
+// ========================================
+
+// Per-region control-plane occupancy and remaining workload capacity.
+// The hub contributes zero workload capacity by design.
+var workloadCapacityDebug = [
+  for region in regionKeys: {
+    region: region
+    isHub: region == hubRegion
+    controlPlaneVmCount: length(filter(vmPlacements, vm => (vm.type == 'dc' || vm.type == 'jmp') && vm.regionKey == region))
+    remainingWorkloadCapacity: region == hubRegion
+      ? 0
+      : (maxVmsPerRegion > length(filter(vmPlacements, vm => (vm.type == 'dc' || vm.type == 'jmp') && vm.regionKey == region))
+        ? maxVmsPerRegion - length(filter(vmPlacements, vm => (vm.type == 'dc' || vm.type == 'jmp') && vm.regionKey == region))
+        : 0)
+  }
+]
+
+var workloadRemainingCapacityCounts = [
+  for slot in workloadCapacityDebug: slot.isHub ? 0 : slot.remainingWorkloadCapacity
+]
+
+// Aggregate remaining spoke workload capacity for comparison against requested non-control VMs.
+var totalWorkloadRegionCapacity = reduce(
+  workloadRemainingCapacityCounts,
+  0,
+  (current, item) => current + item
+)
+
+var hasInsufficientWorkloadCapacity = nonControlVmCount > totalWorkloadRegionCapacity
+
+// ========================================
 // VALIDATION FLAG MODEL
 // Consolidated rule state emitted for diagnostics.
 // ========================================
@@ -101,6 +135,7 @@ var validationFlags = {
   hasInvalidSubnetIndex: hasInvalidSubnetIndex
   hasMissingVmSizeRole: hasMissingVmSizeRole
   hasMissingOsDiskRole: hasMissingOsDiskRole
+  hasInsufficientWorkloadCapacity: hasInsufficientWorkloadCapacity
   invalidIndexSequence: invalidIndexSequence
   hasRegionOverflow: hasRegionOverflow
   hasTooManyDcs: hasTooManyDcs
@@ -119,12 +154,13 @@ var msg5 = missingRegionIndex ? 'One or more regions are missing in regionIndexM
 var msg6 = hasInvalidSubnetIndex ? 'Subnet index map must include firewall, dc, jumpbox, server, and client.' : ''
 var msg7 = hasMissingVmSizeRole ? 'vmSizes must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.' : ''
 var msg8 = hasMissingOsDiskRole ? 'osDisks must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.' : ''
-var msg9 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : ''
-var msg10 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
-var msg11 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
-var msg12 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
+var msg9 = hasInsufficientWorkloadCapacity ? 'Non-control workloads exceed the remaining spoke capacity after DC/jumpbox placement.' : ''
+var msg10 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : ''
+var msg11 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
+var msg12 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
+var msg13 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
 
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : ''
+var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : ''
 
 // ========================================
 // OUTPUTS
@@ -135,3 +171,8 @@ output validationMessage string = validationMessage
 output totalVMs int = totalVMs
 output totalCapacity int = totalCapacity
 output vmPerRegionCounts array = vmPerRegionCounts
+output nonControlVmCount int = nonControlVmCount
+output totalWorkloadRegionCapacity int = totalWorkloadRegionCapacity
+output workloadCapacityDebug array = workloadCapacityDebug
+
+

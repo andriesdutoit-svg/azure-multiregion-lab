@@ -133,15 +133,35 @@ var regionKeys = take(sortedRegions, regionCount)
 var primaryRegion = regionKeys[0]
 var isSingleRegion = regionCount == 1
 
-// Pinned primary-region VMs are excluded from round-robin placement.
-var roundRobinVmList = filter(vmList, vm =>
+// Split the unified VM model into control-plane and workload sets.
+// Placement uses different rules for these two groups.
+var controlPlaneVmList = filter(vmList, vm =>
+  vm.type == 'dc' || vm.type == 'jmp'
+)
+
+var workloadVmList = filter(vmList, vm =>
+  !(vm.type == 'dc' || vm.type == 'jmp')
+)
+
+// Pinned primary-region control-plane VMs are excluded from control-plane round-robin placement.
+var roundRobinControlPlaneVmList = filter(controlPlaneVmList, vm =>
   !(vm.type == 'dc' && vm.index == 0) && !(vm.type == 'jmp' && vm.index == 0)
 )
 
-// Compute global index for VMs that are still eligible for round-robin placement.
-// -1 marks pinned VMs so they are never used in modulo placement math.
-var roundRobinVmIndexList = [
-  for vm in vmList: (vm.type == 'dc' && vm.index == 0) || (vm.type == 'jmp' && vm.index == 0) ? -1 : indexOf(roundRobinVmList, vm)
+// Track control-plane and workload positions independently.
+// This prevents workload placement from inheriting offsets created by DC/jumpbox placement.
+var roundRobinControlPlaneVmIndexList = [
+  for vm in vmList: !(vm.type == 'dc' || vm.type == 'jmp')
+    ? -1
+    : (vm.type == 'dc' && vm.index == 0) || (vm.type == 'jmp' && vm.index == 0)
+      ? -1
+      : indexOf(roundRobinControlPlaneVmList, vm)
+]
+
+var workloadVmIndexList = [
+  for vm in vmList: vm.type == 'dc' || vm.type == 'jmp'
+    ? -1
+    : indexOf(workloadVmList, vm)
 ]
 
 // ========================================
@@ -149,6 +169,64 @@ var roundRobinVmIndexList = [
 // ========================================
 
 var hubRegion = primaryRegion
+
+// Place control-plane VMs first so workload placement can see how much spoke capacity remains.
+// Non-control VMs never use hub capacity.
+var controlPlanePlacements = [
+  for (vm, i) in vmList: !(vm.type == 'dc' || vm.type == 'jmp') ? {
+    type: ''
+    index: -1
+    regionKey: ''
+  } : {
+    type: vm.type
+    index: vm.index
+    regionKey: isSingleRegion
+      ? regionKeys[0]
+      : (vm.type == 'dc' && vm.index == 0)
+        ? primaryRegion
+      : (vm.type == 'jmp' && vm.index == 0)
+        ? primaryRegion
+        : roundRobinControlPlaneVmIndexList[i] < (regionCount - 1)
+        ? regionKeys[(roundRobinControlPlaneVmIndexList[i] % (regionCount - 1)) + 1]
+      : regionKeys[roundRobinControlPlaneVmIndexList[i] % regionCount]
+  }
+]
+
+// Model remaining spoke capacity after control-plane placement.
+// Workloads are then mapped to the first spoke whose cumulative remaining capacity contains the workload ordinal.
+// This avoids overfilling spokes that already consumed capacity with DC/jumpbox placements.
+var workloadRegionCapacity = [
+  for region in filter(regionKeys, candidate => candidate != hubRegion): {
+    region: region
+    remainingCapacity: maxVmsPerRegion > length(filter(controlPlanePlacements, vm => vm.regionKey == region))
+      ? maxVmsPerRegion - length(filter(controlPlanePlacements, vm => vm.regionKey == region))
+      : 0
+  }
+]
+
+var workloadRegionCapacityCounts = [
+  for slot in workloadRegionCapacity: slot.remainingCapacity
+]
+
+// Total number of workload slots still available across all spokes.
+var totalWorkloadRegionCapacity = reduce(
+  workloadRegionCapacityCounts,
+  0,
+  (current, item) => current + item
+)
+
+// Cumulative slot boundaries used to map each workload ordinal to a specific spoke.
+var workloadRegionCapacityCumulative = [
+  for (slot, i) in workloadRegionCapacity: {
+    region: slot.region
+    remainingCapacity: slot.remainingCapacity
+    cumulativeCapacity: reduce(
+      take(workloadRegionCapacityCounts, i + 1),
+      0,
+      (current, item) => current + item
+    )
+  }
+]
 
 //
 // ========================================
@@ -176,16 +254,21 @@ var vmPlacements = [
       : (vm.type == 'jmp' && vm.index == 0)
         ? primaryRegion
 
-      // Workloads NEVER go to hub
+      // Workloads NEVER go to hub and only consume remaining spoke capacity slots.
       : !(vm.type == 'dc' || vm.type == 'jmp')
-        ? regionKeys[(roundRobinVmIndexList[i] % (regionCount - 1)) + 1]
+        ? totalWorkloadRegionCapacity > 0
+          ? first(filter(
+              workloadRegionCapacityCumulative,
+              slot => slot.remainingCapacity > 0 && ((workloadVmIndexList[i] % totalWorkloadRegionCapacity) < slot.cumulativeCapacity)
+            )).?region ?? regionKeys[1]
+          : regionKeys[1]
 
       // DC/JMP prefer spokes first
-      : vm.index < (regionCount - 1)
-        ? regionKeys[(roundRobinVmIndexList[i] % (regionCount - 1)) + 1]
+        : roundRobinControlPlaneVmIndexList[i] < (regionCount - 1)
+        ? regionKeys[(roundRobinControlPlaneVmIndexList[i] % (regionCount - 1)) + 1]
 
-      // After spokes are “likely filled” → allow hub
-      : regionKeys[roundRobinVmIndexList[i] % regionCount]
+      // Once the first spoke pass is exhausted, additional control-plane VMs may use the hub.
+      : regionKeys[roundRobinControlPlaneVmIndexList[i] % regionCount]
   }
 ]
 
@@ -596,6 +679,11 @@ output vmPlacement array = vmPlacements
 // Validation message describing why deployment failed (empty if no validation errors)
 
 output validationDebug object = validationEngine.outputs.validationFlags
+output validationCapacityDebug object = {
+  nonControlVmCount: validationEngine.outputs.nonControlVmCount
+  totalWorkloadRegionCapacity: validationEngine.outputs.totalWorkloadRegionCapacity
+}
+output validationWorkloadCapacityDebug array = validationEngine.outputs.workloadCapacityDebug
 output validationMessage string = validationEngine.outputs.validationMessage
 output validationSummary string = empty(validationEngine.outputs.validationMessage)
   ? 'Validation passed.'
@@ -634,3 +722,4 @@ output regionSummary array = [
     vmCount: length(filter(vmPlacements, vm => vm.regionKey == region))
   }
 ]
+
