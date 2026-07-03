@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v1.13.1
+# Azure Multi-Region Lab (AMRL) v1.13.2
 
 ## Overview
 
@@ -75,7 +75,10 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 <details>
 <summary><strong>Start Guide</strong></summary>
 
-- [Start Guide](#start-guide)
+- [Quick Start (Demo Setup)](#quick-start-demo-setup)
+  - [Required Placeholder Values](#required-placeholder-values)
+  - [Quick Demo Steps](#quick-demo-steps)
+- [Start Guide (Detailed)](#start-guide-detailed)
   - [Step 1: Understand the Core Concept](#step-1-understand-the-core-concept)
   - [Step 2: Core Deployment Settings](#step-2-core-deployment-settings)
   - [Step 3: Region Mapping](#step-3-region-mapping)
@@ -113,8 +116,9 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 <summary><strong>Validation</strong></summary>
 
 - [Validation](#validation)
-  - [Validation Rules](#validation-rules)
-  - [Validation Outputs](#validation-outputs)
+  - [CI Workflow Validation (`validate.yml`)](#ci-workflow-validation-validateyml)
+  - [Bicep Template Validation Rules](#bicep-template-validation-rules)
+  - [Bicep Template Validation Outputs](#bicep-template-validation-outputs)
 
 </details>
 
@@ -135,7 +139,41 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 
 </details>
 
+
+[Back to top](#table-of-contents)
 ---
+
+## Quick Start (Demo Setup)
+
+Use this section if you want the fastest path to a working demo.
+
+### Required Placeholder Values
+
+The demo parameter template contains these three placeholders:
+
+- `<YOUR_PUBLIC_IP>/32`
+- `<SSH_PUBLIC_KEY>`
+- `<KEYVAULT_ID>`
+
+### Quick Demo Steps
+
+1. Copy `main.parameters.demo.json` to `main.parameters.test.json` (gitignored).
+2. Replace the three placeholders listed above in `main.parameters.test.json`.
+3. Create a Key Vault (if you do not already have one) and add these secrets:
+  - `jumpboxAdminPassword`
+  - `serverAdminPassword`
+  - `clientAdminPassword`
+4. Deploy locally:
+
+```bash
+az deployment sub create \
+  --name demo-deployment \
+  --location westeurope \
+  --template-file main.bicep \
+  --parameters main.parameters.test.json
+```
+
+For full parameter-by-parameter guidance, continue with [Start Guide (Detailed)](#start-guide-detailed).
 
 ### Project Evolution
 
@@ -168,7 +206,8 @@ The solution was developed iteratively, with each phase introducing additional a
 - **v1.13.1 — Role-Based VM Sizing and Storage**  
   Role-based compute sizing and OS disk configuration (`vmSizes`, `osDisks`) with per-role disk size support.
 
----
+- **v1.13.2 — GitHub Actions and CI/CD Foundation**  
+  Introduced GitHub Actions CI/CD with Azure OIDC authentication, Bicep build/lint checks, deployment validation, What-If integration, and a demo deployment profile.
 
 ### Design Principles
 
@@ -192,8 +231,7 @@ The design is based on the following principles:
 - **Security-first approach**  
   Minimal exposure, controlled access paths, and secure credential handling.
 
-  [Back to top](#table-of-contents)
-
+[Back to top](#table-of-contents)
 ---
 
 ## Design Decisions & Trade-offs
@@ -204,16 +242,12 @@ Use `.4` from each Domain Controller (DC) subnet for DNS.
 - Benefit: Predictable and valid.  
 - Limitation: Not all DC IPs are listed.  
 
----
-
 ### Index-Based Placement
 Placement uses deterministic indexing and derived remaining spoke capacity instead of runtime capacity tracking.
 
 - Benefit: Repeatable.  
 - Benefit: Prevents workloads from being assigned to spokes already filled by control-plane VMs.  
 - Limitation: Deterministic, not runtime-aware.  
-
----
 
 ### Controlled Hub Placement for Control-Plane VMs
 The first DC and jumpbox are pinned to the hub region.  
@@ -225,8 +259,6 @@ Additional DCs and jumpboxes are placed in spokes first, with the hub used as a 
 - Benefit: Allows additional hub placement when capacity permits.  
 - Limitation: Based on index ordering, not real-time capacity.  
 
----
-
 ### Hub Role Restriction
 Only DCs and jumpboxes are allowed in the hub.
 
@@ -234,23 +266,17 @@ Only DCs and jumpboxes are allowed in the hub.
 - Benefit: Improved security posture.  
 - Limitation: Reduces general capacity in the hub.  
 
----
-
 ### Parallel Deployment Reality
 Placement does not rely on deployment order.
 
 - Benefit: Deterministic behaviour.  
 - Limitation: Must account for concurrent deployments.  
 
----
-
 ### Global DNS
 All VNets share the same DNS list derived from DC placement.
 
 - Benefit: Simple and consistent.  
 - Limitation: Not latency-optimised per region.  
-
-  [Back to top](#table-of-contents)
 
 ## Architecture Overview
 
@@ -269,10 +295,6 @@ Each selected region contains:
   - Jumpbox  
 - Network Security Groups (NSGs) applied per subnet  
 - Virtual Machines based on configured roles  
-
-  [Back to top](#table-of-contents)
-
----
 
 ### Network Architecture
 
@@ -326,10 +348,6 @@ flowchart TB
 
 Traffic path: Spoke VM -> UDR -> Hub Firewall -> Destination Spoke VM (no direct spoke-to-spoke path).
 
-  [Back to top](#table-of-contents)
-
----
-
 ### Traffic Flow
 
 Spoke workloads do not talk directly to each other by default. Instead:
@@ -338,10 +356,6 @@ Spoke workloads do not talk directly to each other by default. Instead:
 - The hub firewall applies the central routing and security control point
 - Jumpboxes remain the entry point for administration
 - NSGs still enforce subnet-level access rules
-
-  [Back to top](#table-of-contents)
-
----
 
 ### IP Addressing Strategy
 
@@ -355,10 +369,6 @@ DCs are deployed into dedicated **DC subnets per region**. Azure assigns IP addr
 Because DCs are deployed first into their subnets, each region’s primary DC consistently receives the `.4` address.
 
 This removes the need for complex static IP calculations while maintaining predictable addressing.
-
-  [Back to top](#table-of-contents)
-
----
 
 ### DNS Configuration
 
@@ -394,18 +404,12 @@ After AD DS installation:
 - DCs automatically register themselves in DNS
 - Clients can discover all DCs using AD-integrated DNS
 
----
-
 ### Security Model
 
 - Public access is restricted to jumpboxes only  
 - All other VMs are private  
 - Role-based NSG rules control traffic flow  
 - Credentials are securely stored in Azure Key Vault  
-
-  [Back to top](#table-of-contents)
-
----
 
 ### Workload Distribution
 
@@ -414,25 +418,26 @@ After AD DS installation:
 - Additional control-plane VMs (DCs and jumpboxes) use spoke-first placement, then may use the hub after the first spoke pass  
 - Each region is constrained by a maximum VM limit to prevent over-allocation  
 
-  [Back to top](#table-of-contents)
-
+[Back to top](#table-of-contents)
 ---
 
 ## File Structure
 
 The project is structured to separate concerns and promote modular reuse.
 
----
-
 ### Root Files
 
 - **main.bicep**  
   Entry point for the deployment. Defines orchestration, placement logic, and module calls.
 
-- **main.parameters.example.json**  
-  GitHub-safe sample parameter file with placeholder values for subscription IDs, Key Vault names, public keys, and source ranges. Copy or rename this file locally to create your own `main.parameters.json`.
+- **main.parameters.demo.json**  
+  Demo parameter template used as the base for local testing and by GitHub Actions validation (`validate.yml`).
 
----
+- **main.parameters.example.json**  
+  Full reference file with placeholders for all tunable values.
+
+- **main.parameters.test.json**  
+  Local development/testing file (gitignored). Create this by copying `main.parameters.demo.json` and replacing the three placeholders with your own values.
 
 ### Modules
 
@@ -477,8 +482,6 @@ The project is structured to separate concerns and promote modular reuse.
 - **modules/logic/validation.bicep**  
   Evaluates placement and configuration checks and emits validation outputs used by `main.bicep`.
 
----
-
 ### Supporting Logic in main.bicep
 
 - **VM Model Construction**  
@@ -493,42 +496,42 @@ The project is structured to separate concerns and promote modular reuse.
 - **Validation Engine**  
   Invokes `modules/logic/validation.bicep` and surfaces validation outputs at the top level
 
----
-
 ### Foundation Layer (External)
 
 - Azure Key Vault (must exist before deployment)  
 - Stores admin credentials securely  
 - Referenced directly from the parameter file
-
-  [Back to top](#table-of-contents)
-
 ---
 
-# Start Guide
+# Start Guide (Detailed)
 
-This section explains exactly how to configure and run the deployment. Each parameter is explained so that you understand what it does, why it matters, and how to change it safely.
+Use this section when you want full control over the deployment configuration.
+If you only need a working demo, use [Quick Start (Demo Setup)](#quick-start-demo-setup).
 
+
+[Back to top](#table-of-contents)
 ---
 
 ## Step 1: Understand the Core Concept
 
-This deployment spreads Virtual Machines across multiple Azure regions while ensuring:
+This deployment spreads virtual machines across multiple Azure regions while ensuring:
 
 - No region gets too many VMs
 - Distribution is balanced
 - Certain roles (like DCs) are placed intentionally
 
-To control this behaviour, you configure a few key parameters in a `main.parameters.json` file.
-Start by copying or renaming `main.parameters.example.json` to `main.parameters.json`, then edit the local copy with your own values.
+You control this behaviour with values in a parameter file.
+Start by copying `main.parameters.demo.json` to `main.parameters.test.json`, then edit `main.parameters.test.json` with your own values.
 
+
+[Back to top](#table-of-contents)
 ---
 
 ## Step 2: Core Deployment Settings
 
 ```json
-"prefix": { "value": "your-prefix" },
-"regionCount": { "value": 5 },
+"prefix": { "value": "AMRL" },
+"regionCount": { "value": 3 },
 "maxVmsPerRegion": { "value": 2 }
 ```
 
@@ -550,6 +553,8 @@ If each VM uses 2 vCPUs and quota is 4:
 maxVmsPerRegion = 2
 ```
 
+
+[Back to top](#table-of-contents)
 ---
 
 ## Step 3: Region Mapping
@@ -560,10 +565,10 @@ For example:
 "regionIndexMap": {
   "value": {
     "southafricanorth": 1,
-    "southindia": 2,
-    "japanwest": 3,
-    "israelcentral": 4,
-    "koreasouth": 5
+    "australiaeast": 2,
+    "australiasoutheast": 3,
+    "austriaeast": 4,
+    "belgiumcentral": 5
   }
 }
 ```
@@ -583,8 +588,7 @@ The placement engine uses this order to distribute VMs.
 - Must increase by `1` each time
 - No gaps allowed
 
-  [Back to top](#table-of-contents)
-
+[Back to top](#table-of-contents)
 ---
 
 ## Step 4a: Subnet Mapping
@@ -614,8 +618,7 @@ The numbering determines:
 
 Leave these values as-is unless redesigning networking.
 
-  [Back to top](#table-of-contents)
-
+[Back to top](#table-of-contents)
 ---
 
 ## Step 4b: Greenfield and Brownfield Deployments
@@ -633,8 +636,6 @@ This parameter controls whether networking resources are created or reused.
 | `true` | Creates NSGs, subnets, and the Azure Firewall subnet. |
 | `false` | Reuses existing networking resources instead of creating them. |
 
----
-
 ### Greenfield Deployments
 
 A greenfield deployment creates all networking components required by the solution:
@@ -647,8 +648,6 @@ A greenfield deployment creates all networking components required by the soluti
 - Virtual machines
 
 For new lab environments, leave `deploySubnets` set to `true`.
-
----
 
 ### Brownfield Deployments
 
@@ -665,10 +664,6 @@ The existing networking resources should either:
 
 - Have been created by a previous deployment of this solution, or
 - Follow the same naming conventions, subnet structure, and resource relationships expected by the modules.
-
-  [Back to top](#table-of-contents)
-
----
 
 ### Relationship Between Stages and Brownfield Deployments
 
@@ -687,8 +682,6 @@ Examples:
 - `deploySubnets=false` → Reuse existing networking resources.
 
 These features can be used independently or together, provided the required networking resources and deployment framework assumptions are already in place.
-
----
 
 ### Parameters That Can Be Changed Between Deployments
 
@@ -713,8 +706,6 @@ Typical examples include:
 - Updating operating system images
 - Resizing virtual machines
 
----
-
 ### Changes Requiring Careful Planning
 
 The following parameters may significantly affect topology or addressing:
@@ -726,13 +717,11 @@ The following parameters may significantly affect topology or addressing:
 
 Changing these values after deployment may require resource recreation or migration planning.
 
----
-
 ### Current Limitation
 
 This solution is designed around the networking structure produced by its own modules.
 
-The following scenarios are not currently supported without additional customization:
+The following scenarios are not currently supported without additional customisation:
 
 - Existing corporate VNets with different subnet structures
 - Existing NSGs with different naming conventions
@@ -741,9 +730,7 @@ The following scenarios are not currently supported without additional customiza
 
 ### Stage Dependency Considerations
 
-Control and workload deployments rely on networking structures defined by this deployment framework. While the stages can be executed independently after networking has been established, the current implementation is not intended for deploying compute resources into arbitrary pre-existing networking environments without additional customization.
-
----
+Control and workload deployments rely on networking structures defined by this deployment framework. While the stages can be executed independently after networking has been established, the current implementation is not intended for deploying compute resources into arbitrary pre-existing networking environments without additional customisation.
 
 ### Supported Deployment Models
 
@@ -758,10 +745,6 @@ Control and workload deployments rely on networking structures defined by this d
 | Modify VM counts, role-based sizes/disks, images, tags, and access settings | Yes |
 | Deploy into arbitrary existing networking | No |
 
-  [Back to top](#table-of-contents)
-
----
-
 ### Design Principle
 
 The VNet module (`vnet.bicep`) is the authoritative source of truth for:
@@ -773,8 +756,7 @@ The VNet module (`vnet.bicep`) is the authoritative source of truth for:
 
 Other modules consume these outputs instead of reconstructing names or resource IDs. This prevents naming drift and ensures consistency across the deployment.
 
-  [Back to top](#table-of-contents)
-
+[Back to top](#table-of-contents)
 ---
 
 ## Step 5: VM Counts (Controls Scale)
@@ -782,11 +764,11 @@ Other modules consume these outputs instead of reconstructing names or resource 
 ```json
 "vmCounts": {
   "value": {
-    "dc": 2,
-    "jumpbox": 2,
-    "windowsServer": 2,
+    "dc": 1,
+    "jumpbox": 1,
+    "windowsServer": 1,
     "windowsClient": 1,
-    "linuxServer": 2,
+    "linuxServer": 1,
     "linuxClient": 1
   }
 }
@@ -812,8 +794,7 @@ Ensure:
 totalVMs ≤ regionCount × maxVmsPerRegion
 ```
 
-  [Back to top](#table-of-contents)
-
+[Back to top](#table-of-contents)
 ---
 
 ## Step 6: Role-Based VM Sizing and Storage
@@ -900,8 +881,7 @@ With the default values above:
 - Public IPs are automatically deleted when VMs are deleted.
 - OS disks are automatically deleted when VMs are deleted.
 
-  [Back to top](#table-of-contents)
-
+[Back to top](#table-of-contents)
 ---
 
 ## Step 7: Jumpbox Allowed Sources
@@ -909,8 +889,7 @@ With the default values above:
 ```json
 "jumpboxAllowedSources": {
   "value": [
-    "<your-public-ip>",
-    "<your-public-cidr-range>"
+    "<YOUR_PUBLIC_IP>/32"
   ]
 }
 ```
@@ -919,28 +898,22 @@ With the default values above:
 
 Defines the list of public IP addresses or ranges that are allowed to access the jumpboxes via RDP. These values are used to configure inbound Network Security Group (NSG) rules, restricting administrative access to only the specified sources.
 
-In the published example file, these values are placeholders. Replace them in your local `main.parameters.json` with your own public IP address or CIDR range.
-
----
+In `main.parameters.demo.json`, this value is a placeholder. Replace it in `main.parameters.test.json` with your own public IP address.
 
 ### Important
 
-- Replace these example IP addresses with your own public IP address(es) or range(s)
+- Replace this example value with your own public IP address
 - If not configured correctly, you will not be able to access the jumpboxes
 - Jumpboxes are the only entry point to access the rest of the virtual machines in the environment
 
-  [Back to top](#table-of-contents)
-
+[Back to top](#table-of-contents)
 ---
 
 ## Step 8: Key Vault Setup (Required)
 
 ### Why Key Vault is needed
 
-Passwords are NOT stored in the template.
-They are securely stored in Azure Key Vault.
-
----
+Passwords are NOT stored in the template. They are securely stored in Azure Key Vault.
 
 ### Create Foundation Resource Group
 
@@ -949,8 +922,6 @@ az group create --name <foundation-rg> --location <azure-region>
 ```
 
 Ensure that the name of this resource group does not start with the prefix selected earlier, as it will also be deleted if a bulk resource group deletion command is used to clean up the lab.
-
----
 
 ### Create Key Vault
 
@@ -964,8 +935,6 @@ az keyvault create \
   --enabled-for-template-deployment true
 ```
 
----
-
 ### Add Secrets
 
 ```bash
@@ -974,15 +943,13 @@ az keyvault secret set --vault-name <key-vault-name> --name serverAdminPassword 
 az keyvault secret set --vault-name <key-vault-name> --name clientAdminPassword --value <password>
 ```
 
----
-
 ### Link Key Vault in Parameters
 
 ```json
 "jumpboxAdminPassword": {
   "reference": {
     "keyVault": {
-      "id": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
+      "id": "<KEYVAULT_ID>"
     },
     "secretName": "jumpboxAdminPassword"
   }
@@ -991,8 +958,7 @@ az keyvault secret set --vault-name <key-vault-name> --name clientAdminPassword 
 
 Repeat for other passwords.
 
-  [Back to top](#table-of-contents)
-
+[Back to top](#table-of-contents)
 ---
 
 ## Step 9: Deploy
@@ -1008,12 +974,10 @@ az deployment sub create \
   --name <deployment-name> \
   --location <azure-region> \
   --template-file main.bicep \
-  --parameters main.parameters.json
+  --parameters main.parameters.test.json
 ```
 
 The default value for `stage` is `all`, so no additional stage parameter is required.
-
----
 
 ### Stages
 
@@ -1035,10 +999,6 @@ Deploy only workload virtual machines:
 --parameters stage=workload
 ```
 
-  [Back to top](#table-of-contents)
-
----
-
 ### Recommended Deployment Order
 
 For staged deployments:
@@ -1049,8 +1009,7 @@ For staged deployments:
 3. workload
 ```
 
-  [Back to top](#table-of-contents)
-
+[Back to top](#table-of-contents)
 ---
 
 ## Step 10: Validate Results
@@ -1086,8 +1045,6 @@ After deployment (or during development validation), review the outputs to confi
 - `capacityCheck`  
   Shows total requested VMs vs total available capacity.
 
----
-
 ### How to Use These Outputs
 
 1. Check `validationSummary` for a quick pass/fail status  
@@ -1099,15 +1056,10 @@ After deployment (or during development validation), review the outputs to confi
 7. Verify core configuration inputs if results are unexpected: VM sizes vs regional quota, `regionCount` vs available regions, and `vmCounts` vs total capacity.  
 8. Confirm Key Vault configuration and secret references if credential-based deployment steps fail  
 
----
-
 ### Note
 
 During development, validation errors are exposed via outputs instead of blocking deployment.  
 In production scenarios, assertions can be enabled to prevent invalid deployments.
-
-  [Back to top](#table-of-contents)
-
 ---
 
 # Placement Engine
@@ -1122,6 +1074,8 @@ In production scenarios, assertions can be enabled to prevent invalid deployment
 
 Note: Bicep does not track real-time regional capacity during deployment. The template uses deterministic placement plus a derived remaining-capacity model built from planned control-plane placements, not live Azure runtime state.
 
+
+[Back to top](#table-of-contents)
 ---
 
 ## Placement Decision Flow
@@ -1141,6 +1095,8 @@ else:
   finalRegion = fallbackSpoke
 ```
 
+
+[Back to top](#table-of-contents)
 ---
 
 ## Why this matters
@@ -1149,16 +1105,25 @@ else:
 - Non-control workloads are always excluded from hub
 - Workloads cannot spill into a spoke that is already full from control-plane placement
 - Regional spread remains predictable and capacity checks still apply
-
-  [Back to top](#table-of-contents)
-
 ---
 
 # Validation
 
-The deployment includes a validation engine that ensures configuration correctness before resources are provisioned.
+This solution has two distinct validation layers:
 
-### Validation Rules
+- CI workflow validation (GitHub Actions) in `validate.yml`
+- Bicep template validation logic in `modules/logic/validation.bicep` and top-level outputs
+
+### CI Workflow Validation (`validate.yml`)
+
+If you are using GitHub Actions, this repository includes `.github/workflows/validate.yml`.
+
+- It runs on pushes to `main`, pushes to `feature/**`, and pull requests targeting `main`.
+- It builds/lints `main.bicep`, injects values for the three placeholders, then runs `az deployment sub validate` and `what-if` using `main.parameters.demo.json`.
+
+Reference: [GitHub Actions workflow syntax](https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions)
+
+### Bicep Template Validation Rules
 
 The following checks are performed:
 
@@ -1176,9 +1141,7 @@ The following checks are performed:
 - `vmSizes` includes all required role keys (dc, jumpbox, windowsServer, windowsClient, linuxServer, linuxClient)  
 - `osDisks` includes all required role keys (dc, jumpbox, windowsServer, windowsClient, linuxServer, linuxClient)  
 
----
-
-### Validation Outputs
+### Bicep Template Validation Outputs
 
 Validation results are exposed using:
 
@@ -1187,9 +1150,6 @@ Validation results are exposed using:
 - `validationDebug` → detailed boolean values for all validation checks  
 - `validationCapacityDebug` → non-control VM demand vs remaining spoke workload capacity  
 - `validationWorkloadCapacityDebug` → per-region control-plane occupancy and remaining workload slots  
-
-  [Back to top](#table-of-contents)
-
 ---
 
 # Outputs
@@ -1234,8 +1194,6 @@ The deployment provides several outputs to assist with validation, debugging, an
 - `regionSummary`  
   Per-region address space, subnet prefixes, and VM count  
 
----
-
 ### Purpose
 
 These outputs are designed to:
@@ -1245,23 +1203,24 @@ These outputs are designed to:
 - Confirm workload distribution  
 - Provide insight into capacity usage  
 
----
-
 ### Best Practice
 
 Always review validation outputs before proceeding with further configuration steps.
 
-  [Back to top](#table-of-contents)
-
+[Back to top](#table-of-contents)
 ---
 
 ## Future Plans
 
-- Extend placement logic toward richer quota-aware behaviour
-- Add Azure Bastion as a secure alternative to jumpboxes
-- Implement CI/CD pipelines for automated validation and deployment
-- Enhance monitoring and logging for operational visibility 
+### Future Plans
 
-  [Back to top](#table-of-contents)
+- Active Directory Domain Services automation.
+- Identity-focused deployment stages and domain join workflows.
+- Identity and domain readiness validation.
+- Azure Bastion integration.
+- Enhanced monitoring and operational visibility.
+- Continued placement engine improvements.
 
 ---
+
+

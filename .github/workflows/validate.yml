@@ -47,16 +47,26 @@ jobs:
         run: |
           az bicep lint --file main.bicep
 
+      - name: Inject demo values
+        run: |
+          sed -i "s|<SSH_PUBLIC_KEY>|${{ secrets.SSH_PUBLIC_KEY }}|g" main.parameters.demo.json
+          sed -i "s|<KEYVAULT_ID>|${{ vars.KEYVAULT_ID }}|g" main.parameters.demo.json
+          sed -i "s|<YOUR_PUBLIC_IP>|${{ vars.YOUR_PUBLIC_IP }}|g" main.parameters.demo.json
+    
+      - name: Verify Placeholder Replacement
+        run: |
+          grep -n "<" main.parameters.demo.json && exit 1 || true
+
       - name: Validate Deployment
         run: |
           az deployment sub validate \
             --location westeurope \
             --template-file main.bicep \
-            --parameters main.parameters.json
+            --parameters main.parameters.demo.json
 
       - name: What-If
         run: |
           az deployment sub what-if \
             --location westeurope \
             --template-file main.bicep \
-            --parameters main.parameters.json
+            --parameters main.parameters.demo.json

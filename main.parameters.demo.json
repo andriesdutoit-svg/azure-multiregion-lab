@@ -56,7 +56,7 @@
     },
 
     "regionCount": {
-      "value": 28
+      "value": 3
     },
 
     "maxVmsPerRegion": {
@@ -65,23 +65,18 @@
 
     "vmCounts": {
       "value": {
-        "dc": 28,
-        "jumpbox": 4,
-        "windowsServer": 6,
-        "windowsClient": 6,
-        "linuxServer": 6,
-        "linuxClient": 6
+        "dc": 1,
+        "jumpbox": 1,
+        "windowsServer": 1,
+        "windowsClient": 1,
+        "linuxServer": 1,
+        "linuxClient": 1
       }
     },
 
     "jumpboxAllowedSources": {
       "value": [
-        "168.210.156.45",
-        "137.158.0.0/16",
-        "197.239.0.0/16",
-        "196.24.0.0/16",
-        "196.42.0.0/16",
-        "196.47.0.0/16"
+        "<YOUR_PUBLIC_IP>/32"
       ]
     },
 
@@ -122,40 +117,40 @@
 
     "vmSizes": {
       "value": {
-        "dc": "Standard_B2ls_v2",
-        "jumpbox": "Standard_B2ls_v2",
-        "windowsServer": "Standard_B2ls_v2",
+        "dc": "Standard_B2ms",
+        "jumpbox": "Standard_B2s_v2",
+        "windowsServer": "Standard_B2s_v2",
         "windowsClient": "Standard_B2ls_v2",
-        "linuxServer": "Standard_B2ls_v2",
-        "linuxClient": "Standard_B2ls_v2"
+        "linuxServer": "Standard_B2s_v2",
+        "linuxClient": "Standard_B1ms"
       }
     },
 
     "osDisks": {
       "value": {
         "dc": {
-          "storageAccountType": "Standard_LRS",
+          "storageAccountType": "Premium_LRS",
           "diskSizeGB": 128
         },
         "jumpbox": {
-          "storageAccountType": "Standard_LRS",
-          "diskSizeGB": 128
+          "storageAccountType": "StandardSSD_LRS",
+          "diskSizeGB": 64
         },
         "windowsServer": {
-          "storageAccountType": "Standard_LRS",
+          "storageAccountType": "Premium_LRS",
           "diskSizeGB": 128
         },
         "windowsClient": {
-          "storageAccountType": "Standard_LRS",
-          "diskSizeGB": 128
+          "storageAccountType": "StandardSSD_LRS",
+          "diskSizeGB": 64
         },
         "linuxServer": {
-          "storageAccountType": "Standard_LRS",
+          "storageAccountType": "Premium_LRS",
           "diskSizeGB": 128
         },
         "linuxClient": {
-          "storageAccountType": "Standard_LRS",
-          "diskSizeGB": 128
+          "storageAccountType": "StandardSSD_LRS",
+          "diskSizeGB": 64
         }
       }
     },
@@ -169,37 +164,43 @@
     },
 
     "adminPublicKey": {
-      "value": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO5JidQnbZ4LWITUUPbydIRe9QuSV8ID4kiWEHXmZ1jU"
+      "value": "<SSH_PUBLIC_KEY>"
     },
+
     "jumpboxAdminUsername": {
       "value": "azureadmin"
     },
+
     "jumpboxAdminPassword": {
       "reference": {
         "keyVault": {
-          "id": "/subscriptions/6364c335-196e-4e98-b448-f2a12b578be4/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/azure2lab-kv"
+          "id": "<KEYVAULT_ID>"
         },
         "secretName": "jumpboxAdminPassword"
       }
     },
+
     "serverAdminUsername": {
       "value": "azureadmin"
     },
+
     "serverAdminPassword": {
       "reference": {
         "keyVault": {
-          "id": "/subscriptions/6364c335-196e-4e98-b448-f2a12b578be4/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/azure2lab-kv"
+          "id": "<KEYVAULT_ID>"
         },
         "secretName": "serverAdminPassword"
       }
     },
+
     "clientAdminUsername": {
       "value": "azureadmin"
     },
+
     "clientAdminPassword": {
       "reference": {
         "keyVault": {
-          "id": "/subscriptions/6364c335-196e-4e98-b448-f2a12b578be4/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/azure2lab-kv"
+          "id": "<KEYVAULT_ID>"
         },
         "secretName": "clientAdminPassword"
       }
