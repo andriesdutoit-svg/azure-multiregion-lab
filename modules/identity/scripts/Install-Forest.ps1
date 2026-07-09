@@ -13,7 +13,46 @@ Forest creation logic separated from AD population logic.
 
 param(
     [string]$DomainName,
-    [SecureString]$ServerAdminPassword
+    [string]$ServerAdminPassword
 )
 
-Write-Host "Installing AD DS Forest: $DomainName"
+$DsrmPassword = ConvertTo-SecureString `
+    $ServerAdminPassword `
+    -AsPlainText `
+    -Force
+
+if ((Get-WindowsFeature AD-Domain-Services).Installed) {
+    Write-Host "AD DS role already installed"
+}
+else {
+    Install-WindowsFeature `
+        AD-Domain-Services `
+        -IncludeManagementTools
+
+    Write-Host "AD DS role installation complete"
+}
+
+Import-Module ActiveDirectory -ErrorAction SilentlyContinue
+
+Write-Host "Preparing Active Directory installation for: $DomainName"
+
+try {
+    $CurrentDomain = Get-ADDomain -ErrorAction Stop
+
+    Write-Host "Domain already exists: $($CurrentDomain.Forest)"
+    exit 0
+}
+catch {
+    Write-Host $_
+    Write-Host "No Active Directory forest detected"
+}
+
+Write-Host "Creating Active Directory forest: $DomainName"
+
+Install-ADDSForest `
+    -DomainName $DomainName `
+    -InstallDns `
+    -SafeModeAdministratorPassword $DsrmPassword `
+    -Force
+
+Write-Host "Active Directory forest creation initiated. The server will automatically reboot to complete the installation."
