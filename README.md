@@ -1320,6 +1320,22 @@ These outputs are designed to:
 Always review validation outputs before proceeding with further configuration steps.
 ---
 
+## Third-Party Components
+
+This project incorporates code and concepts from Set-DummyAD.
+
+Source:
+https://github.com/BOAScripts/Set-DummyAD
+
+License:
+MIT
+
+Modifications:
+- Refactored for staged AMRL identity deployment
+- Integrated with Bicep VM Extensions
+- AD forest creation separated from AD population
+---
+
 ## Future Plans
 
 - Identity Foundation (v2.0.0).

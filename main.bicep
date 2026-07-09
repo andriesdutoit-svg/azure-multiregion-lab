@@ -4,6 +4,7 @@ targetScope = 'subscription'
 @allowed([
   'network'
   'control'
+  'identity'
   'workload'
   'all'
 ])
@@ -49,9 +50,13 @@ param vmSizes object
 param osDisks object
 param vmAutoDeleteOptions object
 
+param enableIdentity bool
+param domainName string
+
 // Stage flags for conditional deployment of modules
 var deployNetwork = stage == 'network' || stage == 'all'
 var deployControl = stage == 'control' || stage == 'all'
+var deployIdentity = enableIdentity && (stage == 'identity' || stage == 'all')
 var deployWorkload = stage == 'workload' || stage == 'all'
 
 //
@@ -277,6 +282,14 @@ var maxDcPerRegion = maxVmsPerRegion
 var totalDcs = vmCounts.dc
 var minRegionsNeededForDcs = (totalDcs + maxDcPerRegion - 1) / maxDcPerRegion
 var hasTooManyDcs = minRegionsNeededForDcs > regionCount
+
+var primaryDc = first(filter(vmPlacements, vm =>
+  vm.type == 'dc' && vm.index == 0
+))
+
+var replicaDcList = filter(vmPlacements, vm =>
+  vm.type == 'dc' && vm.index > 0
+)
 
 // ========================================
 // VM GROUPING + SUPPORT VARIABLES
@@ -621,6 +634,21 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
     }
   }
 ]
+
+module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
+  name: 'ad-forest'
+  scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
+
+  dependsOn: [
+    windowsVMs
+  ]
+  params: {
+    dcVmName: '${prefix}-${primaryDc!.type}${padLeft(string(primaryDc!.index + 1), 2, '0')}'
+    domainName: domainName
+    serverAdminUsername: serverAdminUsername
+    serverAdminPassword: serverAdminPassword
+  }
+}
 
 // ========================================
 // DEPLOYMENT STAGE 7: LINUX VMS
