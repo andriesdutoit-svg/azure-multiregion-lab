@@ -16,6 +16,12 @@ param(
     [string]$ServerAdminPassword
 )
 
+Write-Host "DomainName = $DomainName"
+
+if (:IsNullOrWhiteSpace($ServerAdminPassword)) {
+    throw "ServerAdminPassword was not supplied"
+}
+
 $DsrmPassword = ConvertTo-SecureString `
     $ServerAdminPassword `
     -AsPlainText `

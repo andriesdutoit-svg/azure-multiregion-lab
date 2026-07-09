@@ -6,21 +6,31 @@ param serverAdminUsername string
 param serverAdminPassword string
 param dcVmName string
 
+var installForestScript = loadTextContent('./scripts/Install-Forest.ps1')
+
 resource dcVm 'Microsoft.Compute/virtualMachines@2022-08-01' existing = {
   name: dcVmName
 }
 
-resource forestExtension 'Microsoft.Compute/virtualMachines/extensions@2023-09-01' = {
+resource forestBootstrap 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' = {
   parent: dcVm
-  name: 'ad-forest'
+  name: 'install-forest'
+  location: resourceGroup().location
 
   properties: {
-    publisher: 'Microsoft.Compute'
-    type: 'CustomScriptExtension'
-    typeHandlerVersion: '1.10'
-
-    settings: {
-      commandToExecute: 'powershell.exe -Command "Write-Host Forest Placeholder"'
+    source: {
+      script: loadTextContent('./scripts/Install-Forest.ps1')
     }
+
+    parameters: [
+      {
+        name: 'DomainName'
+        value: domainName
+      }
+      {
+        name: 'ServerAdminPassword'
+        value: serverAdminPassword
+      }
+    ]
   }
 }

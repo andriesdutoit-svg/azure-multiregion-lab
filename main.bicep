@@ -53,6 +53,8 @@ param vmAutoDeleteOptions object
 param enableIdentity bool
 param domainName string
 
+param githubBranch string = 'main'
+
 // Stage flags for conditional deployment of modules
 var deployNetwork = stage == 'network' || stage == 'all'
 var deployControl = stage == 'control' || stage == 'all'
@@ -755,4 +757,3 @@ output regionSummary array = [
     vmCount: length(filter(vmPlacements, vm => vm.regionKey == region))
   }
 ]
-
