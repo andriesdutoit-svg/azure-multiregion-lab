@@ -21,7 +21,6 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 
 - [Overview](#overview)
   - [Project Evolution](#project-evolution)
-  - [Breaking Changes](#breaking-changes)
   - [Design Principles](#design-principles)
 
 </details>
@@ -503,7 +502,7 @@ The project is structured to separate concerns and promote modular reuse.
 - Referenced directly from the parameter file
 ---
 
-# Start Guide (Detailed)
+## Start Guide (Detailed)
 
 Use this section when you want full control over the deployment configuration.
 If you only need a working demo, use [Quick Start (Demo Setup)](#quick-start-demo-setup).
@@ -512,7 +511,7 @@ If you only need a working demo, use [Quick Start (Demo Setup)](#quick-start-dem
 [Back to top](#table-of-contents)
 ---
 
-## Step 1: Understand the Core Concept
+### Step 1: Understand the Core Concept
 
 This deployment spreads virtual machines across multiple Azure regions while ensuring:
 
@@ -527,7 +526,7 @@ Start by copying `main.parameters.demo.json` to `main.parameters.test.json`, the
 [Back to top](#table-of-contents)
 ---
 
-## Step 2: Core Deployment Settings
+### Step 2: Core Deployment Settings
 
 ```json
 "prefix": { "value": "AMRL" },
@@ -557,7 +556,7 @@ maxVmsPerRegion = 2
 [Back to top](#table-of-contents)
 ---
 
-## Step 3: Region Mapping
+### Step 3: Region Mapping
 
 For example:
 
@@ -591,7 +590,7 @@ The placement engine uses this order to distribute VMs.
 [Back to top](#table-of-contents)
 ---
 
-## Step 4a: Subnet Mapping
+### Step 4a: Subnet Mapping
 
 ```json
 "subnetIndexMap": {
@@ -621,7 +620,7 @@ Leave these values as-is unless redesigning networking.
 [Back to top](#table-of-contents)
 ---
 
-## Step 4b: Greenfield and Brownfield Deployments
+### Step 4b: Greenfield and Brownfield Deployments
 
 ### `deploySubnets`
 
@@ -759,7 +758,7 @@ Other modules consume these outputs instead of reconstructing names or resource 
 [Back to top](#table-of-contents)
 ---
 
-## Step 5: VM Counts (Controls Scale)
+### Step 5: VM Counts (Controls Scale)
 
 ```json
 "vmCounts": {
@@ -797,7 +796,7 @@ totalVMs ≤ regionCount × maxVmsPerRegion
 [Back to top](#table-of-contents)
 ---
 
-## Step 6: Role-Based VM Sizing and Storage
+### Step 6: Role-Based VM Sizing and Storage
 
 For example:
 
@@ -884,7 +883,7 @@ With the default values above:
 [Back to top](#table-of-contents)
 ---
 
-## Step 7: Jumpbox Allowed Sources
+### Step 7: Jumpbox Allowed Sources
 
 ```json
 "jumpboxAllowedSources": {
@@ -909,7 +908,7 @@ In `main.parameters.demo.json`, this value is a placeholder. Replace it in `main
 [Back to top](#table-of-contents)
 ---
 
-## Step 8: Key Vault Setup (Required)
+### Step 8: Key Vault Setup (Required)
 
 ### Why Key Vault is needed
 
@@ -958,10 +957,51 @@ az keyvault secret set --vault-name <key-vault-name> --name clientAdminPassword 
 
 Repeat for other passwords.
 
+#### Required Key Vault Configuration
+
+This solution uses Azure Resource Manager Key Vault references for secure password retrieval.
+
+To support local and GitHub Actions validation, the Key Vault must allow Azure Resource Manager access.
+
+##### Enable Azure Service Bypass
+
+```bash
+az keyvault update \
+  --name <key-vault-name> \
+  --bypass AzureServices
+```
+
+##### Enable ARM Template Deployment Access
+
+```bash
+az keyvault update \
+  --name <key-vault-name> \
+  --enabled-for-template-deployment true
+```
+
+##### Verify Configuration
+
+```bash
+az keyvault show \
+  --name <key-vault-name> \
+  --query "{TemplateDeployment:properties.enabledForTemplateDeployment,Bypass:properties.networkAcls.bypass}"
+```
+
+Expected result:
+
+```json
+{
+  "TemplateDeployment": true,
+  "Bypass": "AzureServices"
+}
+```
+
+Reference: [Use Azure Key Vault to pass secure parameter values during deployment](https://aka.ms/arm-keyvault)
+
 [Back to top](#table-of-contents)
 ---
 
-## Step 9: Deploy
+### Step 9: Deploy
 
 The solution supports both full and staged deployments through the `stage` parameter.
 
@@ -1012,7 +1052,7 @@ For staged deployments:
 [Back to top](#table-of-contents)
 ---
 
-## Step 10: Validate Results
+### Step 10: Validate Results
 
 After deployment (or during development validation), review the outputs to confirm correctness and troubleshoot issues.
 
@@ -1054,7 +1094,6 @@ After deployment (or during development validation), review the outputs to confi
 5. Use `validationWorkloadCapacityDebug` to inspect how control-plane (DC and jumpbox) placement consumed spoke slots  
 6. Review `vmPlacement` and `vmCountPerRegion` to validate distribution logic  
 7. Verify core configuration inputs if results are unexpected: VM sizes vs regional quota, `regionCount` vs available regions, and `vmCounts` vs total capacity.  
-8. Confirm Key Vault configuration and secret references if credential-based deployment steps fail  
 
 ### Note
 
@@ -1062,9 +1101,9 @@ During development, validation errors are exposed via outputs instead of blockin
 In production scenarios, assertions can be enabled to prevent invalid deployments.
 ---
 
-# Placement Engine
+## Placement Engine
 
-## Rules
+### Rules
 
 1. dc01 → pinned to primary region
 2. jmp01 → pinned to primary region
@@ -1078,7 +1117,7 @@ Note: Bicep does not track real-time regional capacity during deployment. The te
 [Back to top](#table-of-contents)
 ---
 
-## Placement Decision Flow
+### Placement Decision Flow
 
 Current placement behaviour:
 
@@ -1099,7 +1138,7 @@ else:
 [Back to top](#table-of-contents)
 ---
 
-## Why this matters
+### Why this matters
 
 - Control-plane placement stays deterministic (dc01 and jmp01 pinned to hub)
 - Non-control workloads are always excluded from hub
@@ -1107,7 +1146,7 @@ else:
 - Regional spread remains predictable and capacity checks still apply
 ---
 
-# Validation
+## Validation
 
 This solution has two distinct validation layers:
 
@@ -1121,7 +1160,46 @@ If you are using GitHub Actions, this repository includes `.github/workflows/val
 - It runs on pushes to `main`, pushes to `feature/**`, and pull requests targeting `main`.
 - It builds/lints `main.bicep`, injects values for the three placeholders, then runs `az deployment sub validate` and `what-if` using `main.parameters.demo.json`.
 
-Reference: [GitHub Actions workflow syntax](https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions)
+#### GitHub Actions Prerequisites
+
+The validation workflow uses Azure OpenID Connect (OIDC) and Azure Resource Manager deployment validation.
+
+##### Required GitHub Secrets
+
+Set these repository secrets:
+
+- AZURE_CLIENT_ID
+- AZURE_TENANT_ID
+- AZURE_SUBSCRIPTION_ID
+- SSH_PUBLIC_KEY
+
+##### Required GitHub Variables
+
+Set these repository variables:
+
+- KEYVAULT_ID
+- YOUR_PUBLIC_IP
+
+##### Azure Service Principal
+
+Create an Azure App Registration and Service Principal for GitHub Actions with at least Contributor role on the target subscription.
+
+##### Federated Credentials (OIDC)
+
+Configure Federated Credentials on the App Registration to match workflow trigger subjects:
+
+- `main`
+- `feature/**`
+
+At minimum, configure `main`. For feature branches, use branch-specific credentials.
+
+##### References
+
+- [GitHub Actions Workflow Syntax](https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions)
+- [Azure Login GitHub Action](https://github.com/Azure/login)
+- [Azure OIDC Authentication for GitHub Actions](https://learn.microsoft.com/azure/developer/github/connect-from-azure-openid-connect)
+- [Create GitHub OIDC Federated Credentials in Microsoft Entra ID](https://learn.microsoft.com/entra/workload-id/workload-identity-federation-create-trust)
+- [GitHub Actions Status](https://www.githubstatus.com)
 
 #### Trial Subscription Note
 
@@ -1156,7 +1234,7 @@ Validation results are exposed using:
 - `validationWorkloadCapacityDebug` → per-region control-plane occupancy and remaining workload slots  
 ---
 
-# Outputs
+## Outputs
 
 The deployment provides several outputs to assist with validation, debugging, and verification.
 
@@ -1215,8 +1293,6 @@ Always review validation outputs before proceeding with further configuration st
 ---
 
 ## Future Plans
-
-### Future Plans
 
 - Active Directory Domain Services automation.
 - Identity-focused deployment stages and domain join workflows.
