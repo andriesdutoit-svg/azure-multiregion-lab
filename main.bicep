@@ -53,8 +53,6 @@ param vmAutoDeleteOptions object
 param enableIdentity bool
 param domainName string
 
-param githubBranch string = 'main'
-
 // Stage flags for conditional deployment of modules
 var deployNetwork = stage == 'network' || stage == 'all'
 var deployControl = stage == 'control' || stage == 'all'
@@ -647,7 +645,6 @@ module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
   params: {
     dcVmName: '${prefix}-${primaryDc!.type}${padLeft(string(primaryDc!.index + 1), 2, '0')}'
     domainName: domainName
-    serverAdminUsername: serverAdminUsername
     serverAdminPassword: serverAdminPassword
   }
 }

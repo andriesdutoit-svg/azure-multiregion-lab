@@ -1,7 +1,6 @@
 targetScope = 'resourceGroup'
 
 param domainName string
-param serverAdminUsername string
 @secure()
 param serverAdminPassword string
 param dcVmName string
@@ -19,7 +18,7 @@ resource forestBootstrap 'Microsoft.Compute/virtualMachines/runCommands@2023-09-
 
   properties: {
     source: {
-      script: loadTextContent('./scripts/Install-Forest.ps1')
+      script: installForestScript
     }
 
     parameters: [

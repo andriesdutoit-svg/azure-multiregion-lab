@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "7778075111214124261"
+      "templateHash": "12862137590854996762"
     }
   },
   "parameters": {
@@ -100,6 +100,10 @@
     },
     "domainName": {
       "type": "string"
+    },
+    "githubBranch": {
+      "type": "string",
+      "defaultValue": "main"
     }
   },
   "variables": {
@@ -2183,7 +2187,7 @@
       ]
     },
     {
-      "condition": "[and(variables('deployIdentity'), not(equals(variables('primaryDc'), null())))]",
+      "condition": "[variables('deployIdentity')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "ad-forest",
@@ -2200,9 +2204,6 @@
           "domainName": {
             "value": "[parameters('domainName')]"
           },
-          "serverAdminUsername": {
-            "value": "[parameters('serverAdminUsername')]"
-          },
           "serverAdminPassword": {
             "value": "[parameters('serverAdminPassword')]"
           }
@@ -2214,14 +2215,11 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "5458735851242718302"
+              "templateHash": "14340927956535806592"
             }
           },
           "parameters": {
             "domainName": {
-              "type": "string"
-            },
-            "serverAdminUsername": {
               "type": "string"
             },
             "serverAdminPassword": {
@@ -2231,23 +2229,37 @@
               "type": "string"
             }
           },
+          "variables": {
+            "installForestScript": "\r\n<#\r\nThis script contains logic derived from and inspired by:\r\n\r\nSet-DummyAD\r\nhttps://github.com/BOAScripts/Set-DummyAD\r\nCopyright (c) BOAScripts\r\nLicensed under the MIT License.\r\n\r\nAdapted and integrated for this project.\r\nForest creation logic separated from AD population logic.\r\n#>\r\n\r\nparam(\r\n    [string]$DomainName,\r\n    [string]$ServerAdminPassword\r\n)\r\n\r\nWrite-Host \"DomainName = $DomainName\"\r\n\r\nif (:IsNullOrWhiteSpace($ServerAdminPassword)) {\r\n    throw \"ServerAdminPassword was not supplied\"\r\n}\r\n\r\n$DsrmPassword = ConvertTo-SecureString `\r\n    $ServerAdminPassword `\r\n    -AsPlainText `\r\n    -Force\r\n\r\nif ((Get-WindowsFeature AD-Domain-Services).Installed) {\r\n    Write-Host \"AD DS role already installed\"\r\n}\r\nelse {\r\n    Install-WindowsFeature `\r\n        AD-Domain-Services `\r\n        -IncludeManagementTools\r\n\r\n    Write-Host \"AD DS role installation complete\"\r\n}\r\n\r\nImport-Module ActiveDirectory -ErrorAction SilentlyContinue\r\n\r\nWrite-Host \"Preparing Active Directory installation for: $DomainName\"\r\n\r\ntry {\r\n    $CurrentDomain = Get-ADDomain -ErrorAction Stop\r\n\r\n    Write-Host \"Domain already exists: $($CurrentDomain.Forest)\"\r\n    exit 0\r\n}\r\ncatch {\r\n    Write-Host $_\r\n    Write-Host \"No Active Directory forest detected\"\r\n}\r\n\r\nWrite-Host \"Creating Active Directory forest: $DomainName\"\r\n\r\nInstall-ADDSForest `\r\n    -DomainName $DomainName `\r\n    -InstallDns `\r\n    -SafeModeAdministratorPassword $DsrmPassword `\r\n    -Force\r\n\r\nWrite-Host \"Active Directory forest creation initiated. The server will automatically reboot to complete the installation.\""
+          },
           "resources": [
             {
-              "type": "Microsoft.Compute/virtualMachines/extensions",
+              "type": "Microsoft.Compute/virtualMachines/runCommands",
               "apiVersion": "2023-09-01",
-              "name": "[format('{0}/{1}', parameters('dcVmName'), 'ad-forest')]",
+              "name": "[format('{0}/{1}', parameters('dcVmName'), 'install-forest')]",
+              "location": "[resourceGroup().location]",
               "properties": {
-                "publisher": "Microsoft.Compute",
-                "type": "CustomScriptExtension",
-                "typeHandlerVersion": "1.10",
-                "settings": {
-                  "commandToExecute": "powershell.exe -Command \"Write-Host Forest Placeholder\""
-                }
+                "source": {
+                  "script": "[variables('installForestScript')]"
+                },
+                "parameters": [
+                  {
+                    "name": "DomainName",
+                    "value": "[parameters('domainName')]"
+                  },
+                  {
+                    "name": "ServerAdminPassword",
+                    "value": "[parameters('serverAdminPassword')]"
+                  }
+                ]
               }
             }
           ]
         }
-      }
+      },
+      "dependsOn": [
+        "windowsVMs"
+      ]
     },
     {
       "copy": {
