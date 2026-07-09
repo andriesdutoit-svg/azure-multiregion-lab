@@ -89,7 +89,7 @@
     },
 
     "enableIdentity": {
-      "value": true
+      "value": false
     },
 
     "domainName": {
