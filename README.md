@@ -1121,7 +1121,7 @@ If you are using GitHub Actions, this repository includes `.github/workflows/val
 - It runs on pushes to `main`, pushes to `feature/**`, and pull requests targeting `main`.
 - It builds/lints `main.bicep`, injects values for the three placeholders, then runs `az deployment sub validate` and `what-if` using `main.parameters.demo.json`.
 
-## Trial Subscription Note
+#### Trial Subscription Note
 
 Some VM sizes used by the reference architecture may not be available in Azure Trial or Student subscriptions. The GitHub Actions What-If stage may report SKU availability errors depending on subscription type and regional capacity.
 
