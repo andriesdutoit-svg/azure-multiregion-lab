@@ -1,9 +1,9 @@
 targetScope = 'resourceGroup'
 
+param dcVmName string
 param domainName string
 @secure()
 param serverAdminPassword string
-param dcVmName string
 
 var installForestScript = loadTextContent('./scripts/Install-Forest.ps1')
 

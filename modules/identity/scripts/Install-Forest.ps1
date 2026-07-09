@@ -16,9 +16,10 @@ param(
     [string]$ServerAdminPassword
 )
 
+# Logs are surfaced by VM Run Command output.
 Write-Host "DomainName = $DomainName"
 
-if (:IsNullOrWhiteSpace($ServerAdminPassword)) {
+if ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {
     throw "ServerAdminPassword was not supplied"
 }
 
@@ -42,6 +43,7 @@ Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 
 Write-Host "Preparing Active Directory installation for: $DomainName"
 
+# Idempotency guard: if a domain already exists, exit without making changes.
 try {
     $CurrentDomain = Get-ADDomain -ErrorAction Stop
 
@@ -61,4 +63,5 @@ Install-ADDSForest `
     -SafeModeAdministratorPassword $DsrmPassword `
     -Force
 
+# AD DS promotion triggers a reboot; the Run Command operation can appear interrupted while the VM restarts.
 Write-Host "Active Directory forest creation initiated. The server will automatically reboot to complete the installation."

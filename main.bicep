@@ -56,6 +56,8 @@ param domainName string
 // Stage flags for conditional deployment of modules
 var deployNetwork = stage == 'network' || stage == 'all'
 var deployControl = stage == 'control' || stage == 'all'
+// Identity bootstrap is currently not an independent first-run stage.
+// It assumes control-plane Windows DC resources are already present (or stage=all is used).
 var deployIdentity = enableIdentity && (stage == 'identity' || stage == 'all')
 var deployWorkload = stage == 'workload' || stage == 'all'
 
@@ -635,10 +637,16 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
   }
 ]
 
+// ========================================
+// DEPLOYMENT STAGE 7: IDENTITY BOOTSTRAP (PRIMARY DC)
+// ========================================
+
 module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
   name: 'ad-forest'
   scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
 
+  // The bootstrap command must run after the target Windows DC VM exists.
+  // In staged workflows, run control before identity.
   dependsOn: [
     windowsVMs
   ]
@@ -650,7 +658,7 @@ module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
 }
 
 // ========================================
-// DEPLOYMENT STAGE 7: LINUX VMS
+// DEPLOYMENT STAGE 8: LINUX VMS
 // ========================================
 
 // Same ordering guarantee as Windows VMs: network pathing is established first.
