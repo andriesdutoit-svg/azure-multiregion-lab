@@ -12,11 +12,13 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 - Controlled workload distribution across multiple regions  
 - Validation-first deployment to prevent configuration errors
 
+For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-setup).
+
 ---
 
 ## Table of Contents
 
-<details open>
+<details>
 <summary><strong>Overview</strong></summary>
 
 - [Overview](#overview)
@@ -139,8 +141,6 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 
 </details>
 
-
-[Back to top](#table-of-contents)
 ---
 
 ## Quick Start (Demo Setup)
