@@ -289,9 +289,9 @@ var primaryDc = first(filter(vmPlacements, vm =>
   vm.type == 'dc' && vm.index == 0
 ))
 
-var replicaDcList = filter(vmPlacements, vm =>
-  vm.type == 'dc' && vm.index > 0
-)
+// var replicaDcList = filter(vmPlacements, vm =>
+//   vm.type == 'dc' && vm.index > 0
+// )
 
 // ========================================
 // VM GROUPING + SUPPORT VARIABLES
