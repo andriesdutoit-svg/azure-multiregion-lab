@@ -116,6 +116,7 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 
 - [Validation](#validation)
   - [CI Workflow Validation (`validate.yml`)](#ci-workflow-validation-validateyml)
+  - [Release Workflow (`release.yml`)](#release-workflow-releaseyml)
   - [Bicep Template Validation Rules](#bicep-template-validation-rules)
   - [Bicep Template Validation Outputs](#bicep-template-validation-outputs)
 
@@ -162,6 +163,7 @@ The demo parameter template contains these three placeholders:
   - `jumpboxAdminPassword`
   - `serverAdminPassword`
   - `clientAdminPassword`
+   See [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required) for required configuration.
 4. Deploy locally:
 
 ```bash
@@ -276,6 +278,9 @@ All VNets share the same DNS list derived from DC placement.
 
 - Benefit: Simple and consistent.  
 - Limitation: Not latency-optimised per region.  
+
+[Back to top](#table-of-contents)
+---
 
 ## Architecture Overview
 
@@ -500,15 +505,14 @@ The project is structured to separate concerns and promote modular reuse.
 - Azure Key Vault (must exist before deployment)  
 - Stores admin credentials securely  
 - Referenced directly from the parameter file
+
+[Back to top](#table-of-contents)
 ---
 
 ## Start Guide (Detailed)
 
 Use this section when you want full control over the deployment configuration.
 If you only need a working demo, use [Quick Start (Demo Setup)](#quick-start-demo-setup).
-
-
-[Back to top](#table-of-contents)
 ---
 
 ### Step 1: Understand the Core Concept
@@ -755,6 +759,8 @@ The VNet module (`vnet.bicep`) is the authoritative source of truth for:
 
 Other modules consume these outputs instead of reconstructing names or resource IDs. This prevents naming drift and ensures consistency across the deployment.
 
+For implementation details, see [Networking](#networking) and [Supporting Logic in main.bicep](#supporting-logic-in-mainbicep).
+
 [Back to top](#table-of-contents)
 ---
 
@@ -998,6 +1004,8 @@ Expected result:
 
 Reference: [Use Azure Key Vault to pass secure parameter values during deployment](https://aka.ms/arm-keyvault)
 
+Related: [CI Workflow Validation (`validate.yml`)](#ci-workflow-validation-validateyml)
+
 [Back to top](#table-of-contents)
 ---
 
@@ -1048,6 +1056,8 @@ For staged deployments:
 2. control
 3. workload
 ```
+
+For tag-based GitHub release creation, see [Release Workflow (`release.yml`)](#release-workflow-releaseyml).
 
 [Back to top](#table-of-contents)
 ---
@@ -1111,6 +1121,8 @@ In production scenarios, assertions can be enabled to prevent invalid deployment
 4. additional control-plane VMs (DCs and jumpboxes) → prefer spokes first, then may use hub after the first spoke pass
 5. workloads consume only remaining spoke capacity after control-plane placement
 
+For architecture-level context, see [Workload Distribution](#workload-distribution).
+
 Note: Bicep does not track real-time regional capacity during deployment. The template uses deterministic placement plus a derived remaining-capacity model built from planned control-plane placements, not live Azure runtime state.
 
 
@@ -1133,9 +1145,6 @@ elif vmType not in [dc, jmp] and remainingSpokeCapacity > 0:
 else:
   finalRegion = fallbackSpoke
 ```
-
-
-[Back to top](#table-of-contents)
 ---
 
 ### Why this matters
@@ -1144,6 +1153,8 @@ else:
 - Non-control workloads are always excluded from hub
 - Workloads cannot spill into a spoke that is already full from control-plane placement
 - Regional spread remains predictable and capacity checks still apply
+
+[Back to top](#table-of-contents)
 ---
 
 ## Validation
@@ -1205,6 +1216,23 @@ At minimum, configure `main`. For feature branches, use branch-specific credenti
 
 Some VM sizes used by the reference architecture may not be available in Azure Trial or Student subscriptions. The GitHub Actions What-If stage may report SKU availability errors depending on subscription type and regional capacity.
 
+### Release Workflow (`release.yml`)
+
+If you are using GitHub Releases, this repository includes `.github/workflows/release.yml`.
+
+- It runs when a tag matching `v*` is pushed (for example, `v1.13.3`).
+- It requires `contents: write` permission to create the release.
+- It uses `softprops/action-gh-release@v2` with generated release notes enabled.
+
+Typical release flow:
+
+```bash
+git tag v1.13.3
+git push origin v1.13.3
+```
+
+Reference: [softprops/action-gh-release](https://github.com/softprops/action-gh-release)
+
 ### Bicep Template Validation Rules
 
 The following checks are performed:
@@ -1232,6 +1260,8 @@ Validation results are exposed using:
 - `validationDebug` → detailed boolean values for all validation checks  
 - `validationCapacityDebug` → non-control VM demand vs remaining spoke workload capacity  
 - `validationWorkloadCapacityDebug` → per-region control-plane occupancy and remaining workload slots  
+
+[Back to top](#table-of-contents)
 ---
 
 ## Outputs
@@ -1288,18 +1318,18 @@ These outputs are designed to:
 ### Best Practice
 
 Always review validation outputs before proceeding with further configuration steps.
-
-[Back to top](#table-of-contents)
 ---
 
 ## Future Plans
 
+- Identity Foundation (v2.0.0).
 - Active Directory Domain Services automation.
-- Identity-focused deployment stages and domain join workflows.
-- Identity and domain readiness validation.
+- Identity-focused deployment stages.
+- Domain join automation.
 - Azure Bastion integration.
 - Enhanced monitoring and operational visibility.
-- Continued placement engine improvements.
+
+[Back to top](#table-of-contents)
 
 ---
 
