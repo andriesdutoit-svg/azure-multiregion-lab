@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "7453727566782596181"
+      "templateHash": "14777349886021759698"
     }
   },
   "parameters": {
@@ -262,6 +262,8 @@
     "totalDcs": "[parameters('vmCounts').dc]",
     "minRegionsNeededForDcs": "[div(sub(add(variables('totalDcs'), variables('maxDcPerRegion')), 1), variables('maxDcPerRegion'))]",
     "hasTooManyDcs": "[greater(variables('minRegionsNeededForDcs'), parameters('regionCount'))]",
+    "primaryDc": "[first(filter(variables('vmPlacements'), lambda('vm', and(equals(lambdaVariables('vm').type, 'dc'), equals(lambdaVariables('vm').index, 0)))))]",
+    "replicaDcList": "[filter(variables('vmPlacements'), lambda('vm', and(equals(lambdaVariables('vm').type, 'dc'), greater(lambdaVariables('vm').index, 0))))]",
     "finalTags": "[union(parameters('tags'), createObject('project', parameters('prefix')))]",
     "roleSizingMap": {
       "dc": {
@@ -297,7 +299,6 @@
     "controlWindowsVMs": "[filter(variables('windowsVMList'), lambda('vm', or(equals(lambdaVariables('vm').type, 'dc'), equals(lambdaVariables('vm').type, 'jmp'))))]",
     "workloadWindowsVMs": "[filter(variables('windowsVMList'), lambda('vm', or(equals(lambdaVariables('vm').type, 'srvwin'), equals(lambdaVariables('vm').type, 'cliwin'))))]",
     "activeWindowsVMs": "[concat(if(variables('deployControl'), variables('controlWindowsVMs'), createArray()), if(variables('deployWorkload'), variables('workloadWindowsVMs'), createArray()))]",
-    "primaryDc": "[first(filter(variables('vmPlacements'), lambda('vm', and(equals(lambdaVariables('vm').type, 'dc'), equals(lambdaVariables('vm').index, 0)))))]",
     "activeLinuxVMs": "[if(variables('deployWorkload'), variables('linuxVMList'), createArray())]"
   },
   "resources": [
@@ -2210,7 +2211,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "13431826709999035226"
+              "templateHash": "8294865584672208726"
             }
           },
           "parameters": {
@@ -2225,7 +2226,7 @@
             }
           },
           "variables": {
-            "installForestScript": "\r\n<#\r\nThis script contains logic derived from and inspired by:\r\n\r\nSet-DummyAD\r\nhttps://github.com/BOAScripts/Set-DummyAD\r\nCopyright (c) BOAScripts\r\nLicensed under the MIT License.\r\n\r\nAdapted and integrated for this project.\r\nForest creation logic separated from AD population logic.\r\n#>\r\n\r\nparam(\r\n    [string]$DomainName,\r\n    [string]$ServerAdminPassword\r\n)\r\n\r\n# Logs are surfaced by VM Run Command output.\r\nWrite-Host \"DomainName = $DomainName\"\r\n\r\nif ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {\r\n    throw \"ServerAdminPassword was not supplied\"\r\n}\r\n\r\n$DsrmPassword = ConvertTo-SecureString `\r\n    $ServerAdminPassword `\r\n    -AsPlainText `\r\n    -Force\r\n\r\nif ((Get-WindowsFeature AD-Domain-Services).Installed) {\r\n    Write-Host \"AD DS role already installed\"\r\n}\r\nelse {\r\n    Install-WindowsFeature `\r\n        AD-Domain-Services `\r\n        -IncludeManagementTools\r\n\r\n    Write-Host \"AD DS role installation complete\"\r\n}\r\n\r\nImport-Module ActiveDirectory -ErrorAction SilentlyContinue\r\n\r\nWrite-Host \"Preparing Active Directory installation for: $DomainName\"\r\n\r\n# Idempotency guard: if a domain already exists, exit without making changes.\r\ntry {\r\n    $CurrentDomain = Get-ADDomain -ErrorAction Stop\r\n\r\n    Write-Host \"Domain already exists: $($CurrentDomain.Forest)\"\r\n    exit 0\r\n}\r\ncatch {\r\n    Write-Host $_\r\n    Write-Host \"No Active Directory forest detected\"\r\n}\r\n\r\nWrite-Host \"Creating Active Directory forest: $DomainName\"\r\n\r\nInstall-ADDSForest `\r\n    -DomainName $DomainName `\r\n    -InstallDns `\r\n    -SafeModeAdministratorPassword $DsrmPassword `\r\n    -Force\r\n\r\n# AD DS promotion triggers a reboot; the Run Command operation can appear interrupted while the VM restarts.\r\nWrite-Host \"Active Directory forest creation initiated. The server will automatically reboot to complete the installation.\""
+            "installForestScript": "\r\n<#\r\nThis script contains logic derived from and inspired by:\r\n\r\nSet-DummyAD\r\nhttps://github.com/BOAScripts/Set-DummyAD\r\nCopyright (c) BOAScripts\r\nLicensed under the MIT License.\r\n\r\nAdapted and integrated for this project.\r\nForest creation logic separated from AD population logic.\r\n#>\r\n\r\nparam(\r\n    [string]$DomainName,\r\n    [string]$ServerAdminPassword\r\n)\r\n\r\n# Logs are surfaced by VM Run Command output.\r\nWrite-Host \"DomainName = $DomainName\"\r\n\r\nif ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {\r\n    throw \"ServerAdminPassword was not supplied\"\r\n}\r\n\r\n$DsrmPassword = ConvertTo-SecureString `\r\n    $ServerAdminPassword `\r\n    -AsPlainText `\r\n    -Force\r\n\r\nif ((Get-WindowsFeature AD-Domain-Services).Installed) {\r\n    Write-Host \"AD DS role already installed\"\r\n}\r\nelse {\r\n    Install-WindowsFeature `\r\n        AD-Domain-Services `\r\n        -IncludeManagementTools\r\n\r\n    Write-Host \"AD DS role installation complete\"\r\n}\r\n\r\nImport-Module ActiveDirectory -ErrorAction SilentlyContinue\r\n\r\nWrite-Host \"Preparing Active Directory installation for: $DomainName\"\r\n\r\n# Idempotency guard: if a domain already exists, exit without making changes.\r\ntry {\r\n    $CurrentDomain = Get-ADDomain -ErrorAction Stop\r\n\r\n    Write-Host \"Domain already exists: $($CurrentDomain.Forest)\"\r\n    exit 0\r\n}\r\ncatch {\r\n    Write-Host $_\r\n    Write-Host \"No Active Directory forest detected\"\r\n}\r\n\r\nWrite-Host \"Creating Active Directory forest: $DomainName\"\r\n\r\nInstall-ADDSForest `\r\n    -DomainName $DomainName `\r\n    -InstallDns `\r\n    -SafeModeAdministratorPassword $DsrmPassword `\r\n    -Force\r\n\r\n# AD DS promotion triggers a reboot; the Run Command operation can appear interrupted while the VM restarts.\r\nWrite-Host \"Active Directory forest creation initiated. The server will automatically reboot to complete the installation.\"\r\n"
           },
           "resources": [
             {

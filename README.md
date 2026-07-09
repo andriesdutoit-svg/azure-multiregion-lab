@@ -1202,7 +1202,7 @@ Configure Federated Credentials on the App Registration to match workflow trigge
 - `main`
 - `feature/**`
 
-At minimum, configure `main`. For feature branches, use branch-specific credentials.
+At minimum, configure `main`. For feature branches, use branch-specific credentials. Validation will fail if credentials are not created when moving to a new branch.
 
 ##### References
 

@@ -88,6 +88,14 @@
       "value": true
     },
 
+    "enableIdentity": {
+      "value": true
+    },
+
+    "domainName": {
+      "value": "amrl.lab"
+    },
+
     "windowsServerImage": {
       "value": {
         "publisher": "MicrosoftWindowsServer",
