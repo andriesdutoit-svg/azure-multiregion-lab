@@ -1,8 +1,8 @@
-# Azure Multi-Region Lab (AMRL) v1.13.2
+# Azure Multi-Region Lab (AMRL) v2.0.0
 
 ## Overview
 
-This project implements a multi-region Azure lab environment using Bicep. It demonstrates a structured evolution from basic infrastructure deployment into a secure, modular, capacity-aware, and production-aligned platform.
+This project implements a multi-region Azure lab environment using Bicep. It demonstrates a structured evolution from basic infrastructure deployment into a secure, modular, capacity-aware, and production-aligned platform, now including a staged identity foundation for Active Directory (AD).
 
 The lab is designed to showcase real-world Infrastructure as Code practices, including:
 
@@ -10,7 +10,9 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 - Modular architecture using reusable components  
 - Secure-by-default design principles  
 - Controlled workload distribution across multiple regions  
-- Validation-first deployment to prevent configuration errors
+- Validation-first deployment to detect configuration errors early
+
+Optional identity staging bootstraps AD and promotes replica Domain Controllers (DCs).
 
 For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-setup).
 
@@ -46,13 +48,15 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
 - [Architecture Overview](#architecture-overview)
   - [Regional Architecture](#regional-architecture)
   - [Network Architecture](#network-architecture)
-  - [Network Architecture Diagram](#network-architecture-diagram)
-  - [Traffic Flow](#traffic-flow)
-  - [IP Addressing Strategy](#ip-addressing-strategy)
-  - [DNS Configuration](#dns-configuration)
-  - [Design Approach](#design-approach)
-  - [Behaviour](#behaviour)
-  - [Active Directory Integration](#active-directory-integration)
+    - [Network Architecture Diagram](#network-architecture-diagram)
+    - [Traffic Flow](#traffic-flow)
+    - [IP Addressing Strategy](#ip-addressing-strategy)
+    - [DNS Configuration](#dns-configuration)
+    - [DNS Design Approach](#dns-design-approach)
+    - [DNS Behaviour](#dns-behaviour)
+  - [Identity Architecture](#identity-architecture)
+    - [AD Integration](#ad-integration)
+    - [Identity Automation Design](#identity-automation-design)
   - [Security Model](#security-model)
   - [Workload Distribution](#workload-distribution)
 
@@ -66,6 +70,7 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
   - [Modules](#modules)
     - [Networking](#networking)
     - [Compute](#compute)
+    - [Identity](#identity)
     - [Peering](#peering)
     - [Logic](#logic)
   - [Supporting Logic in main.bicep](#supporting-logic-in-mainbicep)
@@ -95,6 +100,7 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
   - [Step 6: Role-Based VM Sizing and Storage](#step-6-role-based-vm-sizing-and-storage)
   - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
   - [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required)
+  - [Step 8a: Identity Foundation Stage (Optional)](#step-8a-identity-foundation-stage-optional)
   - [Step 9: Deploy](#step-9-deploy)
     - [Full Deployment (Default)](#full-deployment-default)
     - [Stages](#stages)
@@ -135,6 +141,13 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
 </details>
 
 <details>
+<summary><strong>Licensing</strong></summary>
+
+- [Third-Party Components](#third-party-components)
+
+</details>
+
+<details>
 <summary><strong>Future Plans</strong></summary>
 
 - [Future Plans](#future-plans)
@@ -157,9 +170,9 @@ The demo parameter template contains these three placeholders:
 
 ### Quick Demo Steps
 
-1. Copy `main.parameters.demo.json` to `main.parameters.test.json` (gitignored).
-2. Replace the three placeholders listed above in `main.parameters.test.json`.
-3. Create a Key Vault (if you do not already have one) and add these secrets:
+1. Copy `main.parameters.demo.json` to a local parameters file.
+2. Replace the three placeholders listed above in your local parameters file.
+3. Create an Azure Key Vault (Key Vault) (if you do not already have one) and add these secrets:
   - `jumpboxAdminPassword`
   - `serverAdminPassword`
   - `clientAdminPassword`
@@ -171,17 +184,25 @@ az deployment sub create \
   --name demo-deployment \
   --location westeurope \
   --template-file main.bicep \
-  --parameters main.parameters.test.json
+  --parameters <your-local-parameters-file>.json
 ```
 
 For full parameter-by-parameter guidance, continue with [Start Guide (Detailed)](#start-guide-detailed).
+
+Identity note: `main.parameters.demo.json` keeps `enableIdentity` disabled by default for fast baseline demos.
+
+Identity notes:
+
+- `stage=identity` is not a standalone first-run path; control-plane DC VMs must already exist (or use `stage=all`).
+- Current identity scope is forest bootstrap and replica promotion.
+- Domain join, OU/group/user population, and related hardening remain future work.
 
 ### Project Evolution
 
 The solution was developed iteratively, with each phase introducing additional architectural capability:
 
 - **v1.0 — IaC Baseline**  
-  Introduced the initial Bicep-based multi-region deployment baseline with static VNet peering and CLI-driven execution.
+  Introduced the initial Bicep-based multi-region deployment baseline with static Azure Virtual Network (VNet) peering and CLI-driven execution.
 
 - **v1.5 — Automation and Validation**  
   Standardised and automated subscription-scope deployments with repeatable validation and cross-region connectivity testing.
@@ -190,16 +211,16 @@ The solution was developed iteratively, with each phase introducing additional a
   Multi-region networking, subnet segmentation, and DNS structure.
 
 - **v1.7 — Security and Modularity**  
-  Network Security Groups, role-based segmentation, and VNet peering.
+  Network Security Groups (NSGs), role-based segmentation, and VNet peering.
 
 - **v1.8 — Modular Architecture**  
-  Separation of components into reusable modules and integration with Azure Key Vault.
+  Separation of components into reusable modules and integration with Key Vault.
 
 - **v1.9 — Security Hardening and Identity**  
   Introduction of a jumpbox model, private-only workloads, hub firewall routing, and hardened authentication.
 
 - **v1.10 — Placement and Validation Engine**  
-  Deterministic VM placement, predictable network addressing, capacity-aware distribution, route-table driven traffic control, and pre-deployment validation.
+  Deterministic Virtual Machine (VM) placement, predictable network addressing, capacity-aware distribution, route-table driven traffic control, and pre-deployment validation.
 
 - **v1.11 — Hub-Spoke Networking**  
   Hub-and-spoke VNet peering combined with centralised firewall-based routing, spoke route tables, and refined network flow control across regions.
@@ -208,7 +229,10 @@ The solution was developed iteratively, with each phase introducing additional a
   Role-based compute sizing and OS disk configuration (`vmSizes`, `osDisks`) with per-role disk size support.
 
 - **v1.13.2 — GitHub Actions and CI/CD Foundation**  
-  Introduced GitHub Actions CI/CD with Azure OIDC authentication, Bicep build/lint checks, deployment validation, What-If integration, and a demo deployment profile.
+  Introduced GitHub Actions CI/CD with Azure OpenID Connect (OIDC) authentication, Bicep build/lint checks, deployment validation, What-If integration, and a demo deployment profile.
+
+- **v2.0.0 — Identity Foundation**
+  Introduced staged Active Directory (AD) deployment with `enableIdentity`, `domainName`, `stage=identity`, automated forest creation on the primary DC, automated replica DC promotion, and reusable PowerShell-based identity orchestration using Azure VM Run Command.
 
 ### Design Principles
 
@@ -238,7 +262,7 @@ The design is based on the following principles:
 ## Design Decisions & Trade-offs
 
 ### Deterministic `.4` DNS
-Use `.4` from each Domain Controller (DC) subnet for DNS.
+Use `.4` from each DC subnet for DNS.
 
 - Benefit: Predictable and valid.  
 - Limitation: Not all DC IPs are listed.  
@@ -290,26 +314,26 @@ The deployment creates a consistent infrastructure footprint across multiple Azu
 
 Each selected region contains:
 
-- A dedicated Resource Group  
-- A Virtual Network (VNet)  
+- A dedicated Resource Group (RG)  
+- A VNet  
 - Segmented subnets:
   - DC (dc)
   - Server
   - Client
   - Jumpbox  
-- Network Security Groups (NSGs) applied per subnet  
-- Virtual Machines based on configured roles  
+- NSGs applied per subnet  
+- VMs based on configured roles  
 
 ### Network Architecture
 
-- Spoke server and client subnets use user-defined routes (UDRs) to direct traffic through the hub firewall
+- Spoke server and client subnets use User-Defined Routes (UDRs) to direct traffic through the hub firewall
 - Hub firewall provides centralised east-west traffic inspection and acts as the control point for inter-region communication
 - Controlled administrative access via regional jumpboxes (only tier with public exposure)
-- Subnet-level traffic segmentation enforced using Network Security Groups (NSGs)
+- Subnet-level traffic segmentation enforced using NSGs
 
 This design enforces centralised security by preventing direct spoke-to-spoke communication and routing all inter-network traffic through the hub firewall.
 
-### Network Architecture Diagram
+#### Network Architecture Diagram
 
 ```mermaid
 flowchart TB
@@ -352,7 +376,7 @@ flowchart TB
 
 Traffic path: Spoke VM -> UDR -> Hub Firewall -> Destination Spoke VM (no direct spoke-to-spoke path).
 
-### Traffic Flow
+#### Traffic Flow
 
 Spoke workloads do not talk directly to each other by default. Instead:
 
@@ -361,9 +385,9 @@ Spoke workloads do not talk directly to each other by default. Instead:
 - Jumpboxes remain the entry point for administration
 - NSGs still enforce subnet-level access rules
 
-### IP Addressing Strategy
+#### IP Addressing Strategy
 
-All virtual machines use **Dynamic private IP allocation**.
+All VMs use **Dynamic private IP allocation**.
 
 DCs are deployed into dedicated **DC subnets per region**. Azure assigns IP addresses deterministically within each subnet:
 
@@ -374,9 +398,9 @@ Because DCs are deployed first into their subnets, each region’s primary DC co
 
 This removes the need for complex static IP calculations while maintaining predictable addressing.
 
-### DNS Configuration
+#### DNS Configuration
 
-Each Virtual Network is configured with up to three DNS servers, using deterministic `.4` addresses from DC subnets.
+Each VNet is configured with up to three DNS servers, using deterministic `.4` addresses from DC subnets.
 
 The DNS server list is derived dynamically from DC placements and ordered as follows:
 
@@ -386,7 +410,7 @@ The DNS server list is derived dynamically from DC placements and ordered as fol
 
 This same ordered DNS server list is applied consistently across all VNets.
 
-### Design Approach
+#### DNS Design Approach
 
 DNS configuration is based on deterministic infrastructure behaviour rather than dynamic discovery:
 
@@ -395,25 +419,73 @@ DNS configuration is based on deterministic infrastructure behaviour rather than
 - The first deployed VM in each subnet always receives `.4`
 - DCs are deployed first, ensuring correct assignment
 
-### Behaviour
+#### DNS Behaviour
 
 - DNS order is hub-first, then remaining DC regions
 - Each VNet may have between one and three DNS entries depending on DC placement and region count
 - DNS redundancy is maintained by including multiple regional DCs when available
 
-### Active Directory Integration
+### Identity Architecture
+
+When `enableIdentity=true`, the solution deploys a multi-DC AD environment.
+
+Identity deployment currently supports:
+
+- Greenfield deployments
+- Brownfield identity activation
+- Multi-region AD DC replication
+- Idempotent identity deployments
+
+Identity deployment behaviour:
+
+- `dc01` creates the AD forest and DNS infrastructure.
+- Additional DCs are promoted as replica DCs.
+- Identity deployments are idempotent and can be safely re-executed.
+- Identity deployment is automatically included in `stage=all` when `enableIdentity=true`.
+
+#### Identity Deployment Flow
+
+Use this flow to understand how `enableIdentity` and `stage` determine forest bootstrap and replica promotion.
+
+```mermaid
+flowchart LR
+  A[enableIdentity=true] --> B{stage value}
+  B -->|identity| C[Run identity modules only]
+  B -->|all| D[Run full deployment with identity]
+  C --> E[dc01 forest bootstrap]
+  D --> E
+  E --> F[Promote replica DCs]
+  F --> G[AD-ready environment]
+  G --> H[Safe re-run keeps state idempotent]
+```
+
+#### AD Integration
 
 After AD DS installation:
 
 - DCs automatically register themselves in DNS
 - Clients can discover all DCs using AD-integrated DNS
 
+#### Identity Automation Design
+
+Identity automation uses Azure VM Run Command resources rather than Custom Script Extensions.
+
+Benefits:
+
+- No Azure Storage Account dependency
+- No SAS token management
+- No runtime dependency on GitHub access
+- Compatible with isolated or restricted networking environments
+- Scripts remain version-controlled within the repository
+
+PowerShell scripts are embedded into Azure VM Run Command resources at deployment time using Bicep `loadTextContent()`.
+
 ### Security Model
 
 - Public access is restricted to jumpboxes only  
 - All other VMs are private  
 - Role-based NSG rules control traffic flow  
-- Credentials are securely stored in Azure Key Vault  
+- Credentials are securely stored in Key Vault  
 
 ### Workload Distribution
 
@@ -440,9 +512,6 @@ The project is structured to separate concerns and promote modular reuse.
 - **main.parameters.example.json**  
   Full reference file with placeholders for all tunable values.
 
-- **main.parameters.test.json**  
-  Local development/testing file (gitignored). Create this by copying `main.parameters.demo.json` and replacing the three placeholders with your own values.
-
 ### Modules
 
 #### Networking
@@ -454,23 +523,39 @@ The project is structured to separate concerns and promote modular reuse.
   Defines individual subnet resources.
 
 - **modules/networking/nsg.bicep**  
-  Deploys Network Security Groups with role-based rules.
+  Deploys NSGs with role-based rules.
 
 - **modules/networking/firewall.bicep**  
   Deploys the hub firewall and policy-based rule collections.
 
 - **modules/networking/routeTable.bicep**  
-  Attaches user-defined routes to spoke subnets so traffic reaches the hub firewall.
+  Attaches UDRs to spoke subnets so traffic reaches the hub firewall.
 
 ---
 
 #### Compute
 
 - **modules/compute/vm-windows.bicep**  
-  Deploys Windows virtual machines, including DCs, servers, clients, and jumpboxes.
+  Deploys Windows VMs, including DCs, servers, clients, and jumpboxes.
 
 - **modules/compute/vm-linux.bicep**  
-  Deploys Linux virtual machines with SSH-based authentication.
+  Deploys Linux VMs with SSH-based authentication.
+
+---
+
+#### Identity
+
+- **modules/identity/ad-forest.bicep**
+  Deploys forest bootstrap automation to the primary DC.
+
+- **modules/identity/ad-replicadc.bicep**
+  Deploys replica promotion automation to all additional DCs.
+
+- **modules/identity/scripts/Install-Forest.ps1**
+  Creates the AD forest and DNS infrastructure.
+
+- **modules/identity/scripts/Promote-ReplicaDC.ps1**
+  Promotes additional DCs into the existing forest.
 
 ---
 
@@ -500,9 +585,12 @@ The project is structured to separate concerns and promote modular reuse.
 - **Validation Engine**  
   Invokes `modules/logic/validation.bicep` and surfaces validation outputs at the top level
 
+- **Identity Foundation**  
+  Enables identity bootstrap using `enableIdentity` and `domainName`, deploys forest creation to the primary DC, and orchestrates replica promotion modules.
+
 ### Foundation Layer (External)
 
-- Azure Key Vault (must exist before deployment)  
+- Key Vault (must exist before deployment)  
 - Stores admin credentials securely  
 - Referenced directly from the parameter file
 
@@ -517,14 +605,14 @@ If you only need a working demo, use [Quick Start (Demo Setup)](#quick-start-dem
 
 ### Step 1: Understand the Core Concept
 
-This deployment spreads virtual machines across multiple Azure regions while ensuring:
+This deployment spreads VMs across multiple Azure regions while ensuring:
 
 - No region gets too many VMs
 - Distribution is balanced
 - Certain roles (like DCs) are placed intentionally
 
 You control this behaviour with values in a parameter file.
-Start by copying `main.parameters.demo.json` to `main.parameters.test.json`, then edit `main.parameters.test.json` with your own values.
+Start by copying `main.parameters.demo.json` to a local parameters file, then edit that local file with your own values.
 
 
 [Back to top](#table-of-contents)
@@ -538,15 +626,15 @@ Start by copying `main.parameters.demo.json` to `main.parameters.test.json`, the
 "maxVmsPerRegion": { "value": 2 }
 ```
 
-### 🔹 prefix
+#### prefix
 - Used to name all resources (e.g. `yourprefix-rg-<azure-region>`)
 - Change this to something meaningful for your lab or project
 
-### 🔹 regionCount
+#### regionCount
 - How many regions will be used
 - MUST be less than or equal to the number of regions in `regionIndexMap`
 
-### 🔹 maxVmsPerRegion
+#### maxVmsPerRegion
 - The **maximum number of VMs allowed in each region**
 - Manual pre-check guidance: Use this to help plan around Azure CPU quotas. The template enforces VM count limits, not vCPU quota checks.
 
@@ -576,16 +664,16 @@ For example:
 }
 ```
 
-### What this does
+#### Step 3: What this does
 
 - Defines WHICH regions are available
 - Defines the ORDER of regions
 
-### Why order matters
+#### Step 3: Why order matters
 
 The placement engine uses this order to distribute VMs.
 
-### Rules
+#### Step 3: Rules
 
 - Must start at `1`
 - Must increase by `1` each time
@@ -608,7 +696,7 @@ The placement engine uses this order to distribute VMs.
 }
 ```
 
-### What this does
+#### Step 4a: What this does
 
 Defines how subnets are created and ordered within each region.
 
@@ -617,7 +705,7 @@ The numbering determines:
 - The logical order of subnets
 - The subnet index used when calculating IP address ranges
 
-### Recommendation
+#### Step 4a: Recommendation
 
 Leave these values as-is unless redesigning networking.
 
@@ -648,7 +736,7 @@ A greenfield deployment creates all networking components required by the soluti
 - NSGs
 - Azure Firewall subnet
 - Route tables
-- Virtual machines
+- VMs
 
 For new lab environments, leave `deploySubnets` set to `true`.
 
@@ -659,14 +747,15 @@ A brownfield deployment reuses existing networking resources rather than creatin
 This solution supports deployment framework-managed brownfield scenarios, including:
 
 - Redeployment of an existing environment.
-- Recovery or rebuild of virtual machines.
+- Recovery or rebuild of VMs.
 - Incremental deployment of additional workloads.
-- Separate execution of the `network`, `control`, and `workload` stages within environments created and managed by this deployment framework.
+- Separate execution of the `network`, `control`, `identity`, and `workload` stages within environments created and managed by this deployment framework.
 
 The existing networking resources should either:
 
 - Have been created by a previous deployment of this solution, or
 - Follow the same naming conventions, subnet structure, and resource relationships expected by the modules.
+
 
 ### Relationship Between Stages and Brownfield Deployments
 
@@ -680,9 +769,24 @@ Stages and brownfield support serve different purposes:
 Examples:
 
 - `stage=network` → Deploy networking only.
-- `stage=control` → Deploy control-plane virtual machines (DCs and jumpboxes) only.
+- `stage=control` → Deploy control-plane VMs (DCs and jumpboxes) only.
+- `stage=identity` → Deploy identity bootstrap and replica promotion modules (requires existing control-plane DC VMs).
 - `stage=workload` → Deploy workload VMs only.
 - `deploySubnets=false` → Reuse existing networking resources.
+
+#### Stage Dependency Diagram
+
+Use this as a quick reference for valid staged deployment sequences and prerequisites.
+
+```mermaid
+flowchart LR
+  N[stage=network] --> C[stage=control]
+  C --> I[stage=identity optional]
+  C --> W[stage=workload]
+  I --> W
+  A[stage=all] --> N
+  D[deploySubnets=false] -.-> N
+```
 
 These features can be used independently or together, provided the required networking resources and deployment framework assumptions are already in place.
 
@@ -707,7 +811,7 @@ Typical examples include:
 - Increasing workload VM counts
 - Adding additional DCs
 - Updating operating system images
-- Resizing virtual machines
+- Resizing VMs
 
 ### Changes Requiring Careful Planning
 
@@ -733,7 +837,7 @@ The following scenarios are not currently supported without additional customisa
 
 ### Stage Dependency Considerations
 
-Control and workload deployments rely on networking structures defined by this deployment framework. While the stages can be executed independently after networking has been established, the current implementation is not intended for deploying compute resources into arbitrary pre-existing networking environments without additional customisation.
+Control and workload deployments rely on networking structures defined by this deployment framework. Identity stage deployments additionally rely on existing control-plane DC VMs. While the stages can be executed independently after prerequisites are established, the current implementation is not intended for deploying compute resources into arbitrary pre-existing networking environments without additional customisation.
 
 ### Supported Deployment Models
 
@@ -741,12 +845,28 @@ Control and workload deployments rely on networking structures defined by this d
 |-----------|-----------|
 | Greenfield deployment | Yes |
 | Full deployment (`stage=all`) | Yes |
-| Staged deployment (`network → control → workload`) within framework-managed environments | Yes |
+| Staged deployment (`network → control → identity → workload`) within framework-managed environments | Yes |
 | Redeploy existing environment created by this framework | Yes |
 | Reuse existing networking that follows the framework structure | Yes |
 | Disaster recovery and VM rebuilds | Yes |
 | Modify VM counts, role-based sizes/disks, images, tags, and access settings | Yes |
 | Deploy into arbitrary existing networking | No |
+
+Example brownfield workflow:
+
+Day 1:
+- stage=network
+- stage=control
+- stage=workload
+
+Day 30:
+- enableIdentity=true
+- stage=identity
+
+Result:
+- Forest created
+- Replica DCs promoted
+- Existing infrastructure retained
 
 ### Design Principle
 
@@ -779,7 +899,7 @@ For implementation details, see [Networking](#networking) and [Supporting Logic 
 }
 ```
 
-### What this does
+#### Step 5: What this does
 
 Defines HOW MANY VMs of each type to create.
 
@@ -847,7 +967,7 @@ For example:
 }
 ```
 
-### What this does
+#### Step 6: What this does
 
 Defines VM size and OS disk settings per role.
 
@@ -855,18 +975,18 @@ Defines VM size and OS disk settings per role.
 - `osDisks.storageAccountType` controls the disk performance tier by role.
 - `osDisks.diskSizeGB` controls OS disk capacity by role.
 
-### Supported OS disk properties
+#### Step 6: Supported OS disk properties
 
 - `storageAccountType`
 - `diskSizeGB`
 
-### Why this matters
+#### Step 6: Why this matters
 
 This enables right-sizing by role instead of forcing all VMs to use one shared compute profile.
 
 Manual pre-check: Azure regional vCPU quota still applies. Plan role choices according to subscription quota and target region limits.
 
-### VM Lifecycle Behaviour
+#### Step 6: VM lifecycle behaviour
 
 The `vmAutoDeleteOptions` parameter controls whether dependent resources are automatically deleted when a VM is deleted.
 
@@ -899,17 +1019,17 @@ With the default values above:
 }
 ```
 
-### What this does
+#### Step 7: What this does
 
-Defines the list of public IP addresses or ranges that are allowed to access the jumpboxes via RDP. These values are used to configure inbound Network Security Group (NSG) rules, restricting administrative access to only the specified sources.
+Defines the list of public IP addresses or ranges that are allowed to access the jumpboxes via RDP. These values are used to configure inbound NSG rules, restricting administrative access to only the specified sources.
 
-In `main.parameters.demo.json`, this value is a placeholder. Replace it in `main.parameters.test.json` with your own public IP address.
+In `main.parameters.demo.json`, this value is a placeholder. Replace it in your local parameters file with your own public IP address.
 
-### Important
+#### Jumpbox access notes
 
 - Replace this example value with your own public IP address
 - If not configured correctly, you will not be able to access the jumpboxes
-- Jumpboxes are the only entry point to access the rest of the virtual machines in the environment
+- Jumpboxes are the only entry point to access the rest of the VMs in the environment
 
 [Back to top](#table-of-contents)
 ---
@@ -918,19 +1038,19 @@ In `main.parameters.demo.json`, this value is a placeholder. Replace it in `main
 
 ### Why Key Vault is needed
 
-Passwords are NOT stored in the template. They are securely stored in Azure Key Vault.
+Passwords are NOT stored in the template. They are securely stored in Key Vault.
 
-### Create Foundation Resource Group
+### Create Foundation RG
 
 ```bash
 az group create --name <foundation-rg> --location <azure-region>
 ```
 
-Ensure that the name of this resource group does not start with the prefix selected earlier, as it will also be deleted if a bulk resource group deletion command is used to clean up the lab.
+Ensure that the name of this RG does not start with the prefix selected earlier, as it will also be deleted if a bulk RG deletion command is used to clean up the lab.
 
 ### Create Key Vault
 
-Ensure that the correct Azure RBAC role is assigned to create the key vault and secrets. For example: [Key Vault Secrets Officer](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/security#key-vault-secrets-officer)
+Ensure that the correct Azure Role-Based Access Control (RBAC) role is assigned to create the key vault and secrets. For example: [Key Vault Secrets Officer](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/security#key-vault-secrets-officer)
 
 ```bash
 az keyvault create \
@@ -1009,20 +1129,44 @@ Related: [CI Workflow Validation (`validate.yml`)](#ci-workflow-validation-valid
 [Back to top](#table-of-contents)
 ---
 
+### Step 8a: Identity Foundation Stage (Optional)
+
+Use this stage when you want to bootstrap AD forest creation and replica promotion.
+
+Required parameters:
+
+```json
+"enableIdentity": { "value": true },
+"domainName": { "value": "amrl.lab" }
+```
+
+Important behaviour:
+
+- `enableIdentity=true` enables identity modules.
+- `stage=identity` runs identity modules only.
+- Identity resources deploy after control-plane DC VMs exist.
+- Forest creation runs only on the primary DC.
+- Replica promotion runs only on additional DCs.
+- Identity deployments are idempotent and can be safely re-executed.
+- `stage=all` automatically executes identity deployment when `enableIdentity=true`.
+
+[Back to top](#table-of-contents)
+---
+
 ### Step 9: Deploy
 
 The solution supports both full and staged deployments through the `stage` parameter.
 
 ### Full Deployment (Default)
 
-Deploy all networking and compute resources:
+Deploy all networking and compute resources (and identity resources when `enableIdentity=true`):
 
 ```bash
 az deployment sub create \
   --name <deployment-name> \
   --location <azure-region> \
   --template-file main.bicep \
-  --parameters main.parameters.test.json
+  --parameters <your-local-parameters-file>.json
 ```
 
 The default value for `stage` is `all`, so no additional stage parameter is required.
@@ -1035,13 +1179,19 @@ Deploy only networking resources:
 --parameters stage=network
 ```
 
-Deploy only control-plane virtual machines (DCs and jumpboxes):
+Deploy only control-plane VMs (DCs and jumpboxes):
 
 ```bash
 --parameters stage=control
 ```
 
-Deploy only workload virtual machines:
+Deploy identity bootstrap and replica promotion:
+
+```bash
+--parameters stage=identity --parameters enableIdentity=true
+```
+
+Deploy only workload VMs:
 
 ```bash
 --parameters stage=workload
@@ -1054,8 +1204,11 @@ For staged deployments:
 ```text
 1. network
 2. control
-3. workload
+3. identity (optional, requires `enableIdentity=true`)
+4. workload
 ```
+
+For complete deployments (`stage=all`), this order is handled automatically by the solution.
 
 For tag-based GitHub release creation, see [Release Workflow (`release.yml`)](#release-workflow-releaseyml).
 
@@ -1105,7 +1258,7 @@ After deployment (or during development validation), review the outputs to confi
 6. Review `vmPlacement` and `vmCountPerRegion` to validate distribution logic  
 7. Verify core configuration inputs if results are unexpected: VM sizes vs regional quota, `regionCount` vs available regions, and `vmCounts` vs total capacity.  
 
-### Note
+### Validation Mode Note
 
 During development, validation errors are exposed via outputs instead of blocking deployment.  
 In production scenarios, assertions can be enabled to prevent invalid deployments.
@@ -1131,19 +1284,19 @@ Note: Bicep does not track real-time regional capacity during deployment. The te
 
 ### Placement Decision Flow
 
-Current placement behaviour:
+Use this decision tree to map VM type and index inputs to final region placement.
 
-```
-if vmType in [dc, jmp] and vmIndex == 0:
-  finalRegion = primaryRegion
-elif vmType in [dc, jmp] and vmIndex < (regionCount - 1):
-  finalRegion = nextSpokeByControlPlaneIndex
-elif vmType in [dc, jmp]:
-  finalRegion = nextRegionByControlPlaneIndex
-elif vmType not in [dc, jmp] and remainingSpokeCapacity > 0:
-  finalRegion = firstSpokeWhoseCumulativeRemainingCapacityContains(workloadIndex)
-else:
-  finalRegion = fallbackSpoke
+```mermaid
+flowchart TD
+  A[Start VM placement] --> B{vmType is dc or jmp}
+  B -->|Yes| C{vmIndex == 0}
+  C -->|Yes| D[Place in primaryRegion]
+  C -->|No| E{vmIndex < regionCount - 1}
+  E -->|Yes| F[Place in nextSpokeByControlPlaneIndex]
+  E -->|No| G[Place in nextRegionByControlPlaneIndex]
+  B -->|No| H{remainingSpokeCapacity > 0}
+  H -->|Yes| I[Place in first spoke matching workload index]
+  H -->|No| J[Place in fallbackSpoke]
 ```
 ---
 
@@ -1163,6 +1316,20 @@ This solution has two distinct validation layers:
 
 - CI workflow validation (GitHub Actions) in `validate.yml`
 - Bicep template validation logic in `modules/logic/validation.bicep` and top-level outputs
+
+### Validation Pipeline Diagram
+
+Use this diagram to see how CI checks and template validation rules converge into deployment diagnostics.
+
+```mermaid
+flowchart LR
+  A[GitHub Actions validate.yml] --> B[Bicep build and lint]
+  B --> C[az deployment sub validate]
+  C --> D[what-if]
+  E[Bicep validation module rules] --> F[validation outputs]
+  D --> F
+  F --> G[validationSummary and diagnostics]
+```
 
 ### CI Workflow Validation (`validate.yml`)
 
@@ -1332,16 +1499,24 @@ MIT
 
 Modifications:
 - Refactored for staged AMRL identity deployment
-- Integrated with Bicep VM Extensions
+- Integrated with Bicep VM Run Command
 - AD forest creation separated from AD population
+
+Files derived from or inspired by Set-DummyAD currently include:
+
+- Install-Forest.ps1
+- Promote-ReplicaDC.ps1
+
+Future identity automation may continue to incorporate adapted portions of Set-DummyAD where appropriate.
 ---
 
 ## Future Plans
 
-- Identity Foundation (v2.0.0).
-- Active Directory Domain Services automation.
-- Identity-focused deployment stages.
-- Domain join automation.
+- AD OU, group, and user population.
+- DummyAD-derived organisational structure deployment.
+- Domain join automation for Windows servers and clients.
+- Group Policy deployment and management.
+- Identity stage hardening and rollback guidance.
 - Azure Bastion integration.
 - Enhanced monitoring and operational visibility.
 

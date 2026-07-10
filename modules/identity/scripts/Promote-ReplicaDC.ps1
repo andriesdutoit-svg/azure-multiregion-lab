@@ -11,16 +11,16 @@ Adapted and integrated for this project.
 Replica DC promotion logic.
 #>
 
+# NOTE:
+# ServerAdminPassword is received as a string because Azure VM Run Command
+# passes parameter values as strings. The value is converted to a SecureString
+# immediately and is not logged or written to output.
+
 param(
     [string]$DomainName,
     [string]$ServerAdminUsername,
     [string]$ServerAdminPassword
 )
-
-# NOTE:
-# ServerAdminPassword is received as a string because Azure VM Run Command
-# passes parameter values as strings. The value is converted to a SecureString
-# immediately and is not logged or written to output.
 
 Write-Host "Preparing replica DC promotion for: $DomainName"
 
