@@ -13,8 +13,14 @@ Replica DC promotion logic.
 
 param(
     [string]$DomainName,
+    [string]$ServerAdminUsername,
     [string]$ServerAdminPassword
 )
+
+# NOTE:
+# ServerAdminPassword is received as a string because Azure VM Run Command
+# passes parameter values as strings. The value is converted to a SecureString
+# immediately and is not logged or written to output.
 
 Write-Host "Preparing replica DC promotion for: $DomainName"
 
@@ -26,11 +32,11 @@ $SecurePassword = ConvertTo-SecureString `
 $NetBiosName = $DomainName.Split('.')[0].ToUpper()
 
 $DomainCredential = New-Object System.Management.Automation.PSCredential(
-    "$NetBiosName\Administrator",
+    "$NetBiosName\$ServerAdminUsername",
     $SecurePassword
 )
 
-Write-Host "Domain credential prepared for $NetBiosName\Administrator"
+Write-Host "Using credential $NetBiosName\$ServerAdminUsername"
 
 Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 

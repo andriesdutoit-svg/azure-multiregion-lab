@@ -2,6 +2,7 @@ targetScope = 'resourceGroup'
 
 param domainName string
 
+param serverAdminUsername string
 @secure()
 param serverAdminPassword string
 
@@ -28,6 +29,10 @@ resource replicaBootstrap 'Microsoft.Compute/virtualMachines/runCommands@2023-09
       {
         name: 'DomainName'
         value: domainName
+      }
+      {
+        name: 'ServerAdminUsername'
+        value: serverAdminUsername
       }
       {
         name: 'ServerAdminPassword'

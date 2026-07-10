@@ -397,7 +397,7 @@ var jumpboxSubnets = [
 // ========================================
 
 module validationEngine 'modules/logic/validation.bicep' = {
-  name: 'validation-engine'
+  name: '${prefix}-validation-engine'
   params: {
     vmCounts: vmCounts
     vmSizes: vmSizes
@@ -433,7 +433,7 @@ resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
 module vnets 'modules/networking/vnet.bicep' = [
   for (region, i) in regionKeys: if (deployNetwork) {
 
-    name: 'vnet-${region}'
+    name: '${prefix}-vnet-${region}'
 
     scope: resourceGroup('${prefix}-rg-${region}')
 
@@ -466,7 +466,7 @@ module vnets 'modules/networking/vnet.bicep' = [
 
 module peerings 'modules/peering/peering.bicep' = [
   for source in regionKeys: if (deployNetwork) {
-    name: 'peerings-${source}'
+    name: '${prefix}-peerings-${source}'
     scope: resourceGroup('${prefix}-rg-${source}')
     dependsOn: vnets
     params: {
@@ -484,7 +484,7 @@ module peerings 'modules/peering/peering.bicep' = [
 // ========================================
 
 module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
-  name: 'firewall-${hubRegion}'
+  name: '${prefix}-firewall-${hubRegion}'
 
   scope: resourceGroup('${prefix}-rg-${hubRegion}')
 
@@ -512,7 +512,7 @@ module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
 module routeTables 'modules/networking/routeTable.bicep' = [
   for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
 
-    name: 'rt-${region}'
+    name: '${prefix}-rt-${region}'
     scope: resourceGroup('${prefix}-rg-${region}')
 
     dependsOn: [
@@ -574,7 +574,7 @@ var activeWindowsVMs = concat(
 
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
   for (vm, i) in activeWindowsVMs: {
-    name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
@@ -643,7 +643,7 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 // ========================================
 
 module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
-  name: 'ad-forest'
+  name: '${prefix}-ad-forest'
   scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
 
   // The bootstrap command must run after the target Windows DC VM exists.
@@ -660,7 +660,7 @@ module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
 
 module replicaDcs 'modules/identity/ad-replicadc.bicep' = [
   for dc in replicaDcList: if (deployIdentity) {
-    name: 'replica-${dc.index + 1}'
+    name: '${prefix}-replica-${dc.index + 1}'
 
     scope: resourceGroup('${prefix}-rg-${dc.regionKey}')
 
@@ -671,6 +671,7 @@ module replicaDcs 'modules/identity/ad-replicadc.bicep' = [
     params: {
       dcVmName: dc.name
       domainName: domainName
+      serverAdminUsername: serverAdminUsername
       serverAdminPassword: serverAdminPassword
     }
   }
@@ -686,7 +687,7 @@ var activeLinuxVMs = deployWorkload ? linuxVMList : []
 
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
   for vm in activeLinuxVMs: {
-    name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
