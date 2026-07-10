@@ -231,8 +231,10 @@ Set-Content `
     -Value $NamesCsvContent `
     -Force
 
-$CSVNames = [System.Collections.ArrayList](
+$CSVNames = [System.Collections.ArrayList]@(
     Get-Content $usersCsvPath |
+    ConvertFrom-Csv -Delimiter ';'
+)
 
 $domainDN = (Get-ADRootDSE).rootDomainNamingContext
 

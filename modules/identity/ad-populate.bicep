@@ -17,27 +17,19 @@ resource populateDirectory 'Microsoft.Compute/virtualMachines/runCommands@2023-0
   location: resourceGroup().location
 
   properties: {
+    
     source: {
-      script: '''
-  $csvContent = @'
-  ${namesCsvContent}
-  '@
-
-  $csvPath = 'C:\Windows\Temp\names.csv'
-
-  Set-Content `
-      -Path $csvPath `
-      -Value $csvContent `
-      -Force
-
-  ${populateAdScript}
-  '''
+      script: populateAdScript
     }
 
     parameters: [
       {
         name: 'DomainName'
         value: domainName
+      }
+      {
+        name: 'NamesCsvContent'
+        value: namesCsvContent
       }
     ]
   }
