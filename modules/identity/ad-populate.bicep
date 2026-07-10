@@ -18,23 +18,20 @@ resource populateDirectory 'Microsoft.Compute/virtualMachines/runCommands@2023-0
 
   properties: {
     source: {
-      
       script: '''
-      $csvContent = @'
-      ${namesCsvContent}
-      '@
+  $csvContent = @'
+  ${namesCsvContent}
+  '@
 
-      $csvPath = 'C:\Windows\Temp\names.csv'
+  $csvPath = 'C:\Windows\Temp\names.csv'
 
-      Set-Content `
-          -Path $csvPath `
-          -Value $csvContent `
-          -Force
+  Set-Content `
+      -Path $csvPath `
+      -Value $csvContent `
+      -Force
 
-      ${populateAdScript}
-      '''
-}
-
+  ${populateAdScript}
+  '''
     }
 
     parameters: [

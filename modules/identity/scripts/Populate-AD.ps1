@@ -13,7 +13,8 @@ Directory population logic derived from Set-DummyAD.
 #>
 
 param(
-    [string]$DomainName
+    [string]$DomainName,
+    [string]$NamesCsvContent
 )
 
 Write-Host "Starting AMRL Directory Population"
@@ -225,8 +226,13 @@ $model = @'
 
 $usersCsvPath = 'C:\Windows\Temp\names.csv'
 
-$CSVNames = Get-Content $usersCsvPath |
-    ConvertFrom-Csv -Delimiter ';'
+Set-Content `
+    -Path $usersCsvPath `
+    -Value $NamesCsvContent `
+    -Force
+
+$CSVNames = [System.Collections.ArrayList](
+    Get-Content $usersCsvPath |
 
 $domainDN = (Get-ADRootDSE).rootDomainNamingContext
 
@@ -302,8 +308,6 @@ $dlgsOU = Get-ADOrganizationalUnit `
     -LDAPFilter "(ou=DLGS)" `
     -SearchBase $groupsOU.DistinguishedName `
     -ErrorAction Stop
-
-$departments = $model.Depts.PSObject.Properties
 
 foreach ($department in $departments) {
 
@@ -479,8 +483,6 @@ $password = ConvertTo-SecureString `
     -AsPlainText `
     -Force
 
-$userIndex = 0
-
 foreach ($department in $departments) {
 
     $departmentOU = Get-ADOrganizationalUnit `
@@ -488,8 +490,12 @@ foreach ($department in $departments) {
         -SearchBase $usersOU.DistinguishedName `
         -ErrorAction Stop
 
-    $managerUser = $UserPool[$userIndex]
-    $userIndex++
+    if ($CSVNames.Count -eq 0) {
+        throw "No more names available in names.csv"
+    }
+
+    $managerUser = Get-Random -InputObject $CSVNames
+    $null = $CSVNames.Remove($managerUser)
 
     $managerSam = (
         $managerUser.FirstName +
@@ -499,7 +505,7 @@ foreach ($department in $departments) {
 
     $managerUpn = "$managerSam@$($currentDomain.DNSRoot)"
 
-    Ensure-ADUser `
+    $managerObject = Ensure-ADUser `
         -SamAccountName $managerSam `
         -Path $departmentOU.DistinguishedName `
         -DisplayName "$($managerUser.FirstName) $($managerUser.LastName)" `
@@ -520,12 +526,12 @@ foreach ($department in $departments) {
 
     for ($i = 0; $i -lt $model.UsersPerDept; $i++) {
 
-        if ($userIndex -ge $UserPool.Count) {
-            break
+        if ($CSVNames.Count -eq 0) {
+            throw "No more names available in names.csv"
         }
 
-        $userRecord = $UserPool[$userIndex]
-        $userIndex++
+        $userRecord = Get-Random -InputObject $CSVNames
+        $null = $CSVNames.Remove($userRecord)
 
         $userSam = (
             $userRecord.FirstName +
@@ -544,7 +550,7 @@ foreach ($department in $departments) {
             -UserPrincipalName $userUpn `
             -Department $department.Name `
             -Password $password `
-            -Manager $managerSam
+            -Manager $managerObject.DistinguishedName
 
     Ensure-ADPrincipalGroupMembership `
         -GroupName "GGS_$($department.Value)_ALL" `
