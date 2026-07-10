@@ -677,6 +677,22 @@ module replicaDcs 'modules/identity/ad-replicadc.bicep' = [
   }
 ]
 
+module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
+  name: '${prefix}-ad-populate'
+
+  scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
+
+  dependsOn: [
+    adForest
+    replicaDcs
+  ]
+
+  params: {
+    dcVmName: primaryDc!.name
+    domainName: domainName
+  }
+}
+
 // ========================================
 // DEPLOYMENT STAGE 8: LINUX VMS
 // ========================================
