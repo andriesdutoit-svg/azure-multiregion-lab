@@ -247,6 +247,7 @@ var vmPlacements = [
   for (vm, i) in vmList: {
     type: vm.type
     index: vm.index
+    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
     dcSlot: 0
 
     regionKey: isSingleRegion
@@ -289,9 +290,9 @@ var primaryDc = first(filter(vmPlacements, vm =>
   vm.type == 'dc' && vm.index == 0
 ))
 
-// var replicaDcList = filter(vmPlacements, vm =>
-//   vm.type == 'dc' && vm.index > 0
-// )
+var replicaDcList = filter(vmPlacements, vm =>
+  vm.type == 'dc' && vm.index > 0
+)
 
 // ========================================
 // VM GROUPING + SUPPORT VARIABLES
@@ -651,11 +652,29 @@ module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
     windowsVMs
   ]
   params: {
-    dcVmName: '${prefix}-${primaryDc!.type}${padLeft(string(primaryDc!.index + 1), 2, '0')}'
+    dcVmName: primaryDc!.name
     domainName: domainName
     serverAdminPassword: serverAdminPassword
   }
 }
+
+module replicaDcs 'modules/identity/ad-replicadc.bicep' = [
+  for dc in replicaDcList: if (deployIdentity) {
+    name: 'replica-${dc.index + 1}'
+
+    scope: resourceGroup('${prefix}-rg-${dc.regionKey}')
+
+    dependsOn: [
+      adForest
+    ]
+
+    params: {
+      dcVmName: dc.name
+      domainName: domainName
+      serverAdminPassword: serverAdminPassword
+    }
+  }
+]
 
 // ========================================
 // DEPLOYMENT STAGE 8: LINUX VMS
