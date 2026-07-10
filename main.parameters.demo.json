@@ -14,9 +14,9 @@
 
     "regionIndexMap": {
       "value": {
-        "southafricanorth": 1,
-        "australiaeast": 2,
-        "australiasoutheast": 3,
+        "southafricanorth": 25,
+        "australiaeast": 27,
+        "australiasoutheast": 26,
         "austriaeast": 4,
         "belgiumcentral": 5,
         "canadaeast": 6,
@@ -38,10 +38,9 @@
         "southeastasia": 22,
         "spaincentral": 23,
         "swedencentral": 24,
-        "uaenorth": 25,
-        "westcentralus": 26,
-        "westus2": 27,
-        "westeurope": 28
+        "uaenorth": 3,
+        "westcentralus": 1,
+        "westus2": 2
       }
     },
 
@@ -86,6 +85,14 @@
 
     "enableClientSsh": {
       "value": true
+    },
+
+    "enableIdentity": {
+      "value": false
+    },
+
+    "domainName": {
+      "value": "amrl.lab"
     },
 
     "windowsServerImage": {

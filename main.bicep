@@ -4,6 +4,7 @@ targetScope = 'subscription'
 @allowed([
   'network'
   'control'
+  'identity'
   'workload'
   'all'
 ])
@@ -49,9 +50,15 @@ param vmSizes object
 param osDisks object
 param vmAutoDeleteOptions object
 
+param enableIdentity bool
+param domainName string
+
 // Stage flags for conditional deployment of modules
 var deployNetwork = stage == 'network' || stage == 'all'
 var deployControl = stage == 'control' || stage == 'all'
+// Identity bootstrap is currently not an independent first-run stage.
+// It assumes control-plane Windows DC resources are already present (or stage=all is used).
+var deployIdentity = enableIdentity && (stage == 'identity' || stage == 'all')
 var deployWorkload = stage == 'workload' || stage == 'all'
 
 //
@@ -240,6 +247,7 @@ var vmPlacements = [
   for (vm, i) in vmList: {
     type: vm.type
     index: vm.index
+    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
     dcSlot: 0
 
     regionKey: isSingleRegion
@@ -277,6 +285,14 @@ var maxDcPerRegion = maxVmsPerRegion
 var totalDcs = vmCounts.dc
 var minRegionsNeededForDcs = (totalDcs + maxDcPerRegion - 1) / maxDcPerRegion
 var hasTooManyDcs = minRegionsNeededForDcs > regionCount
+
+var primaryDc = first(filter(vmPlacements, vm =>
+  vm.type == 'dc' && vm.index == 0
+))
+
+var replicaDcList = filter(vmPlacements, vm =>
+  vm.type == 'dc' && vm.index > 0
+)
 
 // ========================================
 // VM GROUPING + SUPPORT VARIABLES
@@ -381,7 +397,7 @@ var jumpboxSubnets = [
 // ========================================
 
 module validationEngine 'modules/logic/validation.bicep' = {
-  name: 'validation-engine'
+  name: '${prefix}-validation-engine'
   params: {
     vmCounts: vmCounts
     vmSizes: vmSizes
@@ -417,7 +433,7 @@ resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
 module vnets 'modules/networking/vnet.bicep' = [
   for (region, i) in regionKeys: if (deployNetwork) {
 
-    name: 'vnet-${region}'
+    name: '${prefix}-vnet-${region}'
 
     scope: resourceGroup('${prefix}-rg-${region}')
 
@@ -450,7 +466,7 @@ module vnets 'modules/networking/vnet.bicep' = [
 
 module peerings 'modules/peering/peering.bicep' = [
   for source in regionKeys: if (deployNetwork) {
-    name: 'peerings-${source}'
+    name: '${prefix}-peerings-${source}'
     scope: resourceGroup('${prefix}-rg-${source}')
     dependsOn: vnets
     params: {
@@ -468,7 +484,7 @@ module peerings 'modules/peering/peering.bicep' = [
 // ========================================
 
 module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
-  name: 'firewall-${hubRegion}'
+  name: '${prefix}-firewall-${hubRegion}'
 
   scope: resourceGroup('${prefix}-rg-${hubRegion}')
 
@@ -496,7 +512,7 @@ module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
 module routeTables 'modules/networking/routeTable.bicep' = [
   for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
 
-    name: 'rt-${region}'
+    name: '${prefix}-rt-${region}'
     scope: resourceGroup('${prefix}-rg-${region}')
 
     dependsOn: [
@@ -558,7 +574,7 @@ var activeWindowsVMs = concat(
 
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
   for (vm, i) in activeWindowsVMs: {
-    name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
@@ -623,7 +639,46 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 ]
 
 // ========================================
-// DEPLOYMENT STAGE 7: LINUX VMS
+// DEPLOYMENT STAGE 7: IDENTITY BOOTSTRAP (PRIMARY DC)
+// ========================================
+
+module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
+  name: '${prefix}-ad-forest'
+  scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
+
+  // The bootstrap command must run after the target Windows DC VM exists.
+  // In staged workflows, run control before identity.
+  dependsOn: [
+    windowsVMs
+  ]
+  params: {
+    dcVmName: primaryDc!.name
+    domainName: domainName
+    serverAdminPassword: serverAdminPassword
+  }
+}
+
+module replicaDcs 'modules/identity/ad-replicadc.bicep' = [
+  for dc in replicaDcList: if (deployIdentity) {
+    name: '${prefix}-replica-${dc.index + 1}'
+
+    scope: resourceGroup('${prefix}-rg-${dc.regionKey}')
+
+    dependsOn: [
+      adForest
+    ]
+
+    params: {
+      dcVmName: dc.name
+      domainName: domainName
+      serverAdminUsername: serverAdminUsername
+      serverAdminPassword: serverAdminPassword
+    }
+  }
+]
+
+// ========================================
+// DEPLOYMENT STAGE 8: LINUX VMS
 // ========================================
 
 // Same ordering guarantee as Windows VMs: network pathing is established first.
@@ -632,7 +687,7 @@ var activeLinuxVMs = deployWorkload ? linuxVMList : []
 
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
   for vm in activeLinuxVMs: {
-    name: '${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
@@ -727,4 +782,3 @@ output regionSummary array = [
     vmCount: length(filter(vmPlacements, vm => vm.regionKey == region))
   }
 ]
-
