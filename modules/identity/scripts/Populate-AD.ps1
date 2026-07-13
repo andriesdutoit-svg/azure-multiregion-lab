@@ -9,18 +9,41 @@ Licensed under the MIT License.
 
 Adapted and integrated for AMRL.
 
+AMRL Deviations:
+- Executed through Azure VM Run Command.
+- Embedded via Bicep loadTextContent().
+- names.csv delivered through Run Command parameters.
+- Idempotent object creation implemented.
+- Existing users are updated where appropriate.
+- NTFS permission handling uses RemoveAccessRuleAll().
+- Manager titles added for easier identification.
+
 Directory population logic derived from Set-DummyAD.
 #>
 
 param(
     [string]$DomainName,
-    [string]$NamesCsvContent
+    [string]$NamesCsvContent,
+    [string]$ClientAdminPassword,
+    [string]$DepartmentsJson,
+    [int]$UsersPerDepartment
 )
 
 Write-Host "Starting AMRL Directory Population"
 Write-Host "DomainName = $DomainName"
 
 Import-Module ActiveDirectory -ErrorAction Stop
+
+# ------------------------------------------------------------
+# Helper Functions
+#
+# AMRL uses Ensure-* helper functions to make directory
+# population idempotent. Re-running stage=identity should
+# repair missing objects and attributes rather than fail.
+#
+# This is an AMRL enhancement and not part of the original
+# Set-DummyAD implementation.
+# ------------------------------------------------------------
 
 function Ensure-OrganizationalUnit {
     param(
@@ -133,6 +156,18 @@ function Ensure-ADPrincipalGroupMembership {
         -Members $MemberName
 }
 
+# ------------------------------------------------------------
+# User Management
+#
+# AMRL deviation from Set-DummyAD:
+# Existing users are updated where practical to allow
+# safe re-execution of stage=identity.
+#
+# Set-DummyAD primarily creates users.
+# AMRL creates missing users and remediates selected
+# attributes on existing users.
+# ------------------------------------------------------------
+
 function Ensure-ADUser {
     param(
         [string]$SamAccountName,
@@ -142,6 +177,7 @@ function Ensure-ADUser {
         [string]$Surname,
         [string]$UserPrincipalName,
         [string]$Department,
+        [string]$Title,
         [SecureString]$Password,
         [string]$Manager
     )
@@ -150,9 +186,35 @@ function Ensure-ADUser {
         -LDAPFilter "(sAMAccountName=$SamAccountName)" `
         -ErrorAction SilentlyContinue
 
+    # Existing users are updated rather than recreated.
+    # Selected attributes such as Department, Title
+    # and Manager are reconciled during re-execution.
     if ($existingUser) {
+
         Write-Host "[=] User already exists: $SamAccountName"
-        return $existingUser
+
+        $updateParams = @{
+            Identity   = $existingUser
+            Department = $Department
+        }
+
+        if ($Title) {
+            $updateParams.Title = $Title
+        }
+
+        Set-ADUser @updateParams
+
+        if ($Manager) {
+            Set-ADUser `
+                -Identity $existingUser `
+                -Manager $Manager
+        }
+
+        return (
+            Get-ADUser `
+                -Identity $existingUser `
+                -Properties *
+        )
     }
 
     Write-Host "[+] Creating User: $SamAccountName"
@@ -173,16 +235,25 @@ function Ensure-ADUser {
         Department            = $Department
     }
 
-    if ($Manager) {
-        $params.Manager = $Manager
+    if ($Title) {
+        $params.Title = $Title
     }
 
     New-ADUser @params
 
-    return Get-ADUser `
+    $newUser = Get-ADUser `
         -LDAPFilter "(sAMAccountName=$SamAccountName)"
-}
 
+    if ($Manager) {
+        Set-ADUser `
+            -Identity $newUser `
+            -Manager $Manager
+    }
+
+    return (Get-ADUser `
+        -Identity $newUser `
+        -Properties *)
+}
 
 try {
     $currentDomain = Get-ADDomain -ErrorAction Stop
@@ -194,9 +265,17 @@ catch {
     throw
 }
 
+# ------------------------------------------------------------
+# Directory Population Model
+#
+# Derived from the Set-DummyAD model.json structure.
+#
+# AMRL currently embeds the model directly into the script.
+# Future releases may externalise configuration if needed.
+# ------------------------------------------------------------
+
 $model = @'
 {
-    "PSW":"Test1234=",
     "PreventOUDeletion":false,
     "RootOUName":"_ROOT",
     "CustomOUs":[
@@ -210,19 +289,27 @@ $model = @'
         "Users/Disabled"
     ],
     "RootShareName":"Shares",
-    "RootSharePath":"C:\\Shares",
-    "Depts": {
-        "Consultants":"CON",
-        "Finance":"FIN",
-        "HR":"HR",
-        "ICT":"ICT",
-        "Sales":"SAL",
-        "Engineering":"ENG",
-        "Operation":"OPE"
-    },
-    "UsersPerDept":10
+    "RootSharePath":"C:\\Shares"
 }
 '@ | ConvertFrom-Json
+
+# ------------------------------------------------------------
+# User Name Source
+#
+# AMRL deviation from Set-DummyAD:
+#
+# The original project reads names.csv directly from disk.
+#
+# AMRL delivers names.csv through VM Run Command parameters,
+# writes it locally, and then processes it using the original
+# Set-DummyAD workflow.
+#
+# This avoids:
+# - GitHub runtime downloads
+# - Storage Accounts
+# - SAS tokens
+# - Custom Script Extensions
+# ------------------------------------------------------------
 
 $usersCsvPath = 'C:\Windows\Temp\names.csv'
 
@@ -237,6 +324,26 @@ $CSVNames = [System.Collections.ArrayList]@(
 )
 
 $domainDN = (Get-ADRootDSE).rootDomainNamingContext
+
+$departments = (
+    $DepartmentsJson |
+    ConvertFrom-Json
+).PSObject.Properties |
+Select-Object -First $DepartmentCount
+
+# ------------------------------------------------------------
+# Phase 1
+# Active Directory OU Structure
+#
+# Creates the baseline OU hierarchy:
+#
+# _ROOT
+# ├─ Computers
+# ├─ Groups
+# └─ Users
+#
+# Derived from Set-DummyAD.
+# ------------------------------------------------------------
 
 Write-Host "[i] OU generation starting"
 
@@ -275,14 +382,23 @@ foreach ($ouName in $model.CustomOUs) {
 
 Write-Host "[i] OU generation completed"
 
+# ------------------------------------------------------------
+# Phase 2
+# Department OUs
+#
+# Creates departmental OUs beneath:
+#
+# Users
+#
+# Derived from Set-DummyAD.
+# ------------------------------------------------------------
+
 Write-Host "[i] Department OU generation starting"
 
 $usersOU = Get-ADOrganizationalUnit `
     -LDAPFilter "(ou=Users)" `
     -SearchBase $rootOUdn `
     -ErrorAction Stop
-
-$departments = $model.Depts.PSObject.Properties
 
 foreach ($department in $departments) {
 
@@ -293,6 +409,22 @@ foreach ($department in $departments) {
 }
 
 Write-Host "[i] Department OU generation completed"
+
+# ------------------------------------------------------------
+# Phase 3
+# Security Groups
+#
+# Creates:
+#
+# GGS_<Dept>_ALL
+# GGS_<Dept>_Managers
+# GGS_<Dept>_Users
+#
+# DLGS_<Dept>_Share_RW
+# DLGS_<Dept>_Share_RO
+#
+# Derived from Set-DummyAD.
+# ------------------------------------------------------------
 
 Write-Host "[i] Department security group generation starting"
 
@@ -348,6 +480,21 @@ foreach ($department in $departments) {
 
 Write-Host "[i] Department security group generation completed"
 
+# ------------------------------------------------------------
+# Phase 4
+# AGDLP Membership Nesting
+#
+# Accounts
+#   ->
+# Global Groups
+#   ->
+# Domain Local Groups
+#   ->
+# Permissions
+#
+# Derived from Set-DummyAD.
+# ------------------------------------------------------------
+
 Write-Host "[i] Department group nesting starting"
 
 foreach ($department in $departments) {
@@ -364,6 +511,20 @@ foreach ($department in $departments) {
 }
 
 Write-Host "[i] Department group nesting completed"
+
+# ------------------------------------------------------------
+# Phase 5
+# File Share Foundation
+#
+# Creates:
+#   C:\Shares
+#
+# Derived from Set-DummyAD.
+#
+# AMRL currently hosts shares on dc01.
+# Future releases may move file services to
+# dedicated file server infrastructure.
+# ------------------------------------------------------------
 
 Write-Host "[i] Root share creation starting"
 
@@ -386,6 +547,18 @@ else {
 Write-Host "[i] Root share creation completed"
 
 Write-Host "[i] Root share ACL configuration starting"
+
+# AMRL deviation from Set-DummyAD:
+#
+# Original implementation used:
+#
+#   RemoveAccessRule()
+#
+# Testing identified inconsistent behaviour during
+# permission cleanup.
+#
+# RemoveAccessRuleAll() was validated and adopted
+# as the AMRL implementation.
 
 icacls $rootSharePath /inheritance:d | Out-Null
 
@@ -478,10 +651,50 @@ foreach ($department in $departments) {
 
 Write-Host "[i] Department share generation completed"
 
+# ------------------------------------------------------------
+# Phase 6
+# User Population
+#
+# Creates:
+# - 1 Manager per Department
+# - UsersPerDept standard users per Department
+#
+# User names are sourced from names.csv.
+#
+# Derived from Set-DummyAD.
+#
+# AMRL deviations:
+# - Manager titles.
+# - Existing user remediation.
+# - Manager attribute reconciliation.
+# - Stable manager assignment across reruns.
+#
+# AMRL identity model:
+#
+# Department managers are assigned during the
+# initial population process and retained on
+# subsequent executions.
+#
+# Unlike the original Set-DummyAD behaviour,
+# managers are not re-randomised during each
+# execution.
+#
+# Re-execution is intended to:
+# - create missing objects
+# - repair selected user attributes
+# - ensure required group memberships exist
+#
+# Re-execution is not intended to:
+# - move users between OUs
+# - remove existing users
+# - remove existing groups
+# - enforce exact directory state
+# ------------------------------------------------------------
+
 Write-Host "[i] User generation starting"
 
 $password = ConvertTo-SecureString `
-    $model.PSW `
+    $ClientAdminPassword `
     -AsPlainText `
     -Force
 
@@ -492,31 +705,70 @@ foreach ($department in $departments) {
         -SearchBase $usersOU.DistinguishedName `
         -ErrorAction Stop
 
-    if ($CSVNames.Count -eq 0) {
-        throw "No more names available in names.csv"
+    $existingDepartmentManager = Get-ADGroupMember `
+        -Identity "GGS_$($department.Value)_Managers" `
+        -ErrorAction SilentlyContinue |
+        Where-Object ObjectClass -eq 'user' |
+        Select-Object -First 1
+
+    # ------------------------------------------------------------
+    # Department Manager Selection
+    #
+    # Set-DummyAD originally selected a manager randomly during
+    # each execution.
+    #
+    # AMRL deviation:
+    # If a departmental manager already exists, retain that
+    # manager and reuse the account.
+    #
+    # This improves directory stability across repeated
+    # stage=identity executions and avoids managers changing
+    # between deployments.
+    #
+    # New managers receive a Title attribute
+    # (e.g. "Finance Manager") for easier identification
+    # in ADUC and administrative reporting.
+    # ------------------------------------------------------------
+
+    if ($existingDepartmentManager) {
+
+        Write-Host "[=] Existing manager found for $($department.Name): $($existingDepartmentManager.SamAccountName)"
+
+        $managerObject = Get-ADUser `
+            -Identity $existingDepartmentManager.SamAccountName `
+            -Properties *
+
+        $managerSam = $managerObject.SamAccountName
     }
+    else {
 
-    $managerUser = Get-Random -InputObject $CSVNames
-    $null = $CSVNames.Remove($managerUser)
+        if ($CSVNames.Count -eq 0) {
+            throw "No more names available in names.csv"
+        }
 
-    $managerSam = (
-        $managerUser.FirstName +
-        "." +
-        $managerUser.LastName
-    ).ToLower()
+        $managerUser = Get-Random -InputObject $CSVNames
+        $null = $CSVNames.Remove($managerUser)
 
-    $managerUpn = "$managerSam@$($currentDomain.DNSRoot)"
+        $managerSam = (
+            $managerUser.FirstName +
+            "." +
+            $managerUser.LastName
+        ).ToLower()
 
-    $managerObject = Ensure-ADUser `
-        -SamAccountName $managerSam `
-        -Path $departmentOU.DistinguishedName `
-        -DisplayName "$($managerUser.FirstName) $($managerUser.LastName)" `
-        -GivenName $managerUser.FirstName `
-        -Surname $managerUser.LastName `
-        -UserPrincipalName $managerUpn `
-        -Department $department.Name `
-        -Password $password `
-        -Manager ""
+        $managerUpn = "$managerSam@$($currentDomain.DNSRoot)"
+
+        $managerObject = Ensure-ADUser `
+            -SamAccountName $managerSam `
+            -Path $departmentOU.DistinguishedName `
+            -DisplayName "$($managerUser.FirstName) $($managerUser.LastName)" `
+            -GivenName $managerUser.FirstName `
+            -Surname $managerUser.LastName `
+            -UserPrincipalName $managerUpn `
+            -Department $department.Name `
+            -Title "$($department.Name) Manager" `
+            -Password $password `
+            -Manager ""
+    }
 
     Ensure-ADPrincipalGroupMembership `
         -GroupName "GGS_$($department.Value)_ALL" `
@@ -526,7 +778,7 @@ foreach ($department in $departments) {
         -GroupName "GGS_$($department.Value)_Managers" `
         -MemberName $managerSam
 
-    for ($i = 0; $i -lt $model.UsersPerDept; $i++) {
+    for ($i = 0; $i -lt $UsersPerDepartment; $i++) {
 
         if ($CSVNames.Count -eq 0) {
             throw "No more names available in names.csv"
@@ -554,13 +806,13 @@ foreach ($department in $departments) {
             -Password $password `
             -Manager $managerObject.DistinguishedName
 
-    Ensure-ADPrincipalGroupMembership `
-        -GroupName "GGS_$($department.Value)_ALL" `
-        -MemberName $userSam
+        Ensure-ADPrincipalGroupMembership `
+            -GroupName "GGS_$($department.Value)_ALL" `
+            -MemberName $userSam
 
-    Ensure-ADPrincipalGroupMembership `
-        -GroupName "GGS_$($department.Value)_Users" `
-        -MemberName $userSam
+        Ensure-ADPrincipalGroupMembership `
+            -GroupName "GGS_$($department.Value)_Users" `
+            -MemberName $userSam
     }
 }
 

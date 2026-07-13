@@ -50,6 +50,10 @@ param vmSizes object
 param osDisks object
 param vmAutoDeleteOptions object
 
+param usersPerDepartment int
+param departments object
+param departmentCount int
+
 param enableIdentity bool
 param domainName string
 
@@ -690,6 +694,10 @@ module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
   params: {
     dcVmName: primaryDc!.name
     domainName: domainName
+    usersPerDepartment: usersPerDepartment
+    departments: departments
+    clientAdminPassword: clientAdminPassword
+    departmentCount: departmentCount
   }
 }
 
