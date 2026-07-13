@@ -194,8 +194,8 @@ Identity note: `main.parameters.demo.json` keeps `enableIdentity` disabled by de
 Identity notes:
 
 - `stage=identity` is not a standalone first-run path; control-plane DC VMs must already exist (or use `stage=all`).
-- Current identity scope is forest bootstrap and replica promotion.
-- Domain join, OU/group/user population, and related hardening remain future work.
+- Current identity scope includes forest bootstrap, replica promotion, and directory population for OU, group, and user seeding.
+- Domain join and related hardening remain future work.
 
 ### Project Evolution
 
@@ -510,7 +510,7 @@ The project is structured to separate concerns and promote modular reuse.
   Demo parameter template used as the base for local testing and by GitHub Actions validation (`validate.yml`).
 
 - **main.parameters.example.json**  
-  Full reference file with placeholders for all tunable values.
+  Full reference file with placeholders and defaults for all tunable values.
 
 ### Modules
 

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.44.1.10279",
+      "templateHash": "2485737706537247507"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string"
+    },
+    "nextHopIp": {
+      "type": "string"
+    },
+    "serverSubnetId": {
+      "type": "string"
+    },
+    "serverSubnetPrefix": {
+      "type": "string"
+    },
+    "serverNsgId": {
+      "type": "string"
+    },
+    "clientSubnetId": {
+      "type": "string"
+    },
+    "clientSubnetPrefix": {
+      "type": "string"
+    },
+    "clientNsgId": {
+      "type": "string"
+    }
+  },
+  "variables": {
+    "vnetId": "[substring(parameters('serverSubnetId'), 0, indexOf(parameters('serverSubnetId'), '/subnets/'))]",
+    "vnetName": "[last(split(variables('vnetId'), '/virtualNetworks/'))]",
+    "serverSubnetName": "[last(split(parameters('serverSubnetId'), '/subnets/'))]",
+    "clientSubnetName": "[last(split(parameters('clientSubnetId'), '/subnets/'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/routeTables",
+      "apiVersion": "2023-02-01",
+      "name": "[format('{0}-rt', variables('serverSubnetName'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "routes": [
+          {
+            "name": "route-all-to-hub",
+            "properties": {
+              "addressPrefix": "10.0.0.0/8",
+              "nextHopType": "VirtualAppliance",
+              "nextHopIpAddress": "[parameters('nextHopIp')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/routeTables",
+      "apiVersion": "2023-02-01",
+      "name": "[format('{0}-rt', variables('clientSubnetName'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "routes": [
+          {
+            "name": "route-all-to-hub",
+            "properties": {
+              "addressPrefix": "10.0.0.0/8",
+              "nextHopType": "VirtualAppliance",
+              "nextHopIpAddress": "[parameters('nextHopIp')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2022-07-01",
+      "name": "[format('{0}/{1}', variables('vnetName'), variables('serverSubnetName'))]",
+      "properties": {
+        "addressPrefix": "[parameters('serverSubnetPrefix')]",
+        "networkSecurityGroup": {
+          "id": "[parameters('serverNsgId')]"
+        },
+        "routeTable": {
+          "id": "[resourceId('Microsoft.Network/routeTables', format('{0}-rt', variables('serverSubnetName')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/routeTables', format('{0}-rt', variables('serverSubnetName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2022-07-01",
+      "name": "[format('{0}/{1}', variables('vnetName'), variables('clientSubnetName'))]",
+      "properties": {
+        "addressPrefix": "[parameters('clientSubnetPrefix')]",
+        "networkSecurityGroup": {
+          "id": "[parameters('clientNsgId')]"
+        },
+        "routeTable": {
+          "id": "[resourceId('Microsoft.Network/routeTables', format('{0}-rt', variables('clientSubnetName')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/routeTables', format('{0}-rt', variables('clientSubnetName')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('serverSubnetName'))]"
+      ]
+    }
+  ]
+}

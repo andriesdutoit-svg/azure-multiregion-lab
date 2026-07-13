@@ -8,7 +8,7 @@ targetScope = 'subscription'
   'workload'
   'all'
 ])
-param stage string = 'all'
+param stage string
 
 // ========================================
 // MODULE PURPOSE
@@ -120,11 +120,11 @@ var vmList = concat(
 //
 // ========================================
 // REGION ORDERING (Index-Based Sorting)
-// Converts regionIndexMap → ordered region list
+// Converts regionIndexMap to an ordered region list
 // ========================================
 //
 
-// Extract regions in order of their index value (1 → N)
+// Extract regions in order of their index value (1 to N)
 var regionPairs = [
   for r in items(regionIndexMap): {
     key: r.key

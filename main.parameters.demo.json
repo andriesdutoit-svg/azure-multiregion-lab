@@ -6,6 +6,10 @@
       "value": "AMRL"
     },
 
+    "stage": {
+      "value": "all"
+    },
+
     "tags": {
       "value": {
         "environment": "lab"
@@ -93,6 +97,49 @@
 
     "domainName": {
       "value": "amrl.lab"
+    },
+
+    "usersPerDepartment": {
+      "value": 50
+    },
+
+    "departments": {
+      "value": {
+        "Consultants": "CON",
+        "Finance": "FIN",
+        "HR": "HR",
+        "ICT": "ICT",
+        "Sales": "SAL",
+        "Engineering": "ENG",
+        "Operation": "OPE",
+        "Marketing": "MAR",
+        "Legal": "LEG",
+        "Procurement": "PRO",
+        "Research": "RES",
+        "Support": "SUP",
+        "Training": "TRA",
+        "Administration": "ADM",
+        "QualityAssurance": "QAS",
+        "Logistics": "LOG",
+        "CustomerService": "CUS",
+        "BusinessDevelopment": "BUS",
+        "PublicRelations": "PUB",
+        "Security": "SEC",
+        "Compliance": "COM",
+        "Strategy": "STR",
+        "Innovation": "INN",
+        "Sustainability": "SUS",
+        "DataAnalytics": "DAT",
+        "ProjectManagement": "PROJ",
+        "ProductManagement": "PROD",
+        "Design": "DES",
+        "ContentCreation": "CONC",
+        "EventManagement": "EVT"
+      }
+    },
+
+    "departmentCount": {
+      "value": 30
     },
 
     "windowsServerImage": {

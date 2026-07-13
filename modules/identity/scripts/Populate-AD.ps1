@@ -26,6 +26,7 @@ param(
     [string]$NamesCsvContent,
     [string]$ClientAdminPassword,
     [string]$DepartmentsJson,
+    [int]$DepartmentCount,
     [int]$UsersPerDepartment
 )
 
@@ -325,11 +326,13 @@ $CSVNames = [System.Collections.ArrayList]@(
 
 $domainDN = (Get-ADRootDSE).rootDomainNamingContext
 
-$departments = (
+$allDepartments = (
     $DepartmentsJson |
     ConvertFrom-Json
-).PSObject.Properties |
-Select-Object -First $DepartmentCount
+).PSObject.Properties
+
+$departments = $allDepartments |
+    Select-Object -First $DepartmentCount
 
 # ------------------------------------------------------------
 # Phase 1
@@ -698,6 +701,43 @@ $password = ConvertTo-SecureString `
     -AsPlainText `
     -Force
 
+$departmentInfo = @{}
+
+# ------------------------------------------------------------
+# Capacity Check
+#
+# AMRL enhancement:
+#
+# Warn if the requested number of accounts exceeds
+# the available names in names.csv.
+#
+# Population will continue and users will be
+# distributed as evenly as possible across all
+# departments.
+# ------------------------------------------------------------
+
+$requiredUsers =
+    $DepartmentCount * ($UsersPerDepartment + 1)
+
+if ($CSVNames.Count -lt $requiredUsers) {
+
+    Write-Warning (
+        "names.csv contains $($CSVNames.Count) names " +
+        "but deployment requires $requiredUsers accounts. " +
+        "Users will be distributed as evenly as possible."
+    )
+}
+
+# ------------------------------------------------------------
+# Phase 6
+# Manager Population
+#
+# Creates or reuses one manager per department.
+#
+# Managers are stored for use during the
+# round-robin user population phase.
+# ------------------------------------------------------------
+
 foreach ($department in $departments) {
 
     $departmentOU = Get-ADOrganizationalUnit `
@@ -711,28 +751,13 @@ foreach ($department in $departments) {
         Where-Object ObjectClass -eq 'user' |
         Select-Object -First 1
 
-    # ------------------------------------------------------------
-    # Department Manager Selection
-    #
-    # Set-DummyAD originally selected a manager randomly during
-    # each execution.
-    #
-    # AMRL deviation:
-    # If a departmental manager already exists, retain that
-    # manager and reuse the account.
-    #
-    # This improves directory stability across repeated
-    # stage=identity executions and avoids managers changing
-    # between deployments.
-    #
-    # New managers receive a Title attribute
-    # (e.g. "Finance Manager") for easier identification
-    # in ADUC and administrative reporting.
-    # ------------------------------------------------------------
-
     if ($existingDepartmentManager) {
 
-        Write-Host "[=] Existing manager found for $($department.Name): $($existingDepartmentManager.SamAccountName)"
+        Write-Host (
+            "[=] Existing manager found for " +
+            "$($department.Name): " +
+            "$($existingDepartmentManager.SamAccountName)"
+        )
 
         $managerObject = Get-ADUser `
             -Identity $existingDepartmentManager.SamAccountName `
@@ -778,11 +803,53 @@ foreach ($department in $departments) {
         -GroupName "GGS_$($department.Value)_Managers" `
         -MemberName $managerSam
 
-    for ($i = 0; $i -lt $UsersPerDepartment; $i++) {
+    $departmentInfo[$department.Name] = @{
+        Department    = $department
+        DepartmentOU  = $departmentOU
+        ManagerObject = $managerObject
+    }
+}
+
+# ------------------------------------------------------------
+# Phase 7
+# Round-Robin User Population
+#
+# AMRL enhancement:
+#
+# Users are distributed evenly across departments.
+#
+# Rather than filling one department completely
+# before moving to the next, each department
+# receives one user per pass.
+#
+# This provides balanced population when
+# names.csv contains fewer names than required.
+# ------------------------------------------------------------
+
+$stopPopulation = $false
+
+for ($i = 0; $i -lt $UsersPerDepartment; $i++) {
+
+    if ($stopPopulation) {
+        break
+    }
+
+    foreach ($departmentData in $departmentInfo.Values) {
 
         if ($CSVNames.Count -eq 0) {
-            throw "No more names available in names.csv"
+
+            Write-Warning (
+                "No more names available in names.csv. " +
+                "User population stopped after available names were exhausted."
+            )
+
+            $stopPopulation = $true
+            break
         }
+
+        $department = $departmentData.Department
+        $departmentOU = $departmentData.DepartmentOU
+        $managerObject = $departmentData.ManagerObject
 
         $userRecord = Get-Random -InputObject $CSVNames
         $null = $CSVNames.Remove($userRecord)
