@@ -1,28 +1,40 @@
-\# Set-DummyAD
+# Set-DummyAD Attribution
 
+AMRL directory population functionality derives concepts and logic from
+Set-DummyAD by BOAScripts.
 
-
-Source:
-
+Repository:
 https://github.com/BOAScripts/Set-DummyAD
 
-
-
-Author:
-
-BOAScripts
-
-
-
 License:
+MIT License
 
-MIT
+## Relationship to AMRL
 
+AMRL does not execute the original Set-DummyAD code.
 
+The original project inspired the following AMRL capabilities:
 
-This project uses concepts and portions of code from Set-DummyAD for automated Active Directory lab provisioning.
+- OU generation
+- Group generation
+- Department modelling
+- User population
+- AGDLP implementation
+- Share creation
 
+## AMRL Enhancements
 
+AMRL introduces significant architectural changes:
 
-Modifications and integration work are maintained separately as part of Azure Multi-Region Lab (AMRL).
+- Azure VM Run Command execution
+- Bicep integration
+- Embedded script deployment
+- names.csv delivery through deployment parameters
+- Idempotent object creation
+- Stable manager assignment
+- Parameterized departments
+- Parameterized user counts
+- Existing user remediation
+- Automated lab deployment integration
 
+See the AMRL project documentation for implementation details.

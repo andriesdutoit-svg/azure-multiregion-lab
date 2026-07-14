@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.0.0
+# Azure Multi-Region Lab (AMRL) v2.1
 
 ## Overview
 
@@ -12,7 +12,7 @@ The lab is designed to showcase real-world Infrastructure as Code practices, inc
 - Controlled workload distribution across multiple regions  
 - Validation-first deployment to detect configuration errors early
 
-Optional identity staging bootstraps AD and promotes replica Domain Controllers (DCs).
+Optional identity staging bootstraps AD, promotes replica Domain Controllers (DCs), and performs directory population for OU, group, and user seeding.
 
 For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-setup).
 
@@ -102,7 +102,7 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
   - [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required)
   - [Step 8a: Identity Foundation Stage (Optional)](#step-8a-identity-foundation-stage-optional)
   - [Step 9: Deploy](#step-9-deploy)
-    - [Full Deployment (Default)](#full-deployment-default)
+    - [Full Deployment](#full-deployment)
     - [Stages](#stages)
     - [Recommended Deployment Order](#recommended-deployment-order)
   - [Step 10: Validate Results](#step-10-validate-results)
@@ -233,6 +233,9 @@ The solution was developed iteratively, with each phase introducing additional a
 
 - **v2.0.0 — Identity Foundation**
   Introduced staged Active Directory (AD) deployment with `enableIdentity`, `domainName`, `stage=identity`, automated forest creation on the primary DC, automated replica DC promotion, and reusable PowerShell-based identity orchestration using Azure VM Run Command.
+
+- **v2.1.0 — Directory Population**
+  Added staged directory population to the identity workflow, including OU creation, AGDLP group seeding, share and NTFS permission provisioning, manager assignment, and user population driven by `departments`, `departmentCount`, and `usersPerDepartment`.
 
 ### Design Principles
 
@@ -440,12 +443,13 @@ Identity deployment behaviour:
 
 - `dc01` creates the AD forest and DNS infrastructure.
 - Additional DCs are promoted as replica DCs.
+- Directory population runs on the primary DC after forest bootstrap and replica promotion complete.
 - Identity deployments are idempotent and can be safely re-executed.
 - Identity deployment is automatically included in `stage=all` when `enableIdentity=true`.
 
 #### Identity Deployment Flow
 
-Use this flow to understand how `enableIdentity` and `stage` determine forest bootstrap and replica promotion.
+Use this flow to understand how `enableIdentity` and `stage` determine forest bootstrap, replica promotion, and directory population.
 
 ```mermaid
 flowchart LR
@@ -455,8 +459,9 @@ flowchart LR
   C --> E[dc01 forest bootstrap]
   D --> E
   E --> F[Promote replica DCs]
-  F --> G[AD-ready environment]
-  G --> H[Safe re-run keeps state idempotent]
+  F --> G[Populate OU, groups, and users]
+  G --> H[AD-ready environment]
+  H --> I[Safe re-run keeps state idempotent]
 ```
 
 #### AD Integration
@@ -479,6 +484,24 @@ Benefits:
 - Scripts remain version-controlled within the repository
 
 PowerShell scripts are embedded into Azure VM Run Command resources at deployment time using Bicep `loadTextContent()`.
+
+#### Directory Population
+
+The identity stage performs:
+
+- OU creation
+- Department OU creation
+- AGDLP group creation
+- Share creation
+- NTFS permission assignment
+- Manager population
+- User population
+
+Configuration is deployment-driven through parameters:
+
+- departments
+- departmentCount
+- usersPerDepartment
 
 ### Security Model
 
@@ -551,11 +574,17 @@ The project is structured to separate concerns and promote modular reuse.
 - **modules/identity/ad-replicadc.bicep**
   Deploys replica promotion automation to all additional DCs.
 
+- **modules/identity/ad-populate.bicep**
+  Deploys directory population automation to the primary DC.
+
 - **modules/identity/scripts/Install-Forest.ps1**
   Creates the AD forest and DNS infrastructure.
 
 - **modules/identity/scripts/Promote-ReplicaDC.ps1**
   Promotes additional DCs into the existing forest.
+
+- **modules/identity/scripts/Populate-AD.ps1**
+  Performs directory OU, group, share, and user population.
 
 ---
 
@@ -586,7 +615,7 @@ The project is structured to separate concerns and promote modular reuse.
   Invokes `modules/logic/validation.bicep` and surfaces validation outputs at the top level
 
 - **Identity Foundation**  
-  Enables identity bootstrap using `enableIdentity` and `domainName`, deploys forest creation to the primary DC, and orchestrates replica promotion modules.
+  Enables identity bootstrap using `enableIdentity` and `domainName`, deploys forest creation to the primary DC, orchestrates replica promotion modules, and runs directory population.
 
 ### Foundation Layer (External)
 
@@ -1131,13 +1160,16 @@ Related: [CI Workflow Validation (`validate.yml`)](#ci-workflow-validation-valid
 
 ### Step 8a: Identity Foundation Stage (Optional)
 
-Use this stage when you want to bootstrap AD forest creation and replica promotion.
+Use this stage when you want to bootstrap AD forest creation, replica promotion, and directory population.
 
 Required parameters:
 
 ```json
 "enableIdentity": { "value": true },
-"domainName": { "value": "amrl.lab" }
+"domainName": { "value": "amrl.lab" },
+"usersPerDepartment": { "value": 50 },
+"departments": { "value": { "Finance": "FIN" } },
+"departmentCount": { "value": 1 }
 ```
 
 Important behaviour:
@@ -1147,6 +1179,7 @@ Important behaviour:
 - Identity resources deploy after control-plane DC VMs exist.
 - Forest creation runs only on the primary DC.
 - Replica promotion runs only on additional DCs.
+- Directory population runs on the primary DC after forest and replica steps.
 - Identity deployments are idempotent and can be safely re-executed.
 - `stage=all` automatically executes identity deployment when `enableIdentity=true`.
 
@@ -1157,7 +1190,7 @@ Important behaviour:
 
 The solution supports both full and staged deployments through the `stage` parameter.
 
-### Full Deployment (Default)
+### Full Deployment
 
 Deploy all networking and compute resources (and identity resources when `enableIdentity=true`):
 
@@ -1169,7 +1202,15 @@ az deployment sub create \
   --parameters <your-local-parameters-file>.json
 ```
 
-The default value for `stage` is `all`, so no additional stage parameter is required.
+Provide `stage` explicitly in your parameters file (or via `--parameters stage=<value>`).
+
+Example in a parameters file:
+
+```json
+"stage": {
+  "value": "all"
+}
+```
 
 ### Stages
 
@@ -1185,7 +1226,7 @@ Deploy only control-plane VMs (DCs and jumpboxes):
 --parameters stage=control
 ```
 
-Deploy identity bootstrap and replica promotion:
+Deploy identity bootstrap, replica promotion, and directory population:
 
 ```bash
 --parameters stage=identity --parameters enableIdentity=true
@@ -1423,7 +1464,7 @@ The following checks are performed:
 Validation results are exposed using:
 
 - `validationSummary` → concise status string (`Validation passed.` or first detected validation issue)  
-- `validationMessage` → first detected validation issue  
+- `validationMessage` → first detected validation issue, or `All validation checks passed.` when valid  
 - `validationDebug` → detailed boolean values for all validation checks  
 - `validationCapacityDebug` → non-control VM demand vs remaining spoke workload capacity  
 - `validationWorkloadCapacityDebug` → per-region control-plane occupancy and remaining workload slots  
@@ -1444,7 +1485,7 @@ The deployment provides several outputs to assist with validation, debugging, an
   Number of VMs deployed per region  
 
 - `validationMessage`  
-  Human-readable validation error (empty if valid)  
+  Human-readable first validation issue, or `All validation checks passed.` when valid  
 
 - `validationSummary`  
   Human-readable one-line status for quick review in Portal Outputs  
@@ -1489,7 +1530,7 @@ Always review validation outputs before proceeding with further configuration st
 
 ## Third-Party Components
 
-This project incorporates code and concepts from Set-DummyAD.
+AMRL incorporates code, concepts, and architectural inspiration from Set-DummyAD.
 
 Source:
 https://github.com/BOAScripts/Set-DummyAD
@@ -1497,23 +1538,56 @@ https://github.com/BOAScripts/Set-DummyAD
 License:
 MIT
 
-Modifications:
-- Refactored for staged AMRL identity deployment
-- Integrated with Bicep VM Run Command
-- AD forest creation separated from AD population
+### Relationship to AMRL
 
-Files derived from or inspired by Set-DummyAD currently include:
+AMRL does not execute the original Set-DummyAD solution directly. The project has been substantially adapted and integrated into the AMRL deployment framework.
+
+Concepts derived from or inspired by Set-DummyAD include:
+
+- Active Directory OU generation
+- Department modelling
+- Security group generation
+- AGDLP group nesting
+- File share creation
+- NTFS permission assignment
+- Manager and user population workflows
+
+### AMRL Enhancements
+
+AMRL introduces significant architectural and functional changes, including:
+
+- Staged deployment architecture
+- Azure Bicep integration
+- Azure VM Run Command execution
+- Separation of forest deployment and directory population
+- Idempotent object creation and remediation
+- Parameter-driven department definitions
+- Configurable department counts
+- Configurable users-per-department values
+- names.csv delivery through deployment parameters
+- Stable manager assignment across redeployments
+- Existing user attribute reconciliation
+- Round-robin user distribution across departments
+- Automated multi-region lab deployment integration
+
+### Files Derived From or Inspired By Set-DummyAD
+
+The following files contain logic derived from or inspired by Set-DummyAD:
 
 - Install-Forest.ps1
 - Promote-ReplicaDC.ps1
+- Populate-AD.ps1
+
+### Notes
+
+AMRL follows a non-destructive deployment model. Re-execution of the identity stage is intended to create missing objects, repair selected attributes, and ensure required memberships exist, rather than enforce an exact directory state.
 
 Future identity automation may continue to incorporate adapted portions of Set-DummyAD where appropriate.
 ---
 
 ## Future Plans
 
-- AD OU, group, and user population.
-- DummyAD-derived organisational structure deployment.
+- Additional directory population scenarios and data customisation guidance.
 - Domain join automation for Windows servers and clients.
 - Group Policy deployment and management.
 - Identity stage hardening and rollback guidance.

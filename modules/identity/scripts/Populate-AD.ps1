@@ -194,18 +194,56 @@ function Ensure-ADUser {
 
         Write-Host "[=] User already exists: $SamAccountName"
 
-        $updateParams = @{
-            Identity   = $existingUser
-            Department = $Department
+        $existingUserFull = Get-ADUser `
+            -Identity $existingUser `
+            -Properties Title,DistinguishedName
+
+        $existingUserOU = (
+            $existingUserFull.DistinguishedName -split ','
+        )[1] -replace '^OU='
+
+        Write-Host (
+            "[DEBUG] Existing user OU: " +
+            $existingUserOU
+        )
+
+        if ($existingUserFull.Title -like '*Manager' -and -not $Title) {
+
+            Write-Host (
+                "[INFO] Existing account is a manager. " +
+                "Skipping normal user remediation: " +
+                $SamAccountName
+            )
+
+            return $existingUserFull
         }
 
-        if ($Title) {
+        $updateParams = @{
+            Identity = $existingUser
+        }
+
+        if ($existingUserOU) {
+            $updateParams.Department = $existingUserOU
+        }
+        elseif ($Department) {
+            $updateParams.Department = $Department
+        }
+
+        if ($existingUserFull.Title -like '*Manager') {
+
+            $updateParams.Title = "$existingUserOU Manager"
+        }
+        elseif ($Title) {
+
             $updateParams.Title = $Title
         }
 
         Set-ADUser @updateParams
 
-        if ($Manager) {
+        if (
+            $Manager -and
+            $existingUserFull.Title -notlike '*Manager'
+        ) {
             Set-ADUser `
                 -Identity $existingUser `
                 -Manager $Manager
@@ -314,15 +352,22 @@ $model = @'
 
 $usersCsvPath = 'C:\Windows\Temp\names.csv'
 
+Write-Host "[DEBUG] NamesCsvContent length = $($NamesCsvContent.Length)"
+
 Set-Content `
     -Path $usersCsvPath `
     -Value $NamesCsvContent `
     -Force
 
+Get-Item $usersCsvPath | Select Length
+
 $CSVNames = [System.Collections.ArrayList]@(
     Get-Content $usersCsvPath |
     ConvertFrom-Csv -Delimiter ';'
 )
+
+Write-Host "[DEBUG] CSVNames count = $($CSVNames.Count)"
+Write-Host "[DEBUG] First CSV user = $($CSVNames[0].FirstName) $($CSVNames[0].LastName)"
 
 $domainDN = (Get-ADRootDSE).rootDomainNamingContext
 
@@ -333,6 +378,9 @@ $allDepartments = (
 
 $departments = $allDepartments |
     Select-Object -First $DepartmentCount
+
+Write-Host "[DEBUG] DepartmentCount parameter = $DepartmentCount"
+Write-Host "[DEBUG] Departments selected = $($departments.Count)"
 
 # ------------------------------------------------------------
 # Phase 1
@@ -696,6 +744,8 @@ Write-Host "[i] Department share generation completed"
 
 Write-Host "[i] User generation starting"
 
+Write-Host "[DEBUG] ClientAdminPassword length = $($ClientAdminPassword.Length)"
+
 $password = ConvertTo-SecureString `
     $ClientAdminPassword `
     -AsPlainText `
@@ -738,20 +788,45 @@ if ($CSVNames.Count -lt $requiredUsers) {
 # round-robin user population phase.
 # ------------------------------------------------------------
 
+Write-Host "[DEBUG] Entering manager loop"
+Write-Host "[DEBUG] Beginning manager population"
+Write-Host "[DEBUG] Names available: $($CSVNames.Count)"
+Write-Host "[DEBUG] Departments: $DepartmentCount"
+
 foreach ($department in $departments) {
+    
+    Write-Host "================================================="
+    Write-Host "MANAGER LOOP START"
+    Write-Host "Department: $($department.Name)"
+    Write-Host "Department Code: $($department.Value)"
+    Write-Host "================================================="
 
     $departmentOU = Get-ADOrganizationalUnit `
         -LDAPFilter "(ou=$($department.Name))" `
         -SearchBase $usersOU.DistinguishedName `
         -ErrorAction Stop
 
-    $existingDepartmentManager = Get-ADGroupMember `
-        -Identity "GGS_$($department.Value)_Managers" `
-        -ErrorAction SilentlyContinue |
-        Where-Object ObjectClass -eq 'user' |
-        Select-Object -First 1
+Write-Host "[DEBUG] Processing department: $($department.Name)"
+Write-Host "[DEBUG] Processing: $($department.Name)"
 
-    if ($existingDepartmentManager) {
+$existingDepartmentManager = Get-ADGroupMember `
+    -Identity "GGS_$($department.Value)_Managers" `
+    -ErrorAction SilentlyContinue |
+    Where-Object ObjectClass -eq 'user' |
+    Select-Object -First 1
+
+$managerObject = $null
+
+Write-Host "[DEBUG] About to create manager"
+
+if ($existingDepartmentManager) {
+
+    $managerObject = Get-ADUser `
+        -Identity $existingDepartmentManager.SamAccountName `
+        -Properties * `
+        -ErrorAction SilentlyContinue
+
+    if ($managerObject) {
 
         Write-Host (
             "[=] Existing manager found for " +
@@ -759,45 +834,141 @@ foreach ($department in $departments) {
             "$($existingDepartmentManager.SamAccountName)"
         )
 
-        $managerObject = Get-ADUser `
-            -Identity $existingDepartmentManager.SamAccountName `
-            -Properties *
+        #
+        # Reconcile manager attributes using OU as source of truth
+        #
+        Set-ADUser `
+            -Identity $managerObject `
+            -Department $department.Name `
+            -Title "$($department.Name) Manager"
+
+        #
+        # Remove manager from any departmental user groups
+        #
+        Get-ADPrincipalGroupMembership $managerObject |
+        Where-Object {
+            $_.Name -like 'GGS_*_Users'
+        } |
+        ForEach-Object {
+
+            Write-Host (
+                "[INFO] Removing manager from user group: " +
+                $_.Name
+            )
+
+            Remove-ADGroupMember `
+                -Identity $_ `
+                -Members $managerObject `
+                -Confirm:$false
+        }
+
+        #
+        # Remove manager from incorrect manager groups
+        #
+        Get-ADPrincipalGroupMembership $managerObject |
+        Where-Object {
+            $_.Name -like 'GGS_*_Managers' -and
+            $_.Name -ne "GGS_$($department.Value)_Managers"
+        } |
+        ForEach-Object {
+
+            Write-Host (
+                "[INFO] Removing manager from incorrect manager group: " +
+                $_.Name
+            )
+
+            Remove-ADGroupMember `
+                -Identity $_ `
+                -Members $managerObject `
+                -Confirm:$false
+        }
 
         $managerSam = $managerObject.SamAccountName
+
+        #
+        # Reassert correct memberships
+        #
+        Ensure-ADPrincipalGroupMembership `
+            -GroupName "GGS_$($department.Value)_ALL" `
+            -MemberName $managerSam
+
+        Ensure-ADPrincipalGroupMembership `
+            -GroupName "GGS_$($department.Value)_Managers" `
+            -MemberName $managerSam
     }
     else {
 
-        if ($CSVNames.Count -eq 0) {
-            throw "No more names available in names.csv"
-        }
+        Write-Warning (
+            "Manager reference exists in group " +
+            "but AD user no longer exists. " +
+            "Creating replacement manager."
+        )
+    }
+}
 
-        $managerUser = Get-Random -InputObject $CSVNames
-        $null = $CSVNames.Remove($managerUser)
+Write-Host "[DEBUG] Manager object exists: $($null -ne $managerObject)"
 
-        $managerSam = (
-            $managerUser.FirstName +
-            "." +
-            $managerUser.LastName
-        ).ToLower()
+if (-not $managerObject) {
 
-        $managerUpn = "$managerSam@$($currentDomain.DNSRoot)"
+    if ($CSVNames.Count -eq 0) {
+        Write-Warning (
+            "No more names available in names.csv. " +
+            "Manager population stopped after available names were exhausted."
+        )
 
-        $managerObject = Ensure-ADUser `
-            -SamAccountName $managerSam `
-            -Path $departmentOU.DistinguishedName `
-            -DisplayName "$($managerUser.FirstName) $($managerUser.LastName)" `
-            -GivenName $managerUser.FirstName `
-            -Surname $managerUser.LastName `
-            -UserPrincipalName $managerUpn `
-            -Department $department.Name `
-            -Title "$($department.Name) Manager" `
-            -Password $password `
-            -Manager ""
+        break
     }
 
+    $managerUser = Get-Random -InputObject $CSVNames
+    $null = $CSVNames.Remove($managerUser)
+
+    $managerSam = (
+        $managerUser.FirstName +
+        "." +
+        $managerUser.LastName
+    ).ToLower()
+
+    $managerUpn = "$managerSam@$($currentDomain.DNSRoot)"
+
+try {
+
+    $managerObject = Ensure-ADUser `
+        -SamAccountName $managerSam `
+        -Path $departmentOU.DistinguishedName `
+        -DisplayName "$($managerUser.FirstName) $($managerUser.LastName)" `
+        -GivenName $managerUser.FirstName `
+        -Surname $managerUser.LastName `
+        -UserPrincipalName $managerUpn `
+        -Department $department.Name `
+        -Title "$($department.Name) Manager" `
+        -Password $password `
+        -Manager ""
+
+    Write-Host "[DEBUG] Created manager: $managerSam"
+
+}
+catch {
+    Write-Host "[ERROR] Manager creation failed"
+    Write-Host $_.Exception.Message
+    throw
+}
+
+Write-Host "[DEBUG] Ensure-ADUser returned: $($null -ne $managerObject)"
+
+}    
+
+Write-Host "[DEBUG] About to add manager memberships for $managerSam"
+
+try {
     Ensure-ADPrincipalGroupMembership `
         -GroupName "GGS_$($department.Value)_ALL" `
         -MemberName $managerSam
+}
+catch {
+    Write-Host "[ERROR] Failed ALL group membership"
+    Write-Host $_.Exception.Message
+    throw
+}
 
     Ensure-ADPrincipalGroupMembership `
         -GroupName "GGS_$($department.Value)_Managers" `
@@ -807,6 +978,61 @@ foreach ($department in $departments) {
         Department    = $department
         DepartmentOU  = $departmentOU
         ManagerObject = $managerObject
+    }
+
+Write-Host "[DEBUG] Added department info for $($department.Name)"
+
+}
+
+# ------------------------------------------------------------
+# Department Population Targets
+#
+# AMRL enhancement:
+#
+# Calculate how many standard users each department
+# still requires in order to reach the configured
+# UsersPerDepartment target.
+#
+# This allows redeployments to top-up departments
+# rather than repeatedly attempting to create the
+# same number of users.
+# ------------------------------------------------------------
+
+$departmentTargets = @{}
+
+foreach ($departmentData in $departmentInfo.Values) {
+
+    $department = $departmentData.Department
+    $departmentOU = $departmentData.DepartmentOU
+    $managerObject = $departmentData.ManagerObject
+
+    $currentUserCount = (
+        Get-ADUser `
+            -Filter * `
+            -SearchBase $departmentOU.DistinguishedName `
+            -Properties Title `
+            -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Title -notlike '*Manager'
+        }
+    ).Count
+
+    $usersNeeded = [Math]::Max(
+        0,
+        ($UsersPerDepartment - $currentUserCount)
+    )
+
+    Write-Host (
+        "[i] Department $($department.Name): " +
+        "$currentUserCount users present, " +
+        "$usersNeeded users required"
+    )
+
+    $departmentTargets[$department.Name] = [PSCustomObject]@{
+        Department    = $department
+        DepartmentOU  = $departmentOU
+        ManagerObject = $managerObject
+        UsersNeeded   = $usersNeeded
     }
 }
 
@@ -826,15 +1052,39 @@ foreach ($department in $departments) {
 # names.csv contains fewer names than required.
 # ------------------------------------------------------------
 
+Write-Host "[DEBUG] DepartmentInfo count: $($departmentInfo.Count)"
+Write-Host "[DEBUG] DepartmentTargets count: $($departmentTargets.Count)"
+
+$maxUsersNeeded = (
+    $departmentTargets.Values |
+    Measure-Object UsersNeeded -Maximum
+).Maximum
+
+Write-Host "[i] Maximum users required by a department: $maxUsersNeeded"
+
+foreach ($departmentData in $departmentTargets.Values) {
+
+    Write-Host (
+        "[i] " +
+        $departmentData.Department.Name +
+        ": UsersNeeded=" +
+        $departmentData.UsersNeeded
+    )
+}
+
 $stopPopulation = $false
 
-for ($i = 0; $i -lt $UsersPerDepartment; $i++) {
+for ($i = 0; $i -lt $maxUsersNeeded; $i++) {
 
     if ($stopPopulation) {
         break
     }
 
-    foreach ($departmentData in $departmentInfo.Values) {
+    foreach ($departmentData in $departmentTargets.Values) {
+
+        if ($departmentData.UsersNeeded -le $i) {
+            continue
+        }
 
         if ($CSVNames.Count -eq 0) {
 
@@ -862,7 +1112,7 @@ for ($i = 0; $i -lt $UsersPerDepartment; $i++) {
 
         $userUpn = "$userSam@$($currentDomain.DNSRoot)"
 
-        Ensure-ADUser `
+        $userObject = Ensure-ADUser `
             -SamAccountName $userSam `
             -Path $departmentOU.DistinguishedName `
             -DisplayName "$($userRecord.FirstName) $($userRecord.LastName)" `
@@ -873,6 +1123,25 @@ for ($i = 0; $i -lt $UsersPerDepartment; $i++) {
             -Password $password `
             -Manager $managerObject.DistinguishedName
 
+        #
+        # Managers must never be processed as normal users.
+        #
+        $managerMembership = Get-ADPrincipalGroupMembership $userObject |
+        Where-Object {
+            $_.Name -like 'GGS_*_Managers'
+        }
+
+        if ($managerMembership) {
+
+            Write-Host (
+                "[INFO] User is already a department manager. " +
+                "Skipping user-group remediation: " +
+                $userObject.SamAccountName
+            )
+
+            continue
+        }
+
         Ensure-ADPrincipalGroupMembership `
             -GroupName "GGS_$($department.Value)_ALL" `
             -MemberName $userSam
@@ -880,6 +1149,27 @@ for ($i = 0; $i -lt $UsersPerDepartment; $i++) {
         Ensure-ADPrincipalGroupMembership `
             -GroupName "GGS_$($department.Value)_Users" `
             -MemberName $userSam
+
+        #
+        # Remove user from other department user groups
+        #
+        Get-ADPrincipalGroupMembership $userObject |
+        Where-Object {
+            $_.Name -like 'GGS_*_Users' -and
+            $_.Name -ne "GGS_$($department.Value)_Users"
+        } |
+        ForEach-Object {
+
+            Write-Host (
+                "[INFO] Removing user from incorrect user group: " +
+                $_.Name
+            )
+
+            Remove-ADGroupMember `
+                -Identity $_ `
+                -Members $userObject `
+                -Confirm:$false
+        }
     }
 }
 

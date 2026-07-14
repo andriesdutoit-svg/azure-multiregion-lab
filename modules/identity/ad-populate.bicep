@@ -18,7 +18,7 @@ resource dcVm 'Microsoft.Compute/virtualMachines@2022-08-01' existing = {
 
 resource populateDirectory 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' = {
   parent: dcVm
-  name: 'populate-directory'
+  name: 'populate-directory-debug'
 
   location: resourceGroup().location
 

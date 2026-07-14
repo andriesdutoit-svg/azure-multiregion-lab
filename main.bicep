@@ -415,6 +415,10 @@ module validationEngine 'modules/logic/validation.bicep' = {
     primaryRegion: primaryRegion
     hubRegion: hubRegion
     hasTooManyDcs: hasTooManyDcs
+    departments: departments
+    departmentCount: departmentCount
+    usersPerDepartment: usersPerDepartment
+
   }
 }
 
@@ -760,7 +764,7 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
 // This is the primary output used to verify distribution logic
 output vmPlacement array = vmPlacements
 
-// Validation message describing why deployment failed (empty if no validation errors)
+// Validation message describing the first detected validation issue, or a success message when all checks pass.
 
 output validationDebug object = validationEngine.outputs.validationFlags
 output validationCapacityDebug object = {

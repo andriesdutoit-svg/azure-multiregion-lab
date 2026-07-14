@@ -21,6 +21,9 @@ param maxVmsPerRegion int
 param primaryRegion string
 param hubRegion string
 param hasTooManyDcs bool
+param departments object
+param departmentCount int
+param usersPerDepartment int
 
 // ========================================
 // DERIVED METRICS
@@ -121,6 +124,26 @@ var totalWorkloadRegionCapacity = reduce(
 var hasInsufficientWorkloadCapacity = nonControlVmCount > totalWorkloadRegionCapacity
 
 // ========================================
+// DIRECTORY POPULATION VALIDATION
+// Validates department/user input integrity for identity population.
+// ========================================
+
+var invalidDepartmentCount = departmentCount > length(items(departments))
+
+var invalidMinimumDepartments = departmentCount < 1
+
+var invalidUsersPerDepartment = usersPerDepartment < 1
+
+var departmentCodes = [
+  for d in items(departments): d.value
+]
+
+var duplicateDepartmentCodes = length(distinct(departmentCodes)) != length(departmentCodes)
+
+// Includes one manager account per department in addition to usersPerDepartment user accounts.
+var requestedDirectoryAccounts = departmentCount * (usersPerDepartment + 1)
+
+// ========================================
 // VALIDATION FLAG MODEL
 // Consolidated rule state emitted for diagnostics.
 // ========================================
@@ -139,6 +162,10 @@ var validationFlags = {
   invalidIndexSequence: invalidIndexSequence
   hasRegionOverflow: hasRegionOverflow
   hasTooManyDcs: hasTooManyDcs
+  invalidDepartmentCount: invalidDepartmentCount
+  invalidMinimumDepartments: invalidMinimumDepartments
+  invalidUsersPerDepartment: invalidUsersPerDepartment
+  duplicateDepartmentCodes: duplicateDepartmentCodes
 }
 
 // ========================================
@@ -159,8 +186,12 @@ var msg10 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed 
 var msg11 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
 var msg12 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
 var msg13 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
+var msg14 = invalidDepartmentCount ? 'Department count exceeds the number of defined departments.' : ''
+var msg15 = invalidMinimumDepartments ? 'At least one department is required.' : ''
+var msg16 = invalidUsersPerDepartment ? 'Users per department must be at least 1.' : ''
+var msg17 = duplicateDepartmentCodes ? 'Department codes must be unique.' : ''
 
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : ''
+var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : 'All validation checks passed.'
 
 // ========================================
 // OUTPUTS
@@ -174,5 +205,7 @@ output vmPerRegionCounts array = vmPerRegionCounts
 output nonControlVmCount int = nonControlVmCount
 output totalWorkloadRegionCapacity int = totalWorkloadRegionCapacity
 output workloadCapacityDebug array = workloadCapacityDebug
-
+output departmentCount int = departmentCount
+output usersPerDepartment int = usersPerDepartment
+output requestedDirectoryAccounts int = requestedDirectoryAccounts
 

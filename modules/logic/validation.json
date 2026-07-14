@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.44.1.10279",
-      "templateHash": "5246578740198263331"
+      "version": "0.45.6.27763",
+      "templateHash": "8149527061950783558"
     }
   },
   "parameters": {
@@ -44,6 +44,15 @@
     },
     "hasTooManyDcs": {
       "type": "bool"
+    },
+    "departments": {
+      "type": "object"
+    },
+    "departmentCount": {
+      "type": "int"
+    },
+    "usersPerDepartment": {
+      "type": "int"
     }
   },
   "variables": {
@@ -92,6 +101,11 @@
         "name": "workloadRemainingCapacityCounts",
         "count": "[length(variables('workloadCapacityDebug'))]",
         "input": "[if(variables('workloadCapacityDebug')[copyIndex('workloadRemainingCapacityCounts')].isHub, 0, variables('workloadCapacityDebug')[copyIndex('workloadRemainingCapacityCounts')].remainingWorkloadCapacity)]"
+      },
+      {
+        "name": "departmentCodes",
+        "count": "[length(items(parameters('departments')))]",
+        "input": "[items(parameters('departments'))[copyIndex('departmentCodes')].value]"
       }
     ],
     "hasRegionOverflow": "[contains(variables('regionOverflowFlags'), true())]",
@@ -120,6 +134,11 @@
     "invalidIndexSequence": "[contains(variables('hasMissingIndexes'), true())]",
     "totalWorkloadRegionCapacity": "[reduce(variables('workloadRemainingCapacityCounts'), 0, lambda('current', 'item', add(lambdaVariables('current'), lambdaVariables('item'))))]",
     "hasInsufficientWorkloadCapacity": "[greater(variables('nonControlVmCount'), variables('totalWorkloadRegionCapacity'))]",
+    "invalidDepartmentCount": "[greater(parameters('departmentCount'), length(items(parameters('departments'))))]",
+    "invalidMinimumDepartments": "[less(parameters('departmentCount'), 1)]",
+    "invalidUsersPerDepartment": "[less(parameters('usersPerDepartment'), 1)]",
+    "duplicateDepartmentCodes": "[not(equals(length(distinct(variables('departmentCodes'))), length(variables('departmentCodes'))))]",
+    "requestedDirectoryAccounts": "[mul(parameters('departmentCount'), add(parameters('usersPerDepartment'), 1))]",
     "validationFlags": {
       "invalidMinimums": "[variables('invalidMinimums')]",
       "invalidRegionCount": "[variables('invalidRegionCount')]",
@@ -133,7 +152,11 @@
       "hasInsufficientWorkloadCapacity": "[variables('hasInsufficientWorkloadCapacity')]",
       "invalidIndexSequence": "[variables('invalidIndexSequence')]",
       "hasRegionOverflow": "[variables('hasRegionOverflow')]",
-      "hasTooManyDcs": "[parameters('hasTooManyDcs')]"
+      "hasTooManyDcs": "[parameters('hasTooManyDcs')]",
+      "invalidDepartmentCount": "[variables('invalidDepartmentCount')]",
+      "invalidMinimumDepartments": "[variables('invalidMinimumDepartments')]",
+      "invalidUsersPerDepartment": "[variables('invalidUsersPerDepartment')]",
+      "duplicateDepartmentCodes": "[variables('duplicateDepartmentCodes')]"
     },
     "msg1": "[if(variables('invalidMinimums'), 'At least 1 DC and 1 Jumpbox are required.', '')]",
     "msg2": "[if(variables('invalidRegionCount'), 'Region count exceeds available regions.', '')]",
@@ -148,7 +171,11 @@
     "msg11": "[if(variables('invalidCapacity'), 'Too many VMs for the allowed capacity per region.', '')]",
     "msg12": "[if(variables('invalidIndexSequence'), 'Region index map must have continuous values starting at 1.', '')]",
     "msg13": "[if(parameters('hasTooManyDcs'), 'Too many DCs for the available regions.', '')]",
-    "validationMessage": "[if(not(equals(variables('msg1'), '')), variables('msg1'), if(not(equals(variables('msg2'), '')), variables('msg2'), if(not(equals(variables('msg3'), '')), variables('msg3'), if(not(equals(variables('msg4'), '')), variables('msg4'), if(not(equals(variables('msg5'), '')), variables('msg5'), if(not(equals(variables('msg6'), '')), variables('msg6'), if(not(equals(variables('msg7'), '')), variables('msg7'), if(not(equals(variables('msg8'), '')), variables('msg8'), if(not(equals(variables('msg9'), '')), variables('msg9'), if(not(equals(variables('msg10'), '')), variables('msg10'), if(not(equals(variables('msg11'), '')), variables('msg11'), if(not(equals(variables('msg12'), '')), variables('msg12'), if(not(equals(variables('msg13'), '')), variables('msg13'), '')))))))))))))]"
+    "msg14": "[if(variables('invalidDepartmentCount'), 'Department count exceeds the number of defined departments.', '')]",
+    "msg15": "[if(variables('invalidMinimumDepartments'), 'At least one department is required.', '')]",
+    "msg16": "[if(variables('invalidUsersPerDepartment'), 'Users per department must be at least 1.', '')]",
+    "msg17": "[if(variables('duplicateDepartmentCodes'), 'Department codes must be unique.', '')]",
+    "validationMessage": "[if(not(equals(variables('msg1'), '')), variables('msg1'), if(not(equals(variables('msg2'), '')), variables('msg2'), if(not(equals(variables('msg3'), '')), variables('msg3'), if(not(equals(variables('msg4'), '')), variables('msg4'), if(not(equals(variables('msg5'), '')), variables('msg5'), if(not(equals(variables('msg6'), '')), variables('msg6'), if(not(equals(variables('msg7'), '')), variables('msg7'), if(not(equals(variables('msg8'), '')), variables('msg8'), if(not(equals(variables('msg9'), '')), variables('msg9'), if(not(equals(variables('msg10'), '')), variables('msg10'), if(not(equals(variables('msg11'), '')), variables('msg11'), if(not(equals(variables('msg12'), '')), variables('msg12'), if(not(equals(variables('msg13'), '')), variables('msg13'), if(not(equals(variables('msg14'), '')), variables('msg14'), if(not(equals(variables('msg15'), '')), variables('msg15'), if(not(equals(variables('msg16'), '')), variables('msg16'), if(not(equals(variables('msg17'), '')), variables('msg17'), 'All validation checks passed.')))))))))))))))))]"
   },
   "resources": [],
   "outputs": {
@@ -183,6 +210,18 @@
     "workloadCapacityDebug": {
       "type": "array",
       "value": "[variables('workloadCapacityDebug')]"
+    },
+    "departmentCount": {
+      "type": "int",
+      "value": "[parameters('departmentCount')]"
+    },
+    "usersPerDepartment": {
+      "type": "int",
+      "value": "[parameters('usersPerDepartment')]"
+    },
+    "requestedDirectoryAccounts": {
+      "type": "int",
+      "value": "[variables('requestedDirectoryAccounts')]"
     }
   }
 }
