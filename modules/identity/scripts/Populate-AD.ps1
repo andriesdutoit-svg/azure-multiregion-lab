@@ -741,7 +741,7 @@ function Get-DepartmentManagerInfo {
             $managerSam = (
                 $managerUser.FirstName +
                 "." +
-                $managerUser.LastName
+                ($managerUser.LastName -replace '\s+', '')
             ).ToLower()
 
             $managerUpn = "$managerSam@$($ConnectedDomain.DNSRoot)"
@@ -770,6 +770,44 @@ function Get-DepartmentManagerInfo {
 
         if ($existingDepartmentManagers.Count -eq 0) {
             $existingDepartmentManagers = @($managerObject)
+        }
+
+        #
+        # Reconcile manager assignments for standard users.
+        #
+        # AMRL treats departmental OU placement as the
+        # authoritative source of reporting structure.
+        #
+        # All non-manager users within a departmental OU
+        # are assigned to the first available manager
+        # discovered in that department.
+        #
+
+        $primaryManager = $existingDepartmentManagers |
+            Select-Object -First 1
+
+        Get-ADUser `
+            -SearchBase $departmentOU.DistinguishedName `
+            -Filter * `
+            -Properties Title,Manager |
+        Where-Object {
+            $_.Title -notlike '*Manager*'
+        } |
+        ForEach-Object {
+
+            if ($_.Manager -ne $primaryManager.DistinguishedName) {
+
+                Write-Host (
+                    "[INFO] Reassigning manager for " +
+                    $_.SamAccountName +
+                    " -> " +
+                    $primaryManager.SamAccountName
+                )
+
+                Set-ADUser `
+                    -Identity $_ `
+                    -Manager $primaryManager.DistinguishedName
+            }
         }
 
         $departmentInfo[$department.Name] = @{
@@ -906,7 +944,7 @@ function Invoke-Phase7RoundRobinUserPopulation {
             $userSam = (
                 $userRecord.FirstName +
                 "." +
-                $userRecord.LastName
+                ($userRecord.LastName -replace '\s+', '')
             ).ToLower()
 
             $userUpn = "$userSam@$($ConnectedDomain.DNSRoot)"
