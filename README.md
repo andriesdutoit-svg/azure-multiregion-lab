@@ -235,7 +235,7 @@ The solution was developed iteratively, with each phase introducing additional a
   Introduced staged Active Directory (AD) deployment with `enableIdentity`, `domainName`, `stage=identity`, automated forest creation on the primary DC, automated replica DC promotion, and reusable PowerShell-based identity orchestration using Azure VM Run Command.
 
 - **v2.1.0 — Directory Population**
-  Added staged directory population to the identity workflow, including OU creation, AGDLP group seeding, share and NTFS permission provisioning, manager assignment, and user population driven by `departments`, `departmentCount`, and `usersPerDepartment`.
+  Added staged directory population to the identity workflow, including OU creation, AGDLP group seeding, share and NTFS permission provisioning, brownfield manager reconciliation, and user population driven by `departments`, `departmentCount`, and `usersPerDepartment`.
 
 ### Design Principles
 
@@ -503,6 +503,14 @@ Configuration is deployment-driven through parameters:
 - departmentCount
 - usersPerDepartment
 
+Behaviour notes:
+
+- Populate logic is executed through Azure VM Run Command with script content embedded from the repository using Bicep `loadTextContent()`.
+- Deployments are intentionally non-destructive: reruns create missing objects and reconcile selected attributes and memberships.
+- Department OU placement is treated as the source of truth during remediation.
+- Managers are retained and reconciled per department on redeploy; managers are not treated as normal users.
+- Existing users and groups are not removed to enforce an exact directory state during brownfield reruns.
+
 ### Security Model
 
 - Public access is restricted to jumpboxes only  
@@ -584,7 +592,7 @@ The project is structured to separate concerns and promote modular reuse.
   Promotes additional DCs into the existing forest.
 
 - **modules/identity/scripts/Populate-AD.ps1**
-  Performs directory OU, group, share, and user population.
+  Performs idempotent directory OU, group, share and user population.
 
 ---
 
@@ -1182,6 +1190,14 @@ Important behaviour:
 - Directory population runs on the primary DC after forest and replica steps.
 - Identity deployments are idempotent and can be safely re-executed.
 - `stage=all` automatically executes identity deployment when `enableIdentity=true`.
+
+Department parameter behaviour:
+
+- `departments` is an object that maps department names to short codes, for example `"Finance": "FIN"`.
+- `departmentCount` limits how many entries are taken from `departments` during a deployment.
+- `usersPerDepartment` controls the target number of standard users per department.
+- On redeploy, existing department OUs are reused, managers are reconciled to the current department, and missing users are topped up rather than recreated.
+- Managers are kept out of normal user groups and are re-asserted into the correct manager and all-membership groups for their department.
 
 [Back to top](#table-of-contents)
 ---
