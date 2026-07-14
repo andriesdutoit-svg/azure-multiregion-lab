@@ -809,24 +809,22 @@ foreach ($department in $departments) {
 Write-Host "[DEBUG] Processing department: $($department.Name)"
 Write-Host "[DEBUG] Processing: $($department.Name)"
 
-$existingDepartmentManager = Get-ADGroupMember `
-    -Identity "GGS_$($department.Value)_Managers" `
+$existingDepartmentManagers = Get-ADUser `
+    -SearchBase $departmentOU.DistinguishedName `
+    -Filter * `
+    -Properties Title `
     -ErrorAction SilentlyContinue |
-    Where-Object ObjectClass -eq 'user' |
-    Select-Object -First 1
+    Where-Object {
+        $_.Title -like '*Manager*'
+    }
 
 $managerObject = $null
 
 Write-Host "[DEBUG] About to create manager"
 
-if ($existingDepartmentManager) {
+if ($existingDepartmentManagers.Count -gt 0) {
 
-    $managerObject = Get-ADUser `
-        -Identity $existingDepartmentManager.SamAccountName `
-        -Properties * `
-        -ErrorAction SilentlyContinue
-
-    if ($managerObject) {
+    foreach ($managerObject in $existingDepartmentManagers) {
 
         Write-Host (
             "[=] Existing manager found for " +
