@@ -174,8 +174,12 @@ function Ensure-ADUser {
         -ErrorAction SilentlyContinue
 
     # Existing users are updated rather than recreated.
-    # Selected attributes such as Department, Title
-    # and Manager are reconciled during re-execution.
+    # Selected attributes such as Department and Title
+    # are reconciled during re-execution.
+    #
+    # Reporting-line remediation is handled later by
+    # Get-DepartmentManagerInfo() and
+    # Invoke-Phase6UserRemediation().
     if ($existingUser) {
 
         Write-Host "[=] User already exists: $SamAccountName"
@@ -206,14 +210,13 @@ function Ensure-ADUser {
 
         Set-ADUser @updateParams
 
-        if (
-            $Manager -and
-            $existingUserFull.Title -notlike '*Manager*'
-        ) {
-            Set-ADUser `
-                -Identity $existingUser `
-                -Manager $Manager
-        }
+        #
+        # Reporting lines are reconciled later by
+        # Get-DepartmentManagerInfo() and
+        # Invoke-Phase6UserRemediation().
+        #
+        # Manager assignments should not be updated here.
+        #
 
         return (
             Get-ADUser `
@@ -603,28 +606,35 @@ function Invoke-Phase5DepartmentShares {
 #
 # Manager reconciliation phase.
 #
-# AMRL treats OU placement as the authoritative
-# source of departmental ownership.
+# OU placement is the authoritative source of
+# departmental ownership and reporting lines.
 #
-# Existing managers are remediated to match the
-# OU in which they currently reside.
+# Rules:
+#
+# - One manager per department is supported.
+# - Additional manager accounts are demoted.
+# - Users without managers remain unmanaged.
+# - Users reporting outside their department
+#   are remediated.
+# - When a departmental manager exists,
+#   incorrect reporting lines are reassigned
+#   to that manager.
+# - When no departmental manager exists,
+#   incorrect reporting lines are removed by
+#   clearing the Manager attribute.
 #
 # Reconciliation includes:
 # - Department attribute
 # - Title
-# - departmental ALL groups
-# - departmental Manager groups
+# - Manager assignments
+# - Departmental ALL groups
+# - Departmental Manager groups
 #
-# A replacement manager is created only when a
-# departmental OU contains no manager accounts.
-#
+
 function Get-DepartmentManagerInfo {
     param(
         [object[]]$SelectedDepartments,
-        [object]$UsersOu,
-        [System.Collections.ArrayList]$CsvNames,
-        [object]$ConnectedDomain,
-        [SecureString]$Password
+        [object]$UsersOu
     )
 
     $departmentInfo = @{}
@@ -646,8 +656,6 @@ function Get-DepartmentManagerInfo {
                 $_.Title -like '*Manager*'
             }
         )
-
-        $managerObject = $null
 
         #
         # Brownfield remediation:
@@ -672,6 +680,11 @@ function Get-DepartmentManagerInfo {
                 Set-ADUser `
                     -Identity $duplicateManager `
                     -Clear Title
+
+                #
+                # Reporting lines will be remediated later
+                # in this function.
+                #
 
                 Remove-ADGroupMember `
                     -Identity "GGS_$($department.Value)_Managers" `
@@ -774,11 +787,18 @@ function Get-DepartmentManagerInfo {
         }
 
         #
-        # Multiple managers per department are allowed.
+        # One manager per department is supported.
         #
-        # A replacement manager is created only when no
-        # managers are present within the departmental OU.
+        # If multiple manager accounts exist within a
+        # departmental OU, the first manager is retained
+        # and all additional manager accounts are demoted.
         #
+        # Departments without managers are permitted.
+        #
+        # Users without managers remain unmanaged.
+        #
+        # Cross-department reporting relationships are
+        # remediated to match departmental ownership.
 
         if ($existingDepartmentManagers.Count -eq 0) {
 
@@ -787,6 +807,47 @@ function Get-DepartmentManagerInfo {
                 $department.Name
             )
 
+            #
+            # No departmental manager exists.
+            # Remove invalid cross-department reporting
+            # relationships but leave unmanaged users
+            # unchanged.
+            #
+
+            Get-ADUser `
+                -SearchBase $departmentOU.DistinguishedName `
+                -Filter * `
+                -Properties Title,Manager |
+            Where-Object {
+                $_.Title -notlike '*Manager*'
+            } |
+
+            ForEach-Object {
+
+                if ($_.Manager) {
+
+                    $currentManager = Get-ADUser `
+                        -Identity $_.Manager `
+                        -Properties Department `
+                        -ErrorAction SilentlyContinue
+
+                    if (
+                        -not $currentManager -or
+                        $currentManager.Department -ne $department.Name
+                    ) {
+
+                        Write-Host (
+                            "[INFO] Clearing cross-department manager for " +
+                            $_.SamAccountName
+                        )
+
+                        Set-ADUser `
+                            -Identity $_ `
+                            -Clear Manager
+                    }
+                }
+            }
+
             $departmentInfo[$department.Name] = @{
                 Department     = $department
                 DepartmentOU   = $departmentOU
@@ -797,32 +858,10 @@ function Get-DepartmentManagerInfo {
         }
 
         #
-        # Reconcile manager assignments for standard users.
+        # A departmental manager exists.
+        # Remediate invalid reporting lines to the
+        # department manager.
         #
-        # AMRL treats departmental OU placement as the
-        # authoritative source of reporting structure.
-        #
-        # All non-manager users within a departmental OU
-        # are assigned to the first available manager
-        # discovered in that department.
-        #
-
-        if ($existingDepartmentManagers.Count -eq 0) {
-
-            Write-Host (
-                "[INFO] No manager found in department. " +
-                "Skipping reporting-line remediation: " +
-                $department.Name
-            )
-
-            $departmentInfo[$department.Name] = @{
-                Department     = $department
-                DepartmentOU   = $departmentOU
-                ManagerObjects = @()
-            }
-
-            continue
-        }
 
         $primaryManager = $existingDepartmentManagers |
             Select-Object -First 1
@@ -836,10 +875,21 @@ function Get-DepartmentManagerInfo {
         } |
         ForEach-Object {
 
-            if ($_.Manager -ne $primaryManager.DistinguishedName) {
+            #
+            # A departmental manager exists.
+            #
+            # Any user that is:
+            # - unmanaged
+            # - assigned to an invalid manager
+            # - assigned to a manager in another department
+            #
+            # should be assigned to the departmental manager.
+            #
+
+            if (-not $_.Manager) {
 
                 Write-Host (
-                    "[INFO] Reassigning manager for " +
+                    "[INFO] Assigning departmental manager for " +
                     $_.SamAccountName +
                     " -> " +
                     $primaryManager.SamAccountName
@@ -848,6 +898,30 @@ function Get-DepartmentManagerInfo {
                 Set-ADUser `
                     -Identity $_ `
                     -Manager $primaryManager.DistinguishedName
+            }
+            else {
+
+                $currentManager = Get-ADUser `
+                    -Identity $_.Manager `
+                    -Properties Department `
+                    -ErrorAction SilentlyContinue
+
+                if (
+                    -not $currentManager -or
+                    $currentManager.Department -ne $department.Name
+                ) {
+
+                    Write-Host (
+                        "[INFO] Reassigning manager for " +
+                        $_.SamAccountName +
+                        " -> " +
+                        $primaryManager.SamAccountName
+                    )
+
+                    Set-ADUser `
+                        -Identity $_ `
+                        -Manager $primaryManager.DistinguishedName
+                }
             }
         }
 
@@ -915,6 +989,17 @@ function Get-DepartmentUserTargets {
     return $departmentTargets
 }
 
+#
+# User remediation phase.
+#
+# Responsibilities:
+# - Department attribute remediation
+# - Group membership remediation
+#
+# Reporting-line remediation is handled earlier
+# by Get-DepartmentManagerInfo().
+#
+
 function Invoke-Phase6UserRemediation {
     param(
         [hashtable]$DepartmentInfo
@@ -926,108 +1011,104 @@ function Invoke-Phase6UserRemediation {
 
         $department = $departmentData.Department
         $departmentOU = $departmentData.DepartmentOU
-        $primaryManager = (
-            $departmentData.ManagerObjects |
-            Select-Object -First 1
-        )
+
+        #
+        # Departments without managers are valid.
+        #
 
         Get-ADUser `
             -SearchBase $departmentOU.DistinguishedName `
             -Filter * `
             -Properties Title,Manager |
+
         ForEach-Object {
 
             $user = $_
 
             if ($user.Title -like '*Manager*') {
-                return
+
+                Write-Host (
+                    "[INFO] Skipping manager account: " +
+                    $user.SamAccountName
+                )
             }
+            else {
 
-            Write-Host (
-                "[INFO] Remediating user " +
-                $user.SamAccountName
-            )
+                Write-Host (
+                    "[INFO] Remediating user " +
+                    $user.SamAccountName
+                )
 
-            #
-            # Manager
-            #
-
-            if ($user.Manager -ne $primaryManager.DistinguishedName) {
+                #
+                # Department
+                #
 
                 Set-ADUser `
                     -Identity $user `
-                    -Manager $primaryManager.DistinguishedName
+                    -Department $department.Name
+
+                #
+                # Remove bad *_Users groups
+                #
+
+                Get-ADPrincipalGroupMembership $user |
+                Where-Object {
+                    $_.Name -like 'GGS_*_Users' -and
+                    $_.Name -ne "GGS_$($department.Value)_Users"
+                } |
+                ForEach-Object {
+
+                    Remove-ADGroupMember `
+                        -Identity $_ `
+                        -Members $user `
+                        -Confirm:$false
+                }
+
+                #
+                # Remove bad *_Managers groups
+                #
+
+                Get-ADPrincipalGroupMembership $user |
+                Where-Object {
+                    $_.Name -like 'GGS_*_Managers'
+                } |
+                ForEach-Object {
+
+                    Remove-ADGroupMember `
+                        -Identity $_ `
+                        -Members $user `
+                        -Confirm:$false
+                }
+
+                #
+                # Remove bad *_ALL groups
+                #
+
+                Get-ADPrincipalGroupMembership $user |
+                Where-Object {
+                    $_.Name -like 'GGS_*_ALL' -and
+                    $_.Name -ne "GGS_$($department.Value)_ALL"
+                } |
+                ForEach-Object {
+
+                    Remove-ADGroupMember `
+                        -Identity $_ `
+                        -Members $user `
+                        -Confirm:$false
+                }
+
+                #
+                # Add correct groups
+                #
+
+                Ensure-ADPrincipalGroupMembership `
+                    -GroupName "GGS_$($department.Value)_ALL" `
+                    -MemberName $user.SamAccountName
+
+                Ensure-ADPrincipalGroupMembership `
+                    -GroupName "GGS_$($department.Value)_Users" `
+                    -MemberName $user.SamAccountName
             }
-
-            #
-            # Department
-            #
-
-            Set-ADUser `
-                -Identity $user `
-                -Department $department.Name
-
-            #
-            # Remove bad *_Users groups
-            #
-
-            Get-ADPrincipalGroupMembership $user |
-            Where-Object {
-                $_.Name -like 'GGS_*_Users' -and
-                $_.Name -ne "GGS_$($department.Value)_Users"
-            } |
-            ForEach-Object {
-
-                Remove-ADGroupMember `
-                    -Identity $_ `
-                    -Members $user `
-                    -Confirm:$false
-            }
-
-            #
-            # Remove bad *_Managers groups
-            #
-
-            Get-ADPrincipalGroupMembership $user |
-            Where-Object {
-                $_.Name -like 'GGS_*_Managers'
-            } |
-            ForEach-Object {
-
-                Remove-ADGroupMember `
-                    -Identity $_ `
-                    -Members $user `
-                    -Confirm:$false
-            }
-
-            #
-            # Remove bad *_ALL groups
-            #
-
-            Get-ADPrincipalGroupMembership $user |
-            Where-Object {
-                $_.Name -like 'GGS_*_ALL' -and
-                $_.Name -ne "GGS_$($department.Value)_ALL"
-            } |
-            ForEach-Object {
-
-                Remove-ADGroupMember `
-                    -Identity $_ `
-                    -Members $user `
-                    -Confirm:$false
-            }
-
-            #
-            # Add correct groups
-            #
-
-            Ensure-ADPrincipalGroupMembership `
-                -GroupName "GGS_$($department.Value)_ALL" `
-                -MemberName $user.SamAccountName
-
-            Ensure-ADPrincipalGroupMembership `
-                -GroupName "GGS_$($department.Value)_Users" `
-                -MemberName $user.SamAccountName
         }
     }
 
@@ -1098,6 +1179,12 @@ function Invoke-Phase7RoundRobinUserPopulation {
             $managerObject = $managerObjects |
                 Select-Object -First 1
 
+            $managerDn = $null
+
+            if ($managerObject) {
+                $managerDn = $managerObject.DistinguishedName
+            }
+
             $userRecord = Get-Random -InputObject $CsvNames
             $null = $CsvNames.Remove($userRecord)
 
@@ -1118,7 +1205,7 @@ function Invoke-Phase7RoundRobinUserPopulation {
                 -UserPrincipalName $userUpn `
                 -Department $department.Name `
                 -Password $Password `
-                -Manager $managerObject.DistinguishedName
+                -Manager $managerDn
 
             $managerMembership = Get-ADPrincipalGroupMembership $userObject |
             Where-Object {
@@ -1208,6 +1295,11 @@ Invoke-Phase5DepartmentShares `
 
 Write-Host "[i] User generation starting"
 
+#
+# Password is supplied by Terraform / Run Command
+# as a string and must be converted here.
+#
+
 $password = ConvertTo-SecureString `
     $ClientAdminPassword `
     -AsPlainText `
@@ -1227,10 +1319,7 @@ if ($CSVNames.Count -lt $requiredUsers) {
 
 $departmentInfo = Get-DepartmentManagerInfo `
     -SelectedDepartments $departments `
-    -UsersOu $usersOU `
-    -CsvNames $CSVNames `
-    -ConnectedDomain $currentDomain `
-    -Password $password
+    -UsersOu $usersOU
 
 $departmentTargets = Get-DepartmentUserTargets `
     -DepartmentInfo $departmentInfo `

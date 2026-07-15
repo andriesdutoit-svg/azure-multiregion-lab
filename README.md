@@ -507,8 +507,9 @@ Behaviour notes:
 
 - Populate logic is executed through Azure VM Run Command with script content embedded from the repository using Bicep `loadTextContent()`.
 - Deployments are intentionally non-destructive: reruns create missing objects and reconcile selected attributes and memberships.
-- Department OU placement is treated as the source of truth during remediation.
-- Managers are retained and reconciled per department on redeploy; managers are not treated as normal users.
+- Department OU placement is treated as the source of truth for departmental context during remediation.
+- Within each department OU, accounts are treated as managers only when their title indicates manager status.
+- Reporting lines, department attributes, and group memberships are remediated from what the script finds in each department OU.
 - Existing users and groups are not removed to enforce an exact directory state during brownfield reruns.
 
 ### Security Model
@@ -1196,8 +1197,8 @@ Department parameter behaviour:
 - `departments` is an object that maps department names to short codes, for example `"Finance": "FIN"`.
 - `departmentCount` limits how many entries are taken from `departments` during a deployment.
 - `usersPerDepartment` controls the target number of standard users per department.
-- On redeploy, existing department OUs are reused, managers are reconciled to the current department, and missing users are topped up rather than recreated.
-- Managers are kept out of normal user groups and are re-asserted into the correct manager and all-membership groups for their department.
+- On redeploy, existing department OUs are reused as the source of departmental context, manager status is inferred from title within that OU, and missing users are topped up rather than recreated.
+- Managers are kept out of normal user groups, and user memberships and reporting lines are reconciled from what the script finds in each department OU.
 
 [Back to top](#table-of-contents)
 ---
