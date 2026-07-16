@@ -34,11 +34,20 @@ Write-Host "DomainName = $DomainName"
 
 Import-Module ActiveDirectory -ErrorAction Stop
 
+#
+# Transcript logging.
+#
+# Captures all console output for troubleshooting
+# brownfield remediation and user population issues.
+#
+
 $logFile = 'C:\Windows\Temp\populate-ad.log'
 
 Start-Transcript `
     -Path $logFile `
     -Force
+
+Write-Host "[i] Log file: $logFile"
 
 # Helper functions: idempotent Ensure-* operations.
 
@@ -168,64 +177,64 @@ function Ensure-ADUser {
         [SecureString]$Password,
         [string]$Manager
     )
-
+    
     $existingUser = Get-ADUser `
         -LDAPFilter "(sAMAccountName=$SamAccountName)" `
         -ErrorAction SilentlyContinue
 
-    # Existing users are updated rather than recreated.
-    # Selected attributes such as Department and Title
-    # are reconciled during re-execution.
-    #
-    # Reporting-line remediation is handled later by
-    # Get-DepartmentManagerInfo() and
-    # Invoke-Phase6UserRemediation().
-    if ($existingUser) {
+#
+# Existing users are updated rather than recreated.
+# Selected attributes such as Department and Title
+# are reconciled during re-execution.
+#
+# Reporting-line remediation is handled later by
+# Get-DepartmentManagerInfo() and
+# Invoke-Phase6UserRemediation().
+#
 
-        Write-Host "[=] User already exists: $SamAccountName"
+if ($existingUser) {
 
-        $existingUserFull = Get-ADUser `
-            -Identity $existingUser `
-            -Properties Title,DistinguishedName
+    $existingUserFull = Get-ADUser `
+        -Identity $existingUser `
+        -Properties Title,DistinguishedName
 
-        $existingUserOU = (
-            $existingUserFull.DistinguishedName -split ','
-        )[1] -replace '^OU='
+    $existingUserOU = (
+        $existingUserFull.DistinguishedName -split ','
+    )[1] -replace '^OU='
 
-        $updateParams = @{
-            Identity = $existingUser
-        }
-
-        if ($existingUserOU) {
-            $updateParams.Department = $existingUserOU
-        }
-        elseif ($Department) {
-            $updateParams.Department = $Department
-        }
-
-        if ($Title) {
-
-            $updateParams.Title = $Title
-        }
-
-        Set-ADUser @updateParams
-
-        #
-        # Reporting lines are reconciled later by
-        # Get-DepartmentManagerInfo() and
-        # Invoke-Phase6UserRemediation().
-        #
-        # Manager assignments should not be updated here.
-        #
-
-        return (
-            Get-ADUser `
-                -Identity $existingUser `
-                -Properties *
-        )
+    $updateParams = @{
+        Identity = $existingUser
     }
 
-    Write-Host "[+] Creating User: $SamAccountName"
+    if ($existingUserOU) {
+        $updateParams.Department = $existingUserOU
+    }
+    elseif ($Department) {
+        $updateParams.Department = $Department
+    }
+
+    if ($Title) {
+        $updateParams.Title = $Title
+    }
+
+    Set-ADUser @updateParams
+
+    #
+    # Reporting lines are reconciled later by
+    # Get-DepartmentManagerInfo() and
+    # Invoke-Phase6UserRemediation().
+    #
+    # Manager assignments should not be updated here.
+    #
+
+    return (
+        Get-ADUser `
+            -Identity $existingUser `
+            -Properties *
+    )
+}
+
+Write-Host "[+] Creating User: $SamAccountName"
 
     $params = @{
         Name                  = $DisplayName
@@ -634,7 +643,10 @@ function Invoke-Phase5DepartmentShares {
 function Get-DepartmentManagerInfo {
     param(
         [object[]]$SelectedDepartments,
-        [object]$UsersOu
+        [object]$UsersOu,
+        [System.Collections.ArrayList]$CsvNames,
+        [SecureString]$Password,
+        [string]$DomainName
     )
 
     $departmentInfo = @{}
@@ -786,76 +798,117 @@ function Get-DepartmentManagerInfo {
             }
         }
 
-        #
-        # One manager per department is supported.
-        #
-        # If multiple manager accounts exist within a
-        # departmental OU, the first manager is retained
-        # and all additional manager accounts are demoted.
-        #
-        # Departments without managers are permitted.
-        #
-        # Users without managers remain unmanaged.
-        #
-        # Cross-department reporting relationships are
-        # remediated to match departmental ownership.
+#
+# Bootstrap manager creation.
+#
+# Departments are expected to contain exactly
+# one manager account. If no manager exists,
+# a manager is created from the available
+# CSV population source.
+#
 
-        if ($existingDepartmentManagers.Count -eq 0) {
+if ($existingDepartmentManagers.Count -eq 0) {
 
-            Write-Warning (
-                "No manager found in department: " +
-                $department.Name
-            )
+    Write-Warning (
+        "No manager found in department: " +
+        $department.Name +
+        ". Creating manager."
+    )
 
-            #
-            # No departmental manager exists.
-            # Remove invalid cross-department reporting
-            # relationships but leave unmanaged users
-            # unchanged.
-            #
+    if ($CSVNames.Count -eq 0) {
+        throw "No more names available in names.csv"
+    }
 
-            Get-ADUser `
-                -SearchBase $departmentOU.DistinguishedName `
-                -Filter * `
-                -Properties Title,Manager |
-            Where-Object {
-                $_.Title -notlike '*Manager*'
-            } |
+    $managerUser = $null
+    $managerSam = $null
 
-            ForEach-Object {
+    while ($CSVNames.Count -gt 0) {
 
-                if ($_.Manager) {
+        $candidate = Get-Random -InputObject $CSVNames
 
-                    $currentManager = Get-ADUser `
-                        -Identity $_.Manager `
-                        -Properties Department `
-                        -ErrorAction SilentlyContinue
+        $candidateSam = (
+            $candidate.FirstName +
+            "." +
+            ($candidate.LastName -replace '\s+', '')
+        ).ToLower()
 
-                    if (
-                        -not $currentManager -or
-                        $currentManager.Department -ne $department.Name
-                    ) {
+        $candidateIndex = $CSVNames.IndexOf($candidate)
 
-                        Write-Host (
-                            "[INFO] Clearing cross-department manager for " +
-                            $_.SamAccountName
-                        )
+        if ($candidateIndex -ge 0) {
+            $CSVNames.RemoveAt($candidateIndex)
+        }
 
-                        Set-ADUser `
-                            -Identity $_ `
-                            -Clear Manager
-                    }
-                }
-            }
+        $existingCandidate = Get-ADUser `
+            -LDAPFilter "(sAMAccountName=$candidateSam)" `
+            -ErrorAction SilentlyContinue
 
-            $departmentInfo[$department.Name] = @{
-                Department     = $department
-                DepartmentOU   = $departmentOU
-                ManagerObjects = @()
-            }
-
+        if ($existingCandidate) {
             continue
         }
+
+        $managerUser = $candidate
+        $managerSam = $candidateSam
+        break
+    }
+
+    if (-not $managerUser) {
+        throw (
+            "Unable to create manager for department " +
+            $department.Name +
+            ". No unique usernames remain."
+        )
+    }
+
+    $managerUpn = "$managerSam@$DomainName"
+
+    $managerObject = Ensure-ADUser `
+        -SamAccountName $managerSam `
+        -Path $departmentOU.DistinguishedName `
+        -DisplayName "$($managerUser.FirstName) $($managerUser.LastName)" `
+        -GivenName $managerUser.FirstName `
+        -Surname $managerUser.LastName `
+        -UserPrincipalName $managerUpn `
+        -Department $department.Name `
+        -Title "$($department.Name) Manager" `
+        -Password $Password `
+        -Manager ""
+
+    Ensure-ADPrincipalGroupMembership `
+        -GroupName "GGS_$($department.Value)_ALL" `
+        -MemberName $managerSam
+
+    Ensure-ADPrincipalGroupMembership `
+        -GroupName "GGS_$($department.Value)_Managers" `
+        -MemberName $managerSam
+
+    $existingDepartmentManagers = @($managerObject)
+
+    $validatedManager = Get-ADUser `
+        -Identity $managerObject `
+        -Properties Department,Title,SamAccountName
+    
+    $managerGroupMember = Get-ADGroupMember `
+        -Identity "GGS_$($department.Value)_Managers" `
+        -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.SamAccountName -eq $validatedManager.SamAccountName
+    }
+
+    if (
+        $validatedManager.Department -ne $department.Name -or
+        $validatedManager.Title -notlike '*Manager*' -or
+        -not $managerGroupMember
+    ) {
+        throw (
+            "Manager bootstrap validation failed. " +
+            "Department=" + $department.Name +
+            ", User=" + $validatedManager.SamAccountName +
+            ", UserDepartment=" + $validatedManager.Department +
+            ", Title=" + $validatedManager.Title
+        )
+    }
+
+}
 
         #
         # A departmental manager exists.
@@ -931,6 +984,26 @@ function Get-DepartmentManagerInfo {
             ManagerObjects = $existingDepartmentManagers
         }
     }
+
+    #
+# Validate that every department has exactly one
+# manager before user population begins.
+#
+
+foreach ($departmentName in $departmentInfo.Keys) {
+
+    $managerCount =
+        $departmentInfo[$departmentName].ManagerObjects.Count
+
+    if ($managerCount -ne 1) {
+
+        throw (
+            "Department manager validation failed. " +
+            "Department=" + $departmentName +
+            ", ManagerCount=" + $managerCount
+        )
+    }
+}
 
     return $departmentInfo
 }
@@ -1115,6 +1188,22 @@ function Invoke-Phase6UserRemediation {
     Write-Host "[i] Existing user remediation completed"
 }
 
+#
+# Round-robin user population.
+#
+# Each pass attempts to add one standard user to
+# every department that has not yet reached its
+# target population.
+#
+# Existing usernames are discarded and a new
+# candidate is selected until a unique username
+# is found or the CSV is exhausted.
+#
+# Population ends when:
+# - All departments have reached target capacity.
+# - No additional unique usernames are available.
+#
+
 function Invoke-Phase7RoundRobinUserPopulation {
     param(
         [hashtable]$DepartmentTargets,
@@ -1123,12 +1212,19 @@ function Invoke-Phase7RoundRobinUserPopulation {
         [SecureString]$Password
     )
 
-    $maxUsersNeeded = (
-        $DepartmentTargets.Values |
-        Measure-Object UsersNeeded -Maximum
-    ).Maximum
+    #
+    # Build an in-memory lookup of existing
+    # sAMAccountNames to avoid repeated AD queries
+    # during user generation.
+    #
 
-    Write-Host "[i] Maximum users required by a department: $maxUsersNeeded"
+    $existingSamAccounts = [System.Collections.Generic.HashSet[string]]::new()
+
+    Get-ADUser -Filter * |
+    Select-Object -ExpandProperty SamAccountName |
+    ForEach-Object {
+        $existingSamAccounts.Add($_.ToLower()) | Out-Null
+    }
 
     foreach ($departmentData in $DepartmentTargets.Values) {
 
@@ -1149,17 +1245,37 @@ function Invoke-Phase7RoundRobinUserPopulation {
     # source names are available than requested.
     #
 
-    for ($i = 0; $i -lt $maxUsersNeeded; $i++) {
+    #
+    # Track successful user creation counts per
+    # department. Progress is based on actual
+    # accounts created rather than loop iterations.
+    #
 
-        if ($stopPopulation) {
+    $createdUsers = @{}
+
+    foreach ($departmentData in $DepartmentTargets.Values) {
+        $createdUsers[$departmentData.Department.Name] = 0
+    }
+
+    while (-not $stopPopulation) {
+
+        #
+        # Only process departments that have not
+        # yet reached their target user count.
+        #
+
+        $remainingDepartments = @(
+            $DepartmentTargets.Values |
+            Where-Object {
+                $createdUsers[$_.Department.Name] -lt $_.UsersNeeded
+            }
+        )
+
+        if ($remainingDepartments.Count -eq 0) {
             break
         }
 
-        foreach ($departmentData in $DepartmentTargets.Values) {
-
-            if ($departmentData.UsersNeeded -le $i) {
-                continue
-            }
+        foreach ($departmentData in $remainingDepartments) {
 
             if ($CsvNames.Count -eq 0) {
 
@@ -1176,6 +1292,11 @@ function Invoke-Phase7RoundRobinUserPopulation {
             $departmentOU = $departmentData.DepartmentOU
             $managerObjects = $departmentData.ManagerObjects
 
+            #
+            # New users are assigned to the department's
+            # primary manager if one exists.
+            #
+
             $managerObject = $managerObjects |
                 Select-Object -First 1
 
@@ -1185,14 +1306,48 @@ function Invoke-Phase7RoundRobinUserPopulation {
                 $managerDn = $managerObject.DistinguishedName
             }
 
-            $userRecord = Get-Random -InputObject $CsvNames
-            $null = $CsvNames.Remove($userRecord)
+            $userRecord = $null
+            $userSam = $null
 
-            $userSam = (
-                $userRecord.FirstName +
-                "." +
-                ($userRecord.LastName -replace '\s+', '')
-            ).ToLower()
+            #
+            # Select a candidate username.
+            #
+            # Existing usernames are discarded until
+            # a unique username is found or the CSV
+            # source is exhausted.
+            #
+
+            while ($CsvNames.Count -gt 0) {
+
+                $candidate = Get-Random -InputObject $CsvNames
+
+                $candidateSam = (
+                    $candidate.FirstName +
+                    "." +
+                    ($candidate.LastName -replace '\s+', '')
+                ).ToLower()
+
+                $null = $CsvNames.Remove($candidate)
+
+                if ($existingSamAccounts.Contains($candidateSam)) {
+
+                    continue
+                }
+
+                $userRecord = $candidate
+                $userSam = $candidateSam
+                break
+            }
+
+            if (-not $userRecord) {
+
+                Write-Warning (
+                    "No remaining unique usernames available."
+                )
+
+                $stopPopulation = $true
+                break
+            }
 
             $userUpn = "$userSam@$($ConnectedDomain.DNSRoot)"
 
@@ -1206,6 +1361,10 @@ function Invoke-Phase7RoundRobinUserPopulation {
                 -Department $department.Name `
                 -Password $Password `
                 -Manager $managerDn
+
+            $existingSamAccounts.Add($userSam) | Out-Null
+
+            $createdUsers[$department.Name]++
 
             $managerMembership = Get-ADPrincipalGroupMembership $userObject |
             Where-Object {
@@ -1251,6 +1410,23 @@ function Invoke-Phase7RoundRobinUserPopulation {
         }
     }
 }
+
+#
+# Execute directory population workflow.
+#
+# The script is designed to be idempotent and
+# may be executed repeatedly. Existing objects
+# are reconciled where possible and missing
+# objects are created.
+#
+# Execution order:
+# 1. Validate AD connectivity
+# 2. Build OU structure
+# 3. Create security groups
+# 4. Configure share permissions
+# 5. Reconcile existing users
+# 6. Populate missing users
+#
 
 try {
     $currentDomain = Get-ADDomain -ErrorAction Stop
@@ -1319,7 +1495,10 @@ if ($CSVNames.Count -lt $requiredUsers) {
 
 $departmentInfo = Get-DepartmentManagerInfo `
     -SelectedDepartments $departments `
-    -UsersOu $usersOU
+    -UsersOu $usersOU `
+    -CsvNames $CSVNames `
+    -Password $password `
+    -DomainName $DomainName
 
 $departmentTargets = Get-DepartmentUserTargets `
     -DepartmentInfo $departmentInfo `
@@ -1334,9 +1513,7 @@ Invoke-Phase7RoundRobinUserPopulation `
     -ConnectedDomain $currentDomain `
     -Password $password
 
-Write-Host "[i] User generation completed"
-
-Write-Host "Directory population completed"
+Write-Host "[i] Directory population completed"
 
 Stop-Transcript
 
