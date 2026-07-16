@@ -256,10 +256,52 @@ Write-Host "[+] Creating User: $SamAccountName"
         $params.Title = $Title
     }
 
-    New-ADUser @params
+    try {
+
+        Write-Host (
+            "[DEBUG] Creating user: " +
+            "Name='$DisplayName', " +
+            "GivenName='$GivenName', " +
+            "Surname='$Surname', " +
+            "SamAccountName='$SamAccountName', " +
+            "UPN='$UserPrincipalName', " +
+            "Length=$($SamAccountName.Length)"
+        )
+
+        New-ADUser @params -ErrorAction Stop
+    }
+    catch {
+
+        Write-Error (
+            "Failed AD user creation. " +
+            "Name='$DisplayName', " +
+            "SamAccountName='$SamAccountName', " +
+            "Length=$($SamAccountName.Length), " +
+            "UPN='$UserPrincipalName'"
+        )
+
+        throw
+    }
 
     $newUser = Get-ADUser `
-        -LDAPFilter "(sAMAccountName=$SamAccountName)"
+    -LDAPFilter "(sAMAccountName=$SamAccountName)" `
+    -ErrorAction SilentlyContinue
+
+        if (-not $newUser) {
+
+            throw (
+                "User creation failed. " +
+                "SamAccountName='$SamAccountName'"
+            )
+        }
+
+    if (-not $newUser) {
+
+        throw (
+            "User creation failed. " +
+            "SamAccountName='$SamAccountName'"
+        )
+    }
 
     if ($Manager) {
         Set-ADUser `
@@ -267,10 +309,12 @@ Write-Host "[+] Creating User: $SamAccountName"
             -Manager $Manager
     }
 
-    return (Get-ADUser `
-        -Identity $newUser `
-        -Properties *)
-}
+    return (
+        Get-ADUser `
+            -Identity $newUser `
+            -Properties *
+    )
+
 
 function Get-DirectoryPopulationModel {
     return (@'
@@ -322,6 +366,36 @@ function Initialize-NamesCsvRecords {
         Get-Content $CsvPath |
         ConvertFrom-Csv -Delimiter ';'
     )
+}
+
+function Get-SamAccountName {
+    param(
+        [string]$FirstName,
+        [string]$LastName
+    )
+
+    $sam = (
+        $FirstName +
+        "." +
+        ($LastName -replace '\s+', '')
+    ).ToLower()
+
+    #
+    # Active Directory sAMAccountName maximum:
+    # 20 characters.
+    #
+    if ($sam.Length -gt 20) {
+        $sam = $sam.Substring(0, 20)
+    }
+
+    Write-Host (
+        "[DEBUG] Generated sAMAccountName: " +
+        $sam +
+        " Length=" +
+        $sam.Length
+    )
+
+    return $sam
 }
 
 function Invoke-Phase1OuStructure {
@@ -826,11 +900,9 @@ if ($existingDepartmentManagers.Count -eq 0) {
 
         $candidate = Get-Random -InputObject $CSVNames
 
-        $candidateSam = (
-            $candidate.FirstName +
-            "." +
-            ($candidate.LastName -replace '\s+', '')
-        ).ToLower()
+        $candidateSam = Get-SamAccountName `
+            -FirstName $candidate.FirstName `
+            -LastName $candidate.LastName
 
         $candidateIndex = $CSVNames.IndexOf($candidate)
 
@@ -1321,11 +1393,9 @@ function Invoke-Phase7RoundRobinUserPopulation {
 
                 $candidate = Get-Random -InputObject $CsvNames
 
-                $candidateSam = (
-                    $candidate.FirstName +
-                    "." +
-                    ($candidate.LastName -replace '\s+', '')
-                ).ToLower()
+                $candidateSam = Get-SamAccountName `
+                    -FirstName $candidate.FirstName `
+                    -LastName $candidate.LastName
 
                 $null = $CsvNames.Remove($candidate)
 
@@ -1444,6 +1514,15 @@ $CSVNames = Initialize-NamesCsvRecords `
     -InputNamesCsvContent $NamesCsvContent `
     -CsvPath $usersCsvPath
 
+Write-Host (
+    "[INFO] CSV records loaded: " +
+    $CSVNames.Count
+)
+
+if ($CSVNames.Count -eq 0) {
+    throw "No records were loaded from NamesCsvContent."
+}
+
 $domainDN = (Get-ADRootDSE).rootDomainNamingContext
 $departments = Get-SelectedDepartments `
     -InputDepartmentsJson $DepartmentsJson `
@@ -1480,6 +1559,14 @@ $password = ConvertTo-SecureString `
     $ClientAdminPassword `
     -AsPlainText `
     -Force
+
+if (:IsNullOrWhiteSpace($NamesCsvContent)) {
+    throw "NamesCsvContent parameter is empty."
+}
+
+if (:IsNullOrWhiteSpace($ClientAdminPassword)) {
+    throw "ClientAdminPassword parameter is empty."
+}
 
 $requiredUsers =
     $DepartmentCount * ($UsersPerDepartment + 1)
