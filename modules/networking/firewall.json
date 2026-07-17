@@ -1,0 +1,130 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.44.1.10279",
+      "templateHash": "7471019769453439383"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string"
+    },
+    "firewallName": {
+      "type": "string"
+    },
+    "vnetName": {
+      "type": "string"
+    },
+    "publicIpName": {
+      "type": "string"
+    }
+  },
+  "variables": {
+    "internalRange": "10.0.0.0/8"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2023-02-01",
+      "name": "[parameters('publicIpName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Static"
+      }
+    },
+    {
+      "type": "Microsoft.Network/firewallPolicies",
+      "apiVersion": "2023-02-01",
+      "name": "[format('{0}-policy', parameters('firewallName'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "tier": "Standard"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/azureFirewalls",
+      "apiVersion": "2023-02-01",
+      "name": "[parameters('firewallName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "AZFW_VNet",
+          "tier": "Standard"
+        },
+        "firewallPolicy": {
+          "id": "[resourceId('Microsoft.Network/firewallPolicies', format('{0}-policy', parameters('firewallName')))]"
+        },
+        "ipConfigurations": [
+          {
+            "name": "firewall-ipconfig",
+            "properties": {
+              "subnet": {
+                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'AzureFirewallSubnet')]"
+              },
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('publicIpName'))]"
+              }
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/firewallPolicies', format('{0}-policy', parameters('firewallName')))]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', parameters('publicIpName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/firewallPolicies/ruleCollectionGroups",
+      "apiVersion": "2023-02-01",
+      "name": "[format('{0}/{1}', format('{0}-policy', parameters('firewallName')), 'default-network-rules')]",
+      "properties": {
+        "priority": 100,
+        "ruleCollections": [
+          {
+            "name": "allow-internal-traffic",
+            "priority": 100,
+            "ruleCollectionType": "FirewallPolicyFilterRuleCollection",
+            "action": {
+              "type": "Allow"
+            },
+            "rules": [
+              {
+                "ruleType": "NetworkRule",
+                "name": "allow-all-internal",
+                "ipProtocols": [
+                  "Any"
+                ],
+                "sourceAddresses": [
+                  "[variables('internalRange')]"
+                ],
+                "destinationAddresses": [
+                  "[variables('internalRange')]"
+                ],
+                "destinationPorts": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/firewallPolicies', format('{0}-policy', parameters('firewallName')))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "firewallPrivateIp": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/azureFirewalls', parameters('firewallName')), '2023-02-01').ipConfigurations[0].properties.privateIPAddress]"
+    }
+  }
+}

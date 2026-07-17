@@ -1,0 +1,1612 @@
+<#
+Populate AMRL AD objects (OU/group/share/user) on dc01.
+Derived from Set-DummyAD and adapted for idempotent Run Command execution.
+#>
+
+param(
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$DomainName,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$NamesCsvContent,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$ClientAdminPassword,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$DepartmentsJson,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, 1000)]
+    [int]$DepartmentCount,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, 10000)]
+    [int]$UsersPerDepartment
+)
+
+Write-Host "Starting AMRL Directory Population"
+Write-Host "DomainName = $DomainName"
+
+Import-Module ActiveDirectory -ErrorAction Stop
+
+#
+# Transcript logging.
+#
+# Captures all console output for troubleshooting
+# brownfield remediation and user population issues.
+#
+
+$timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+
+$logFile = "C:\Windows\Temp\populate-ad-$timestamp.log"
+
+Start-Transcript `
+    -Path $logFile `
+    -Force
+
+Write-Host "[i] Log file: $logFile"
+
+# Helper functions: idempotent Ensure-* operations.
+
+function Ensure-OrganizationalUnit {
+    param(
+        [string]$Name,
+        [string]$Path,
+        [bool]$ProtectedFromAccidentalDeletion = $false
+    )
+
+    $existingOu = Get-ADOrganizationalUnit `
+        -LDAPFilter "(ou=$Name)" `
+        -SearchBase $Path `
+        -SearchScope OneLevel `
+        -ErrorAction SilentlyContinue
+
+    if ($existingOu) {
+        Write-Host "[=] OU already exists: $Name"
+        return $existingOu
+    }
+
+    Write-Host "[+] Creating OU: $Name"
+
+    New-ADOrganizationalUnit `
+        -Name $Name `
+        -Path $Path `
+        -ProtectedFromAccidentalDeletion $ProtectedFromAccidentalDeletion
+
+    return Get-ADOrganizationalUnit `
+        -LDAPFilter "(ou=$Name)" `
+        -SearchBase $Path `
+        -SearchScope OneLevel
+}
+
+function Ensure-ADGroup {
+    param(
+        [string]$Name,
+        [string]$Path,
+        [string]$GroupCategory,
+        [string]$GroupScope
+    )
+
+    $existingGroup = Get-ADGroup `
+        -LDAPFilter "(cn=$Name)" `
+        -SearchBase $Path `
+        -SearchScope OneLevel `
+        -ErrorAction SilentlyContinue
+
+    if ($existingGroup) {
+        Write-Host "[=] Group already exists: $Name"
+        return $existingGroup
+    }
+
+    Write-Host "[+] Creating Group: $Name"
+
+    New-ADGroup `
+        -Name $Name `
+        -GroupCategory $GroupCategory `
+        -GroupScope $GroupScope `
+        -Path $Path
+
+    return Get-ADGroup `
+        -LDAPFilter "(cn=$Name)" `
+        -SearchBase $Path `
+        -SearchScope OneLevel
+}
+
+function Ensure-ADGroupMember {
+    param(
+        [string]$GroupName,
+        [string]$MemberName
+    )
+
+    $existingMember = Get-ADGroupMember `
+        -Identity $GroupName `
+        -ErrorAction SilentlyContinue |
+        Where-Object Name -eq $MemberName
+
+    if ($existingMember) {
+        Write-Host "[=] Membership already exists: $MemberName -> $GroupName"
+        return
+    }
+
+    Write-Host "[+] Adding membership: $MemberName -> $GroupName"
+
+    Add-ADGroupMember `
+        -Identity $GroupName `
+        -Members $MemberName
+}
+
+function Ensure-ADPrincipalGroupMembership {
+    param(
+        [string]$GroupName,
+        [string]$MemberName
+    )
+
+    $existingMember = Get-ADGroupMember `
+        -Identity $GroupName `
+        -Recursive `
+        -ErrorAction SilentlyContinue |
+        Where-Object SamAccountName -eq $MemberName
+
+    if ($existingMember) {
+        Write-Host "[=] Membership already exists: $MemberName -> $GroupName"
+        return
+    }
+
+    Write-Host "[+] Adding membership: $MemberName -> $GroupName"
+
+    Add-ADGroupMember `
+        -Identity $GroupName `
+        -Members $MemberName
+}
+
+# User management: create missing users and reconcile selected attributes.
+
+function Ensure-ADUser {
+    param(
+        [string]$SamAccountName,
+        [string]$Path,
+        [string]$DisplayName,
+        [string]$GivenName,
+        [string]$Surname,
+        [string]$UserPrincipalName,
+        [string]$Department,
+        [string]$Title,
+        [SecureString]$Password,
+        [string]$Manager
+    )
+    
+    $existingUser = Get-ADUser `
+        -LDAPFilter "(sAMAccountName=$SamAccountName)" `
+        -ErrorAction SilentlyContinue
+
+#
+# Existing users are updated rather than recreated.
+# Selected attributes such as Department and Title
+# are reconciled during re-execution.
+#
+# Reporting-line remediation is handled later by
+# Get-DepartmentManagerInfo() and
+# Invoke-Phase6UserRemediation().
+#
+
+if ($existingUser) {
+
+    $existingUserFull = Get-ADUser `
+        -Identity $existingUser `
+        -Properties Title,DistinguishedName
+
+    $existingUserOU = (
+        $existingUserFull.DistinguishedName -split ','
+    )[1] -replace '^OU='
+
+    $updateParams = @{
+        Identity = $existingUser
+    }
+
+    if ($existingUserOU) {
+        $updateParams.Department = $existingUserOU
+    }
+    elseif ($Department) {
+        $updateParams.Department = $Department
+    }
+
+    if ($Title) {
+        $updateParams.Title = $Title
+    }
+
+    Set-ADUser @updateParams
+
+    #
+    # Reporting lines are reconciled later by
+    # Get-DepartmentManagerInfo() and
+    # Invoke-Phase6UserRemediation().
+    #
+    # Manager assignments should not be updated here.
+    #
+
+    return (
+        Get-ADUser `
+            -Identity $existingUser `
+            -Properties *
+    )
+}
+
+Write-Host "[+] Creating User: $SamAccountName"
+
+    $params = @{
+        Name                  = $DisplayName
+        DisplayName           = $DisplayName
+        GivenName             = $GivenName
+        Surname               = $Surname
+        SamAccountName        = $SamAccountName
+        UserPrincipalName     = $UserPrincipalName
+        EmailAddress          = $UserPrincipalName
+        Path                  = $Path
+        AccountPassword       = $Password
+        ChangePasswordAtLogon = $false
+        PasswordNeverExpires  = $true
+        Enabled               = $true
+        Department            = $Department
+    }
+
+    if ($Title) {
+        $params.Title = $Title
+    }
+
+    try {
+
+        Write-Host (
+            "[DEBUG] Creating user: " +
+            "Name='$DisplayName', " +
+            "GivenName='$GivenName', " +
+            "Surname='$Surname', " +
+            "SamAccountName='$SamAccountName', " +
+            "UPN='$UserPrincipalName', " +
+            "Length=$($SamAccountName.Length)"
+        )
+
+        New-ADUser @params -ErrorAction Stop
+    }
+    catch {
+
+        Write-Error (
+            "Failed AD user creation. " +
+            "Name='$DisplayName', " +
+            "SamAccountName='$SamAccountName', " +
+            "Length=$($SamAccountName.Length), " +
+            "UPN='$UserPrincipalName'"
+        )
+
+        throw
+    }
+
+    $newUser = Get-ADUser `
+    -LDAPFilter "(sAMAccountName=$SamAccountName)" `
+    -ErrorAction SilentlyContinue
+
+        if (-not $newUser) {
+
+            throw (
+                "User creation failed. " +
+                "SamAccountName='$SamAccountName'"
+            )
+        }
+
+    if (-not $newUser) {
+
+        throw (
+            "User creation failed. " +
+            "SamAccountName='$SamAccountName'"
+        )
+    }
+
+    if ($Manager) {
+        Set-ADUser `
+            -Identity $newUser `
+            -Manager $Manager
+    }
+
+    return (
+        Get-ADUser `
+            -Identity $newUser `
+            -Properties *
+    )
+}
+
+function Get-DirectoryPopulationModel {
+    return (@'
+{
+    "PreventOUDeletion":false,
+    "RootOUName":"_ROOT",
+    "CustomOUs":[
+        "Computers",
+        "Computers/Servers",
+        "Computers/Clients",
+        "Groups",
+        "Groups/GGS",
+        "Groups/DLGS",
+        "Users",
+        "Users/Disabled"
+    ],
+    "RootShareName":"Shares",
+    "RootSharePath":"C:\\Shares"
+}
+'@ | ConvertFrom-Json)
+}
+
+function Get-SelectedDepartments {
+    param(
+        [string]$InputDepartmentsJson,
+        [int]$InputDepartmentCount
+    )
+
+    $allDepartments = (
+        $InputDepartmentsJson |
+        ConvertFrom-Json
+    ).PSObject.Properties
+
+    return ($allDepartments | Select-Object -First $InputDepartmentCount)
+}
+
+function Initialize-NamesCsvRecords {
+    param(
+        [string]$InputNamesCsvContent,
+        [string]$CsvPath
+    )
+
+    Set-Content `
+        -Path $CsvPath `
+        -Value $InputNamesCsvContent `
+        -Force
+
+    return [System.Collections.ArrayList]@(
+        Get-Content $CsvPath |
+        ConvertFrom-Csv -Delimiter ';'
+    )
+}
+
+function Get-SamAccountName {
+    param(
+        [string]$FirstName,
+        [string]$LastName
+    )
+
+    $sam = (
+        $FirstName +
+        "." +
+        ($LastName -replace '\s+', '')
+    ).ToLower()
+
+    #
+    # Active Directory sAMAccountName maximum:
+    # 20 characters.
+    #
+    if ($sam.Length -gt 20) {
+        $sam = $sam.Substring(0, 20)
+    }
+
+    Write-Host (
+        "[DEBUG] Generated sAMAccountName: " +
+        $sam +
+        " Length=" +
+        $sam.Length
+    )
+
+    return $sam
+}
+
+function Invoke-Phase1OuStructure {
+    param(
+        [object]$PopulationModel,
+        [string]$DomainDn
+    )
+
+    Write-Host "[i] OU generation starting"
+
+    $rootOU = Ensure-OrganizationalUnit `
+        -Name $PopulationModel.RootOUName `
+        -Path $DomainDn `
+        -ProtectedFromAccidentalDeletion $PopulationModel.PreventOUDeletion
+
+    $rootOUdn = $rootOU.DistinguishedName
+
+    foreach ($ouName in $PopulationModel.CustomOUs) {
+
+        if ($ouName -notlike "*/*") {
+
+            Ensure-OrganizationalUnit `
+                -Name $ouName `
+                -Path $rootOUdn `
+                -ProtectedFromAccidentalDeletion $PopulationModel.PreventOUDeletion |
+                Out-Null
+        }
+        else {
+
+            $parentOU = $ouName.Split('/')[0]
+            $childOU = $ouName.Split('/')[1]
+
+            $parentOUObject = Get-ADOrganizationalUnit `
+                -LDAPFilter "(ou=$parentOU)" `
+                -SearchBase $rootOUdn `
+                -ErrorAction Stop
+
+            Ensure-OrganizationalUnit `
+                -Name $childOU `
+                -Path $parentOUObject.DistinguishedName `
+                -ProtectedFromAccidentalDeletion $PopulationModel.PreventOUDeletion |
+                Out-Null
+        }
+    }
+
+    Write-Host "[i] OU generation completed"
+
+    return $rootOUdn
+}
+
+function Invoke-Phase2DepartmentOus {
+    param(
+        [object[]]$SelectedDepartments,
+        [string]$RootOuDn,
+        [bool]$PreventOuDeletion
+    )
+
+    Write-Host "[i] Department OU generation starting"
+
+    $usersOU = Get-ADOrganizationalUnit `
+        -LDAPFilter "(ou=Users)" `
+        -SearchBase $RootOuDn `
+        -ErrorAction Stop
+
+    foreach ($department in $SelectedDepartments) {
+
+        Ensure-OrganizationalUnit `
+            -Name $department.Name `
+            -Path $usersOU.DistinguishedName `
+            -ProtectedFromAccidentalDeletion $PreventOuDeletion |
+            Out-Null
+    }
+
+    Write-Host "[i] Department OU generation completed"
+
+    return $usersOU
+}
+
+function Invoke-Phase3DepartmentSecurityGroups {
+    param(
+        [object[]]$SelectedDepartments,
+        [string]$RootOuDn
+    )
+
+    Write-Host "[i] Department security group generation starting"
+
+    $groupsOU = Get-ADOrganizationalUnit `
+        -LDAPFilter "(ou=Groups)" `
+        -SearchBase $RootOuDn `
+        -ErrorAction Stop
+
+    $ggsOU = Get-ADOrganizationalUnit `
+        -LDAPFilter "(ou=GGS)" `
+        -SearchBase $groupsOU.DistinguishedName `
+        -ErrorAction Stop
+
+    $dlgsOU = Get-ADOrganizationalUnit `
+        -LDAPFilter "(ou=DLGS)" `
+        -SearchBase $groupsOU.DistinguishedName `
+        -ErrorAction Stop
+
+    if (-not $ggsOU -or [string]::IsNullOrWhiteSpace($ggsOU.DistinguishedName)) {
+        throw "Unable to resolve GGS OU under $($groupsOU.DistinguishedName)."
+    }
+
+    if (-not $dlgsOU -or [string]::IsNullOrWhiteSpace($dlgsOU.DistinguishedName)) {
+        throw "Unable to resolve DLGS OU under $($groupsOU.DistinguishedName)."
+    }
+
+    foreach ($department in $SelectedDepartments) {
+
+        $code = $department.Value
+
+        Ensure-ADGroup `
+            -Name "GGS_${code}_ALL" `
+            -Path $ggsOU.DistinguishedName `
+            -GroupCategory Security `
+            -GroupScope Global
+
+        Ensure-ADGroup `
+            -Name "GGS_${code}_Managers" `
+            -Path $ggsOU.DistinguishedName `
+            -GroupCategory Security `
+            -GroupScope Global
+
+        Ensure-ADGroup `
+            -Name "GGS_${code}_Users" `
+            -Path $ggsOU.DistinguishedName `
+            -GroupCategory Security `
+            -GroupScope Global
+
+        Ensure-ADGroup `
+            -Name "DLGS_${code}_Share_RW" `
+            -Path $dlgsOU.DistinguishedName `
+            -GroupCategory Security `
+            -GroupScope DomainLocal
+
+        Ensure-ADGroup `
+            -Name "DLGS_${code}_Share_RO" `
+            -Path $dlgsOU.DistinguishedName `
+            -GroupCategory Security `
+            -GroupScope DomainLocal
+    }
+
+    Write-Host "[i] Department security group generation completed"
+}
+
+function Invoke-Phase4DepartmentGroupNesting {
+    param(
+        [object[]]$SelectedDepartments
+    )
+
+    Write-Host "[i] Department group nesting starting"
+
+    foreach ($department in $SelectedDepartments) {
+
+        $code = $department.Value
+
+        Ensure-ADGroupMember `
+            -GroupName "DLGS_${code}_Share_RW" `
+            -MemberName "GGS_${code}_Managers"
+
+        Ensure-ADGroupMember `
+            -GroupName "DLGS_${code}_Share_RO" `
+            -MemberName "GGS_${code}_Users"
+    }
+
+    Write-Host "[i] Department group nesting completed"
+}
+
+function Invoke-Phase5DepartmentShares {
+    param(
+        [object[]]$SelectedDepartments,
+        [object]$PopulationModel
+    )
+
+    Write-Host "[i] Root share creation starting"
+
+    $rootSharePath = $PopulationModel.RootSharePath
+
+    if (-not (Test-Path $rootSharePath)) {
+
+        New-Item `
+            -Path $rootSharePath `
+            -ItemType Directory `
+            -Force | Out-Null
+
+        Write-Host "[+] Created $rootSharePath"
+    }
+    else {
+
+        Write-Host "[=] Root share already exists: $rootSharePath"
+    }
+
+    Write-Host "[i] Root share creation completed"
+
+    Write-Host "[i] Root share ACL configuration starting"
+
+    icacls $rootSharePath /inheritance:d | Out-Null
+
+    $fACLs = Get-Acl $rootSharePath
+
+    foreach ($rule in $fACLs.Access) {
+
+        if ($rule.IdentityReference -like "*Users") {
+
+            $fACLs.RemoveAccessRuleAll($rule) | Out-Null
+        }
+    }
+
+    Set-Acl `
+        -Path $rootSharePath `
+        -AclObject $fACLs
+
+    Write-Host "[i] Root share ACL configuration completed"
+
+    Write-Host "[i] Department share generation starting"
+
+    foreach ($department in $SelectedDepartments) {
+
+        $code = $department.Value
+
+        $departmentSharePath = Join-Path `
+            -Path $PopulationModel.RootSharePath `
+            -ChildPath $department.Name
+
+        if (-not (Test-Path $departmentSharePath)) {
+
+            New-Item `
+                -Path $departmentSharePath `
+                -ItemType Directory `
+                -Force | Out-Null
+
+            Write-Host "[+] Created share directory: $departmentSharePath"
+        }
+        else {
+
+            Write-Host "[=] Share directory already exists: $departmentSharePath"
+        }
+
+        if (-not (Get-SmbShare -Name $code -ErrorAction SilentlyContinue)) {
+
+            New-SmbShare `
+                -Name $code `
+                -Path $departmentSharePath | Out-Null
+
+            Grant-SmbShareAccess `
+                -Name $code `
+                -AccountName 'Everyone' `
+                -AccessRight Full `
+                -Force | Out-Null
+
+            Write-Host "[+] Created SMB share: $code"
+        }
+        else {
+
+            Write-Host "[=] SMB share already exists: $code"
+        }
+
+        $dirACL = Get-Acl $departmentSharePath
+
+        $acrw = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            "DLGS_${code}_Share_RW",
+            "Modify",
+            "ContainerInherit,ObjectInherit",
+            "None",
+            "Allow"
+        )
+
+        $acro = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            "DLGS_${code}_Share_RO",
+            "ReadAndExecute",
+            "ContainerInherit,ObjectInherit",
+            "None",
+            "Allow"
+        )
+
+        $dirACL.SetAccessRule($acrw)
+        $dirACL.SetAccessRule($acro)
+
+        Set-Acl `
+            -Path $departmentSharePath `
+            -AclObject $dirACL
+
+        Write-Host "[+] Applied NTFS permissions: $department.Name"
+    }
+
+    Write-Host "[i] Department share generation completed"
+}
+
+#
+# Manager reconciliation phase.
+#
+# OU placement is the authoritative source of
+# departmental ownership and reporting lines.
+#
+# Rules:
+#
+# - One manager per department is supported.
+# - Additional manager accounts are demoted.
+# - Users without managers remain unmanaged.
+# - Users reporting outside their department
+#   are remediated.
+# - When a departmental manager exists,
+#   incorrect reporting lines are reassigned
+#   to that manager.
+# - When no departmental manager exists,
+#   incorrect reporting lines are removed by
+#   clearing the Manager attribute.
+#
+# Reconciliation includes:
+# - Department attribute
+# - Title
+# - Manager assignments
+# - Departmental ALL groups
+# - Departmental Manager groups
+#
+
+function Get-DepartmentManagerInfo {
+    param(
+        [object[]]$SelectedDepartments,
+        [object]$UsersOu,
+        [System.Collections.ArrayList]$CsvNames,
+        [SecureString]$Password,
+        [string]$DomainName
+    )
+
+    $departmentInfo = @{}
+
+    foreach ($department in $SelectedDepartments) {
+
+        $departmentOU = Get-ADOrganizationalUnit `
+            -LDAPFilter "(ou=$($department.Name))" `
+            -SearchBase $UsersOu.DistinguishedName `
+            -ErrorAction Stop
+
+        $existingDepartmentManagers = @(
+            Get-ADUser `
+                -SearchBase $departmentOU.DistinguishedName `
+                -Filter * `
+                -Properties Title `
+                -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Title -like '*Manager*'
+            }
+        )
+
+        #
+        # Brownfield remediation:
+        # DummyAD supports one manager per department.
+        # Keep the first manager found and demote the rest.
+        #
+        if ($existingDepartmentManagers.Count -gt 1) {
+
+            $primaryManager = $existingDepartmentManagers |
+                Select-Object -First 1
+
+            $duplicateManagers = $existingDepartmentManagers |
+                Select-Object -Skip 1
+
+            foreach ($duplicateManager in $duplicateManagers) {
+
+                Write-Host (
+                    "[INFO] Demoting duplicate manager: " +
+                    $duplicateManager.SamAccountName
+                )
+
+                Set-ADUser `
+                    -Identity $duplicateManager `
+                    -Clear Title
+
+                #
+                # Reporting lines will be remediated later
+                # in this function.
+                #
+
+                Remove-ADGroupMember `
+                    -Identity "GGS_$($department.Value)_Managers" `
+                    -Members $duplicateManager `
+                    -Confirm:$false `
+                    -ErrorAction SilentlyContinue
+
+                Ensure-ADPrincipalGroupMembership `
+                    -GroupName "GGS_$($department.Value)_Users" `
+                    -MemberName $duplicateManager.SamAccountName
+            }
+
+            $existingDepartmentManagers = @($primaryManager)
+        }
+
+        if ($existingDepartmentManagers.Count -gt 0) {
+
+            foreach ($managerObject in $existingDepartmentManagers) {
+
+                Write-Host (
+                    "[INFO] Reconciling manager: " +
+                    $managerObject.SamAccountName +
+                    " Department=" +
+                    $department.Name
+                )
+
+                Set-ADUser `
+                    -Identity $managerObject `
+                    -Department $department.Name `
+                    -Title "$($department.Name) Manager"
+
+                Get-ADPrincipalGroupMembership $managerObject |
+                Where-Object {
+                    $_.Name -like 'GGS_*_Users'
+                } |
+                ForEach-Object {
+
+                    Write-Host (
+                        "[INFO] Removing manager from user group: " +
+                        $_.Name
+                    )
+
+                    Remove-ADGroupMember `
+                        -Identity $_ `
+                        -Members $managerObject `
+                        -Confirm:$false
+                }
+
+                Get-ADPrincipalGroupMembership $managerObject |
+                Where-Object {
+                    $_.Name -like 'GGS_*_Managers' -and
+                    $_.Name -ne "GGS_$($department.Value)_Managers"
+                } |
+                ForEach-Object {
+
+                    Write-Host (
+                        "[INFO] Removing manager from incorrect manager group: " +
+                        $_.Name
+                    )
+
+                    Remove-ADGroupMember `
+                        -Identity $_ `
+                        -Members $managerObject `
+                        -Confirm:$false
+                }
+
+                Get-ADPrincipalGroupMembership $managerObject |
+                Where-Object {
+                    $_.Name -like 'GGS_*_ALL' -and
+                    $_.Name -ne "GGS_$($department.Value)_ALL"
+                } |
+                ForEach-Object {
+
+                    Write-Host (
+                        "[INFO] Removing manager from incorrect ALL group: " +
+                        $_.Name
+                    )
+
+                    Remove-ADGroupMember `
+                        -Identity $_ `
+                        -Members $managerObject `
+                        -Confirm:$false
+                }
+
+                $managerSam = $managerObject.SamAccountName
+
+                Ensure-ADPrincipalGroupMembership `
+                    -GroupName "GGS_$($department.Value)_ALL" `
+                    -MemberName $managerSam
+
+                Ensure-ADPrincipalGroupMembership `
+                    -GroupName "GGS_$($department.Value)_Managers" `
+                    -MemberName $managerSam
+
+                Write-Host (
+                    "[INFO] Manager groups reconciled: " +
+                    $managerSam
+                )
+            }
+        }
+
+#
+# Bootstrap manager creation.
+#
+# Departments are expected to contain exactly
+# one manager account. If no manager exists,
+# a manager is created from the available
+# CSV population source.
+#
+
+if ($existingDepartmentManagers.Count -eq 0) {
+
+    Write-Warning (
+        "No manager found in department: " +
+        $department.Name +
+        ". Creating manager."
+    )
+
+    if ($CSVNames.Count -eq 0) {
+        throw "No more names available in names.csv"
+    }
+
+    $managerUser = $null
+    $managerSam = $null
+
+    while ($CSVNames.Count -gt 0) {
+
+        $candidate = Get-Random -InputObject $CSVNames
+
+        $candidateSam = Get-SamAccountName `
+            -FirstName $candidate.FirstName `
+            -LastName $candidate.LastName
+
+        $candidateIndex = $CSVNames.IndexOf($candidate)
+
+        if ($candidateIndex -ge 0) {
+            $CSVNames.RemoveAt($candidateIndex)
+        }
+
+        $existingCandidate = Get-ADUser `
+            -LDAPFilter "(sAMAccountName=$candidateSam)" `
+            -ErrorAction SilentlyContinue
+
+        if ($existingCandidate) {
+            continue
+        }
+
+        $managerUser = $candidate
+        $managerSam = $candidateSam
+        break
+    }
+
+    if (-not $managerUser) {
+        throw (
+            "Unable to create manager for department " +
+            $department.Name +
+            ". No unique usernames remain."
+        )
+    }
+
+    $managerUpn = "$managerSam@$DomainName"
+
+    $managerObject = Ensure-ADUser `
+        -SamAccountName $managerSam `
+        -Path $departmentOU.DistinguishedName `
+        -DisplayName "$($managerUser.FirstName) $($managerUser.LastName)" `
+        -GivenName $managerUser.FirstName `
+        -Surname $managerUser.LastName `
+        -UserPrincipalName $managerUpn `
+        -Department $department.Name `
+        -Title "$($department.Name) Manager" `
+        -Password $Password `
+        -Manager ""
+
+    Ensure-ADPrincipalGroupMembership `
+        -GroupName "GGS_$($department.Value)_ALL" `
+        -MemberName $managerSam
+
+    Ensure-ADPrincipalGroupMembership `
+        -GroupName "GGS_$($department.Value)_Managers" `
+        -MemberName $managerSam
+
+    $existingDepartmentManagers = @($managerObject)
+
+    $validatedManager = Get-ADUser `
+        -Identity $managerObject `
+        -Properties Department,Title,SamAccountName
+    
+    $managerGroupMember = Get-ADGroupMember `
+        -Identity "GGS_$($department.Value)_Managers" `
+        -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.SamAccountName -eq $validatedManager.SamAccountName
+    }
+
+    if (
+        $validatedManager.Department -ne $department.Name -or
+        $validatedManager.Title -notlike '*Manager*' -or
+        -not $managerGroupMember
+    ) {
+        throw (
+            "Manager bootstrap validation failed. " +
+            "Department=" + $department.Name +
+            ", User=" + $validatedManager.SamAccountName +
+            ", UserDepartment=" + $validatedManager.Department +
+            ", Title=" + $validatedManager.Title
+        )
+    }
+
+}
+
+        #
+        # A departmental manager exists.
+        # Remediate invalid reporting lines to the
+        # department manager.
+        #
+
+        $primaryManager = $existingDepartmentManagers |
+            Select-Object -First 1
+
+        Get-ADUser `
+            -SearchBase $departmentOU.DistinguishedName `
+            -Filter * `
+            -Properties Title,Manager |
+        Where-Object {
+            $_.Title -notlike '*Manager*'
+        } |
+        ForEach-Object {
+
+            #
+            # A departmental manager exists.
+            #
+            # Any user that is:
+            # - unmanaged
+            # - assigned to an invalid manager
+            # - assigned to a manager in another department
+            #
+            # should be assigned to the departmental manager.
+            #
+
+            if (-not $_.Manager) {
+
+                Write-Host (
+                    "[INFO] Assigning departmental manager for " +
+                    $_.SamAccountName +
+                    " -> " +
+                    $primaryManager.SamAccountName
+                )
+
+                Set-ADUser `
+                    -Identity $_ `
+                    -Manager $primaryManager.DistinguishedName
+            }
+            else {
+
+                $currentManager = Get-ADUser `
+                    -Identity $_.Manager `
+                    -Properties Department `
+                    -ErrorAction SilentlyContinue
+
+                if (
+                    -not $currentManager -or
+                    $currentManager.Department -ne $department.Name
+                ) {
+
+                    Write-Host (
+                        "[INFO] Reassigning manager for " +
+                        $_.SamAccountName +
+                        " -> " +
+                        $primaryManager.SamAccountName
+                    )
+
+                    Set-ADUser `
+                        -Identity $_ `
+                        -Manager $primaryManager.DistinguishedName
+                }
+            }
+        }
+
+        $departmentInfo[$department.Name] = @{
+            Department     = $department
+            DepartmentOU   = $departmentOU
+            ManagerObjects = $existingDepartmentManagers
+        }
+    }
+
+    #
+# Validate that every department has exactly one
+# manager before user population begins.
+#
+
+foreach ($departmentName in $departmentInfo.Keys) {
+
+    $managerCount =
+        $departmentInfo[$departmentName].ManagerObjects.Count
+
+    if ($managerCount -ne 1) {
+
+        throw (
+            "Department manager validation failed. " +
+            "Department=" + $departmentName +
+            ", ManagerCount=" + $managerCount
+        )
+    }
+}
+
+    return $departmentInfo
+}
+
+function Get-DepartmentUserTargets {
+    param(
+        [hashtable]$DepartmentInfo,
+        [int]$TargetUsersPerDepartment
+    )
+
+    $departmentTargets = @{}
+
+    foreach ($departmentData in $DepartmentInfo.Values) {
+
+        $department = $departmentData.Department
+        $departmentOU = $departmentData.DepartmentOU
+        $managerObjects = $departmentData.ManagerObjects
+
+        #
+        # Managers are excluded from user counts.
+        #
+        # UsersPerDepartment represents standard users
+        # only and does not include manager accounts.
+        #
+
+        $currentUserCount = (
+            Get-ADUser `
+                -Filter * `
+                -SearchBase $departmentOU.DistinguishedName `
+                -Properties Title `
+                -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Title -notlike '*Manager*'
+            }
+        ).Count
+
+        $usersNeeded = [Math]::Max(
+            0,
+            ($TargetUsersPerDepartment - $currentUserCount)
+        )
+
+        Write-Host (
+            "[i] Department $($department.Name): " +
+            "$currentUserCount users present, " +
+            "$usersNeeded users required"
+        )
+
+        $departmentTargets[$department.Name] = [PSCustomObject]@{
+            Department     = $department
+            DepartmentOU   = $departmentOU
+            ManagerObjects = $managerObjects
+            UsersNeeded    = $usersNeeded
+        }
+    }
+
+    return $departmentTargets
+}
+
+#
+# User remediation phase.
+#
+# Responsibilities:
+# - Department attribute remediation
+# - Group membership remediation
+#
+# Reporting-line remediation is handled earlier
+# by Get-DepartmentManagerInfo().
+#
+
+function Invoke-Phase6UserRemediation {
+    param(
+        [hashtable]$DepartmentInfo
+    )
+
+    Write-Host "[i] Existing user remediation starting"
+
+    foreach ($departmentData in $DepartmentInfo.Values) {
+
+        $department = $departmentData.Department
+        $departmentOU = $departmentData.DepartmentOU
+
+        #
+        # Departments without managers are valid.
+        #
+
+        Get-ADUser `
+            -SearchBase $departmentOU.DistinguishedName `
+            -Filter * `
+            -Properties Title,Manager |
+
+        ForEach-Object {
+
+            $user = $_
+
+            if ($user.Title -like '*Manager*') {
+
+                Write-Host (
+                    "[INFO] Skipping manager account: " +
+                    $user.SamAccountName
+                )
+            }
+            else {
+
+                Write-Host (
+                    "[INFO] Remediating user " +
+                    $user.SamAccountName
+                )
+
+                #
+                # Department
+                #
+
+                Set-ADUser `
+                    -Identity $user `
+                    -Department $department.Name
+
+                #
+                # Remove bad *_Users groups
+                #
+
+                Get-ADPrincipalGroupMembership $user |
+                Where-Object {
+                    $_.Name -like 'GGS_*_Users' -and
+                    $_.Name -ne "GGS_$($department.Value)_Users"
+                } |
+                ForEach-Object {
+
+                    Remove-ADGroupMember `
+                        -Identity $_ `
+                        -Members $user `
+                        -Confirm:$false
+                }
+
+                #
+                # Remove bad *_Managers groups
+                #
+
+                Get-ADPrincipalGroupMembership $user |
+                Where-Object {
+                    $_.Name -like 'GGS_*_Managers'
+                } |
+                ForEach-Object {
+
+                    Remove-ADGroupMember `
+                        -Identity $_ `
+                        -Members $user `
+                        -Confirm:$false
+                }
+
+                #
+                # Remove bad *_ALL groups
+                #
+
+                Get-ADPrincipalGroupMembership $user |
+                Where-Object {
+                    $_.Name -like 'GGS_*_ALL' -and
+                    $_.Name -ne "GGS_$($department.Value)_ALL"
+                } |
+                ForEach-Object {
+
+                    Remove-ADGroupMember `
+                        -Identity $_ `
+                        -Members $user `
+                        -Confirm:$false
+                }
+
+                #
+                # Add correct groups
+                #
+
+                Ensure-ADPrincipalGroupMembership `
+                    -GroupName "GGS_$($department.Value)_ALL" `
+                    -MemberName $user.SamAccountName
+
+                Ensure-ADPrincipalGroupMembership `
+                    -GroupName "GGS_$($department.Value)_Users" `
+                    -MemberName $user.SamAccountName
+            }
+        }
+    }
+
+    Write-Host "[i] Existing user remediation completed"
+}
+
+#
+# Round-robin user population.
+#
+# Each pass attempts to add one standard user to
+# every department that has not yet reached its
+# target population.
+#
+# Existing usernames are discarded and a new
+# candidate is selected until a unique username
+# is found or the CSV is exhausted.
+#
+# Population ends when:
+# - All departments have reached target capacity.
+# - No additional unique usernames are available.
+#
+
+function Invoke-Phase7RoundRobinUserPopulation {
+    param(
+        [hashtable]$DepartmentTargets,
+        [System.Collections.ArrayList]$CsvNames,
+        [object]$ConnectedDomain,
+        [SecureString]$Password
+    )
+
+    #
+    # Build an in-memory lookup of existing
+    # sAMAccountNames to avoid repeated AD queries
+    # during user generation.
+    #
+
+    $existingSamAccounts = [System.Collections.Generic.HashSet[string]]::new()
+
+    Get-ADUser -Filter * |
+    Select-Object -ExpandProperty SamAccountName |
+    ForEach-Object {
+        $existingSamAccounts.Add($_.ToLower()) | Out-Null
+    }
+
+    foreach ($departmentData in $DepartmentTargets.Values) {
+
+        Write-Host (
+            "[i] " +
+            $departmentData.Department.Name +
+            ": UsersNeeded=" +
+            $departmentData.UsersNeeded
+        )
+    }
+
+    $stopPopulation = $false
+
+    #
+    # Users are added round-robin across departments.
+    #
+    # This allows balanced population when fewer
+    # source names are available than requested.
+    #
+
+    #
+    # Track successful user creation counts per
+    # department. Progress is based on actual
+    # accounts created rather than loop iterations.
+    #
+
+    $createdUsers = @{}
+
+    foreach ($departmentData in $DepartmentTargets.Values) {
+        $createdUsers[$departmentData.Department.Name] = 0
+    }
+
+    while (-not $stopPopulation) {
+
+        #
+        # Only process departments that have not
+        # yet reached their target user count.
+        #
+
+        $remainingDepartments = @(
+            $DepartmentTargets.Values |
+            Where-Object {
+                $createdUsers[$_.Department.Name] -lt $_.UsersNeeded
+            }
+        )
+
+        if ($remainingDepartments.Count -eq 0) {
+            break
+        }
+
+        foreach ($departmentData in $remainingDepartments) {
+
+            if ($CsvNames.Count -eq 0) {
+
+                Write-Warning (
+                    "No more names available in names.csv. " +
+                    "User population stopped after available names were exhausted."
+                )
+
+                $stopPopulation = $true
+                break
+            }
+
+            $department = $departmentData.Department
+            $departmentOU = $departmentData.DepartmentOU
+            $managerObjects = $departmentData.ManagerObjects
+
+            #
+            # New users are assigned to the department's
+            # primary manager if one exists.
+            #
+
+            $managerObject = $managerObjects |
+                Select-Object -First 1
+
+            $managerDn = $null
+
+            if ($managerObject) {
+                $managerDn = $managerObject.DistinguishedName
+            }
+
+            $userRecord = $null
+            $userSam = $null
+
+            #
+            # Select a candidate username.
+            #
+            # Existing usernames are discarded until
+            # a unique username is found or the CSV
+            # source is exhausted.
+            #
+
+            while ($CsvNames.Count -gt 0) {
+
+                $candidate = Get-Random -InputObject $CsvNames
+
+                $candidateSam = Get-SamAccountName `
+                    -FirstName $candidate.FirstName `
+                    -LastName $candidate.LastName
+
+                $null = $CsvNames.Remove($candidate)
+
+                if ($existingSamAccounts.Contains($candidateSam)) {
+
+                    continue
+                }
+
+                $userRecord = $candidate
+                $userSam = $candidateSam
+                break
+            }
+
+            if (-not $userRecord) {
+
+                Write-Warning (
+                    "No remaining unique usernames available."
+                )
+
+                $stopPopulation = $true
+                break
+            }
+
+            $userUpn = "$userSam@$($ConnectedDomain.DNSRoot)"
+
+            $userObject = Ensure-ADUser `
+                -SamAccountName $userSam `
+                -Path $departmentOU.DistinguishedName `
+                -DisplayName "$($userRecord.FirstName) $($userRecord.LastName)" `
+                -GivenName $userRecord.FirstName `
+                -Surname $userRecord.LastName `
+                -UserPrincipalName $userUpn `
+                -Department $department.Name `
+                -Password $Password `
+                -Manager $managerDn
+
+            $existingSamAccounts.Add($userSam) | Out-Null
+
+            $createdUsers[$department.Name]++
+
+            $managerMembership = Get-ADPrincipalGroupMembership $userObject |
+            Where-Object {
+                $_.Name -like 'GGS_*_Managers'
+            }
+
+            if ($managerMembership) {
+
+                Write-Host (
+                    "[INFO] User is already a department manager. " +
+                    "Skipping user-group remediation: " +
+                    $userObject.SamAccountName
+                )
+
+                continue
+            }
+
+            Ensure-ADPrincipalGroupMembership `
+                -GroupName "GGS_$($department.Value)_ALL" `
+                -MemberName $userSam
+
+            Ensure-ADPrincipalGroupMembership `
+                -GroupName "GGS_$($department.Value)_Users" `
+                -MemberName $userSam
+
+            Get-ADPrincipalGroupMembership $userObject |
+            Where-Object {
+                $_.Name -like 'GGS_*_Users' -and
+                $_.Name -ne "GGS_$($department.Value)_Users"
+            } |
+            ForEach-Object {
+
+                Write-Host (
+                    "[INFO] Removing user from incorrect user group: " +
+                    $_.Name
+                )
+
+                Remove-ADGroupMember `
+                    -Identity $_ `
+                    -Members $userObject `
+                    -Confirm:$false
+            }
+        }
+    }
+}
+
+#
+# Execute directory population workflow.
+#
+# The script is designed to be idempotent and
+# may be executed repeatedly. Existing objects
+# are reconciled where possible and missing
+# objects are created.
+#
+# Execution order:
+# 1. Validate AD connectivity
+# 2. Build OU structure
+# 3. Create security groups
+# 4. Configure share permissions
+# 5. Reconcile existing users
+# 6. Populate missing users
+#
+
+try {
+    $currentDomain = Get-ADDomain -ErrorAction Stop
+
+    Write-Host "Connected to domain: $($currentDomain.DNSRoot)"
+}
+catch {
+    Write-Error "Unable to access Active Directory"
+    throw
+}
+
+$model = Get-DirectoryPopulationModel
+$usersCsvPath = 'C:\Windows\Temp\names.csv'
+$CSVNames = Initialize-NamesCsvRecords `
+    -InputNamesCsvContent $NamesCsvContent `
+    -CsvPath $usersCsvPath
+
+Write-Host (
+    "[INFO] CSV records loaded: " +
+    $CSVNames.Count
+)
+
+if ($CSVNames.Count -eq 0) {
+    throw "No records were loaded from NamesCsvContent."
+}
+
+$domainDN = (Get-ADRootDSE).rootDomainNamingContext
+$departments = Get-SelectedDepartments `
+    -InputDepartmentsJson $DepartmentsJson `
+    -InputDepartmentCount $DepartmentCount
+
+$rootOUdn = Invoke-Phase1OuStructure `
+    -PopulationModel $model `
+    -DomainDn $domainDN
+
+$usersOU = Invoke-Phase2DepartmentOus `
+    -SelectedDepartments $departments `
+    -RootOuDn $rootOUdn `
+    -PreventOuDeletion $model.PreventOUDeletion
+
+Invoke-Phase3DepartmentSecurityGroups `
+    -SelectedDepartments $departments `
+    -RootOuDn $rootOUdn
+
+Invoke-Phase4DepartmentGroupNesting `
+    -SelectedDepartments $departments
+
+Invoke-Phase5DepartmentShares `
+    -SelectedDepartments $departments `
+    -PopulationModel $model
+
+Write-Host "[i] User generation starting"
+
+#
+# Password is supplied by Terraform / Run Command
+# as a string and must be converted here.
+#
+
+$password = ConvertTo-SecureString `
+    $ClientAdminPassword `
+    -AsPlainText `
+    -Force
+
+if ([string]::IsNullOrWhiteSpace($NamesCsvContent)) {
+    throw "NamesCsvContent parameter is empty."
+}
+
+if ([string]::IsNullOrWhiteSpace($ClientAdminPassword)) {
+    throw "ClientAdminPassword parameter is empty."
+}
+
+$requiredUsers =
+    $DepartmentCount * ($UsersPerDepartment + 1)
+
+if ($CSVNames.Count -lt $requiredUsers) {
+
+    Write-Warning (
+        "names.csv contains $($CSVNames.Count) names " +
+        "but deployment requires $requiredUsers accounts. " +
+        "Users will be distributed as evenly as possible."
+    )
+}
+
+$departmentInfo = Get-DepartmentManagerInfo `
+    -SelectedDepartments $departments `
+    -UsersOu $usersOU `
+    -CsvNames $CSVNames `
+    -Password $password `
+    -DomainName $DomainName
+
+$departmentTargets = Get-DepartmentUserTargets `
+    -DepartmentInfo $departmentInfo `
+    -TargetUsersPerDepartment $UsersPerDepartment
+
+Invoke-Phase6UserRemediation `
+    -DepartmentInfo $departmentInfo
+
+Invoke-Phase7RoundRobinUserPopulation `
+    -DepartmentTargets $departmentTargets `
+    -CsvNames $CSVNames `
+    -ConnectedDomain $currentDomain `
+    -Password $password
+
+Write-Host "[i] Directory population completed"
+
+Stop-Transcript
+
+# TODO:
+# Future AMRL release:
+# Move departmental shares to dedicated file servers
+# rather than hosting on domain controllers.

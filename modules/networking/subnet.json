@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.44.1.10279",
+      "templateHash": "13049415948142637936"
+    }
+  },
+  "parameters": {
+    "vnetName": {
+      "type": "string"
+    },
+    "subnetName": {
+      "type": "string"
+    },
+    "addressPrefix": {
+      "type": "string"
+    },
+    "nsgId": {
+      "type": "string"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2022-07-01",
+      "name": "[format('{0}/{1}', parameters('vnetName'), parameters('subnetName'))]",
+      "properties": {
+        "addressPrefix": "[parameters('addressPrefix')]",
+        "networkSecurityGroup": "[if(empty(parameters('nsgId')), null(), createObject('id', parameters('nsgId')))]"
+      }
+    }
+  ],
+  "outputs": {
+    "subnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnetName'))]"
+    }
+  }
+}

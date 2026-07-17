@@ -8,7 +8,7 @@ targetScope = 'subscription'
   'workload'
   'all'
 ])
-param stage string = 'all'
+param stage string
 
 // ========================================
 // MODULE PURPOSE
@@ -49,6 +49,10 @@ param vmSizes object
 // Role-based OS disk map (storage SKU + disk size) keyed by logical workload roles.
 param osDisks object
 param vmAutoDeleteOptions object
+
+param usersPerDepartment int
+param departments object
+param departmentCount int
 
 param enableIdentity bool
 param domainName string
@@ -116,11 +120,11 @@ var vmList = concat(
 //
 // ========================================
 // REGION ORDERING (Index-Based Sorting)
-// Converts regionIndexMap → ordered region list
+// Converts regionIndexMap to an ordered region list
 // ========================================
 //
 
-// Extract regions in order of their index value (1 → N)
+// Extract regions in order of their index value (1 to N)
 var regionPairs = [
   for r in items(regionIndexMap): {
     key: r.key
@@ -411,6 +415,10 @@ module validationEngine 'modules/logic/validation.bicep' = {
     primaryRegion: primaryRegion
     hubRegion: hubRegion
     hasTooManyDcs: hasTooManyDcs
+    departments: departments
+    departmentCount: departmentCount
+    usersPerDepartment: usersPerDepartment
+
   }
 }
 
@@ -677,6 +685,26 @@ module replicaDcs 'modules/identity/ad-replicadc.bicep' = [
   }
 ]
 
+module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
+  name: '${prefix}-ad-populate'
+
+  scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
+
+  dependsOn: [
+    adForest
+    replicaDcs
+  ]
+
+  params: {
+    dcVmName: primaryDc!.name
+    domainName: domainName
+    usersPerDepartment: usersPerDepartment
+    departments: departments
+    clientAdminPassword: clientAdminPassword
+    departmentCount: departmentCount
+  }
+}
+
 // ========================================
 // DEPLOYMENT STAGE 8: LINUX VMS
 // ========================================
@@ -736,7 +764,7 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
 // This is the primary output used to verify distribution logic
 output vmPlacement array = vmPlacements
 
-// Validation message describing why deployment failed (empty if no validation errors)
+// Validation message describing the first detected validation issue, or a success message when all checks pass.
 
 output validationDebug object = validationEngine.outputs.validationFlags
 output validationCapacityDebug object = {

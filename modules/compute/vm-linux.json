@@ -1,0 +1,151 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.44.1.10279",
+      "templateHash": "14479803290256540779"
+    }
+  },
+  "parameters": {
+    "vmName": {
+      "type": "string"
+    },
+    "subnetId": {
+      "type": "string"
+    },
+    "vmSize": {
+      "type": "string"
+    },
+    "adminUsername": {
+      "type": "string"
+    },
+    "adminPublicKey": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {}
+    },
+    "image": {
+      "type": "object"
+    },
+    "osDisk": {
+      "type": "object"
+    },
+    "vmAutoDeleteOptions": {
+      "type": "object"
+    },
+    "assignPublicIp": {
+      "type": "bool"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2022-07-01",
+      "name": "[format('{0}-nic', parameters('vmName'))]",
+      "location": "[resourceGroup().location]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "subnet": {
+                "id": "[parameters('subnetId')]"
+              },
+              "privateIPAllocationMethod": "Dynamic",
+              "publicIPAddress": "[if(parameters('assignPublicIp'), createObject('id', resourceId('Microsoft.Network/publicIPAddresses', format('{0}-pip', parameters('vmName')))), null())]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/publicIPAddresses', format('{0}-pip', parameters('vmName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2022-08-01",
+      "name": "[parameters('vmName')]",
+      "location": "[resourceGroup().location]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "diagnosticsProfile": {
+          "bootDiagnostics": {
+            "enabled": true
+          }
+        },
+        "securityProfile": {
+          "securityType": "TrustedLaunch",
+          "uefiSettings": {
+            "secureBootEnabled": true,
+            "vTpmEnabled": true
+          }
+        },
+        "hardwareProfile": {
+          "vmSize": "[parameters('vmSize')]"
+        },
+        "osProfile": {
+          "computerName": "[parameters('vmName')]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "linuxConfiguration": {
+            "disablePasswordAuthentication": true,
+            "ssh": {
+              "publicKeys": [
+                {
+                  "path": "[format('/home/{0}/.ssh/authorized_keys', parameters('adminUsername'))]",
+                  "keyData": "[parameters('adminPublicKey')]"
+                }
+              ]
+            },
+            "provisionVMAgent": true
+          }
+        },
+        "storageProfile": {
+          "imageReference": "[parameters('image')]",
+          "osDisk": {
+            "createOption": "FromImage",
+            "deleteOption": "[if(parameters('vmAutoDeleteOptions').osDisk, 'Delete', 'Detach')]",
+            "diskSizeGB": "[parameters('osDisk').diskSizeGB]",
+            "managedDisk": {
+              "storageAccountType": "[parameters('osDisk').storageAccountType]"
+            }
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', format('{0}-nic', parameters('vmName')))]",
+              "properties": {
+                "deleteOption": "[if(parameters('vmAutoDeleteOptions').nic, 'Delete', 'Detach')]"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', format('{0}-nic', parameters('vmName')))]"
+      ]
+    },
+    {
+      "condition": "[parameters('assignPublicIp')]",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2023-02-01",
+      "name": "[format('{0}-pip', parameters('vmName'))]",
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Static",
+        "deleteOption": "[if(parameters('vmAutoDeleteOptions').publicIp, 'Delete', 'Detach')]"
+      }
+    }
+  ]
+}
