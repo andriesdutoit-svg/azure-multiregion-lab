@@ -41,7 +41,9 @@ Import-Module ActiveDirectory -ErrorAction Stop
 # brownfield remediation and user population issues.
 #
 
-$logFile = 'C:\Windows\Temp\populate-ad.log'
+$timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+
+$logFile = "C:\Windows\Temp\populate-ad-$timestamp.log"
 
 Start-Transcript `
     -Path $logFile `
@@ -314,7 +316,7 @@ Write-Host "[+] Creating User: $SamAccountName"
             -Identity $newUser `
             -Properties *
     )
-
+}
 
 function Get-DirectoryPopulationModel {
     return (@'
@@ -1560,11 +1562,11 @@ $password = ConvertTo-SecureString `
     -AsPlainText `
     -Force
 
-if (:IsNullOrWhiteSpace($NamesCsvContent)) {
+if ([string]::IsNullOrWhiteSpace($NamesCsvContent)) {
     throw "NamesCsvContent parameter is empty."
 }
 
-if (:IsNullOrWhiteSpace($ClientAdminPassword)) {
+if ([string]::IsNullOrWhiteSpace($ClientAdminPassword)) {
     throw "ClientAdminPassword parameter is empty."
 }
 

@@ -506,11 +506,35 @@ Configuration is deployment-driven through parameters:
 Behaviour notes:
 
 - Populate logic is executed through Azure VM Run Command with script content embedded from the repository using Bicep `loadTextContent()`.
-- Deployments are intentionally non-destructive: reruns create missing objects and reconcile selected attributes and memberships.
-- Department OU placement is treated as the source of truth for departmental context during remediation.
-- Within each department OU, accounts are treated as managers only when their title indicates manager status.
-- Reporting lines, department attributes, and group memberships are remediated from what the script finds in each department OU.
-- Existing users and groups are not removed to enforce an exact directory state during brownfield reruns.
+- Deployments are intentionally non-destructive: reruns reconcile existing objects and recreate only missing required objects.
+
+Greenfield expectations:
+
+- Baseline OUs, departmental OUs, security groups, AGDLP nesting, shares, and NTFS ACLs are created.
+- User population targets are applied per department as `1 manager + usersPerDepartment standard users`.
+
+Brownfield reconciliation model:
+
+- Departmental context is OU-driven: OU location determines department ownership during remediation.
+- Manager eligibility is title-driven within that OU context: accounts are treated as managers only when title matches `*Manager*`.
+- Exactly one manager is supported per department. If multiple managers exist, the first is retained and additional managers are demoted.
+- If no manager exists in a department, a new manager is created from an unused CSV record (existing users are not promoted).
+- Removing a department from `departments` does not delete its existing OU or users; that OU remains and becomes unmanaged by subsequent runs.
+- Adding a new department to `departments` creates and reconciles that department in addition to already existing departments.
+- Reporting lines are repaired from departmental context:
+  - unmanaged users are assigned to the departmental manager
+  - invalid or cross-department manager links are reassigned to the departmental manager
+- Non-manager users are remediated for Department attribute and departmental group memberships.
+
+Population rules:
+
+- `usersPerDepartment` is enforced as a minimum target for standard users (managers excluded from this count).
+- Under-populated departments are topped up.
+- Over-populated departments are preserved; surplus users are not removed.
+- New users are added round-robin across departments.
+- Username collisions are skipped.
+- Standard user population stops with a warning when unique names are exhausted.
+- Manager bootstrap fails for a department if no unique CSV name remains.
 
 ### Security Model
 
@@ -1197,8 +1221,10 @@ Department parameter behaviour:
 - `departments` is an object that maps department names to short codes, for example `"Finance": "FIN"`.
 - `departmentCount` limits how many entries are taken from `departments` during a deployment.
 - `usersPerDepartment` controls the target number of standard users per department.
-- On redeploy, existing department OUs are reused as the source of departmental context, manager status is inferred from title within that OU, and missing users are topped up rather than recreated.
-- Managers are kept out of normal user groups, and user memberships and reporting lines are reconciled from what the script finds in each department OU.
+- Existing departments are reconciled in place; missing required objects are recreated.
+- Departments removed from the parameter set are not deleted; they remain present but unmanaged by further population runs.
+- Departments newly added to the parameter set are created and managed alongside existing departments.
+- For full greenfield and brownfield reconciliation behaviour, see [Directory Population](#directory-population).
 
 [Back to top](#table-of-contents)
 ---
