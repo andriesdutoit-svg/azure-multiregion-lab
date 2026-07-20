@@ -1,9 +1,8 @@
-*test*
 *.txt
 
 # Compiled Bicep outputs (regenerate via 'az bicep build')
 /main.json
 /modules/**/*.json
 
-# Keep parameter templates in source control
-!main.parameters.*.json
+# Test parameter file
+main.parameters.test.json
