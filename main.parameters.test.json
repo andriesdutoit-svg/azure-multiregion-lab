@@ -3,7 +3,7 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "prefix": {
-      "value": "AMRL"
+      "value": "A1"
     },
 
     "stage": {
@@ -19,32 +19,32 @@
     "regionIndexMap": {
       "value": {
         "southafricanorth": 1,
-        "centralindia": 2,
-        "malaysiawest": 3,
-        "belgiumcentral": 4,
-        "indonesiacentral": 5,
-        "polandcentral": 6,
+        "australiaeast": 6,
         "australiasoutheast": 7,
-        "japaneast": 8,
-        "spaincentral": 9,
-        "denmarkeast": 10,
-        "swedencentral": 11,
-        "koreacentral": 12,
-        "canadaeast": 13,
-        "southindia": 14,
-        "uaenorth": 15,
-        "australiaeast": 16,
-        "mexicocentral": 17,
-        "eastasia": 18,
-        "southeastasia": 19,
-        "koreasouth": 20,
-        "austriaeast": 21,
-        "westcentralus": 22,
-        "israelcentral": 23,
-        "newzealandnorth": 24,
-        "chilecentral": 25,
-        "japanwest": 26,
-        "westus2": 27
+        "austriaeast": 8,
+        "belgiumcentral": 9,
+        "canadaeast": 10,
+        "centralindia": 2,
+        "chilecentral": 11,
+        "denmarkeast": 12,
+        "eastasia": 13,
+        "indonesiacentral": 14,
+        "israelcentral": 15,
+        "japaneast": 16,
+        "japanwest": 17,
+        "koreacentral": 18,
+        "koreasouth": 19,
+        "malaysiawest": 20,
+        "mexicocentral": 21,
+        "newzealandnorth": 22,
+        "polandcentral": 23,
+        "southindia": 24,
+        "southeastasia": 25,
+        "spaincentral": 3,
+        "swedencentral": 26,
+        "uaenorth": 27,
+        "westcentralus": 5,
+        "westus2": 4
       }
     },
 
@@ -68,18 +68,31 @@
 
     "vmCounts": {
       "value": {
-        "dc": 1,
+        "dc": 3,
         "jumpbox": 1,
         "windowsServer": 1,
-        "windowsClient": 1,
-        "linuxServer": 1,
+        "windowsClient": 0,
+        "linuxServer": 0,
         "linuxClient": 1
       }
     },
 
     "jumpboxAllowedSources": {
       "value": [
-        "<YOUR_PUBLIC_IP>/32"
+        "168.210.156.45",
+        "137.158.0.0/16",
+        "197.239.0.0/16",
+        "196.24.0.0/16",
+        "196.42.0.0/16",
+        "196.47.0.0/16"
+      ]
+    },
+
+    "existingRegions": {
+      "value": [
+        "southafricanorth",
+        "centralindia",
+        "spaincentral"
       ]
     },
 
@@ -88,34 +101,11 @@
     },
 
     "enableIdentity": {
-      "value": false
+      "value": true
     },
 
     "domainName": {
       "value": "amrl.lab"
-    },
-
-    "usersPerDepartment": {
-      "value": 10
-    },
-
-    "departments": {
-      "value": {
-        "Finance": "FIN",
-        "HR": "HR",
-        "ICT": "ICT",
-        "Sales": "SAL",
-        "Engineering": "ENG",
-        "Operation": "OPE",
-        "Marketing": "MAR",
-        "Legal": "LEG",
-        "Procurement": "PRO",
-        "Research": "RES"
-      }
-    },
-
-    "departmentCount": {
-      "value": 10
     },
 
     "windowsServerImage": {
@@ -159,28 +149,28 @@
     "osDisks": {
       "value": {
         "dc": {
-          "storageAccountType": "Premium_LRS",
+          "storageAccountType": "Standard_LRS",
           "diskSizeGB": 128
         },
         "jumpbox": {
-          "storageAccountType": "StandardSSD_LRS",
-          "diskSizeGB": 64
+          "storageAccountType": "Standard_LRS",
+          "diskSizeGB": 128
         },
         "windowsServer": {
-          "storageAccountType": "Premium_LRS",
+          "storageAccountType": "Standard_LRS",
           "diskSizeGB": 128
         },
         "windowsClient": {
-          "storageAccountType": "StandardSSD_LRS",
-          "diskSizeGB": 64
+          "storageAccountType": "Standard_LRS",
+          "diskSizeGB": 128
         },
         "linuxServer": {
-          "storageAccountType": "Premium_LRS",
+          "storageAccountType": "Standard_LRS",
           "diskSizeGB": 128
         },
         "linuxClient": {
-          "storageAccountType": "StandardSSD_LRS",
-          "diskSizeGB": 64
+          "storageAccountType": "Standard_LRS",
+          "diskSizeGB": 128
         }
       }
     },
@@ -194,46 +184,61 @@
     },
 
     "adminPublicKey": {
-      "value": "<SSH_PUBLIC_KEY>"
+      "value": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO5JidQnbZ4LWITUUPbydIRe9QuSV8ID4kiWEHXmZ1jU"
     },
-
     "jumpboxAdminUsername": {
       "value": "azureadmin"
     },
-
     "jumpboxAdminPassword": {
       "reference": {
         "keyVault": {
-          "id": "<KEYVAULT_ID>"
+          "id": "/subscriptions/d5af9917-a3d5-4982-8d75-055f5b6430da/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/dttand020lab-kv"
         },
         "secretName": "jumpboxAdminPassword"
       }
     },
-
     "serverAdminUsername": {
       "value": "azureadmin"
     },
-
     "serverAdminPassword": {
       "reference": {
         "keyVault": {
-          "id": "<KEYVAULT_ID>"
+          "id": "/subscriptions/d5af9917-a3d5-4982-8d75-055f5b6430da/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/dttand020lab-kv"
         },
         "secretName": "serverAdminPassword"
       }
     },
-
     "clientAdminUsername": {
       "value": "azureadmin"
     },
-
     "clientAdminPassword": {
       "reference": {
         "keyVault": {
-          "id": "<KEYVAULT_ID>"
+          "id": "/subscriptions/d5af9917-a3d5-4982-8d75-055f5b6430da/resourceGroups/traininglab-rg-foundation/providers/Microsoft.KeyVault/vaults/dttand020lab-kv"
         },
         "secretName": "clientAdminPassword"
       }
+    },
+    "usersPerDepartment": {
+      "value": 70
+    },
+    "departments": {
+      "value": {
+        "Finance": "FIN",
+        "HR": "HR",
+        "ICT": "ICT",
+        "Sales": "SAL",
+        "Engineering": "ENG",
+        "Operations": "OPS",
+        "Marketing": "MAR",
+        "Legal": "LEG",
+        "Procurement": "PRO",
+        "Research": "RES",
+        "Support": "SUP"
+      }
+    },
+    "departmentCount": {
+      "value": 11
     }
   }
 }

@@ -375,6 +375,24 @@ function Get-SamAccountName {
         [string]$FirstName,
         [string]$LastName
     )
+    
+
+    #
+    # Reject invalid CSV records.
+    #
+    # Empty first or last names can generate invalid
+    # sAMAccountNames and cause New-ADUser failures.
+    #
+    if (
+            [string]::IsNullOrWhiteSpace($FirstName) -or
+            [string]::IsNullOrWhiteSpace($LastName)
+        ) {
+            throw (
+                "Invalid CSV record. " +
+                "FirstName='$FirstName', " +
+                "LastName='$LastName'"
+            )
+        }
 
     $sam = (
         $FirstName +

@@ -36,12 +36,10 @@ param windowsServerImage object
 param windowsClientImage object
 param ubuntuImage object
 param regionIndexMap object
-@description('True = create NSGs and subnets. False = use existing NSGs and subnets for brownfield deployments')
-param deploySubnets bool
 param subnetIndexMap object
 param regionCount int
-@description('Regions that already exist and whose networking resources should be reused.')
-param existingRegions array = []
+@description('Regions where VNets, NSGs, subnets, and route tables already exist and should be reused. Resources in listed regions are reused; resources in other regions are created (greenfield).')
+param existingRegions array
 param maxVmsPerRegion int
 param vmCounts object
 param jumpboxAllowedSources array
@@ -146,6 +144,11 @@ var regionKeys = take(sortedRegions, regionCount)
 
 var primaryRegion = regionKeys[0]
 var isSingleRegion = regionCount == 1
+
+var invalidExistingRegions = filter(
+  existingRegions,
+  region => !contains(regionKeys, region)
+)
 
 // Split the unified VM model into control-plane and workload sets.
 // Placement uses different rules for these two groups.
@@ -420,7 +423,11 @@ module validationEngine 'modules/logic/validation.bicep' = {
     departments: departments
     departmentCount: departmentCount
     usersPerDepartment: usersPerDepartment
-
+    invalidExistingRegions: invalidExistingRegions
+    deployNetwork: deployNetwork
+    deployControl: deployControl
+    deployWorkload: deployWorkload
+    existingRegions: existingRegions
   }
 }
 
@@ -456,7 +463,6 @@ module vnets 'modules/networking/vnet.bicep' = [
       location: region
       isHub: region == hubRegion
 
-      deploySubnets: deploySubnets
       existingRegions: existingRegions
 
       addressPrefix: addressPrefixes[i]
@@ -513,7 +519,7 @@ module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
 }
 
 // ========================================
-// DEPLOYMENT STAGE 5a: ROUTE TABLES (SPOKE REGIONS)
+// DEPLOYMENT STAGE 5: ROUTE TABLES (SPOKE REGIONS)
 // ========================================
 
 // Suppressions in this module are intentional: BCP318 appears because vnet/firewall outputs are conditionally evaluated

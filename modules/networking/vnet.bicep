@@ -10,7 +10,6 @@
 
 param vnetName string
 param location string
-param deploySubnets bool
 param addressPrefix string
 param subnetPrefix object
 param isHub bool
@@ -344,9 +343,11 @@ module subnetHub 'subnet.bicep' = if (isHub && createSubnets) {
 
 // ========================================
 // EXISTING RESOURCE REFERENCES
-// Used for safe ID resolution and brownfield compatibility.
-// Avoids module.outputs access in conditional-module paths.
+// In brownfield deployments (isExistingRegion=true), networking resources are not created by this module.
+// Existing resource references allow safe ID resolution without module.outputs access,
+// avoiding null-reference errors in conditional-module paths.
 // ========================================
+
 
 resource subnetClientExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
   parent: existingVnet
@@ -395,13 +396,15 @@ var jumpboxSubnetId = subnetJumpboxExisting.id
 var serverSubnetId = subnetServerExisting.id
 
 // ========================================
-// NSG ID RESOLUTION (GREENFIELD + BROWNFIELD)
+// NSG ID RESOLUTION
+// Greenfield (create new) or brownfield (reuse existing) NSG ID selection.
 // ========================================
 
-var serverNsgId = deploySubnets ? nsgServer!.outputs.nsgId : nsgServerExisting.id
-var clientNsgId = deploySubnets ? nsgClient!.outputs.nsgId : nsgClientExisting.id
-var dcNsgId = deploySubnets ? nsgDc!.outputs.nsgId : nsgDcExisting.id
-var jumpboxNsgId = deploySubnets ? nsgJumpbox!.outputs.nsgId : nsgJumpboxExisting.id
+
+var serverNsgId = createSubnets ? nsgServer!.outputs.nsgId : nsgServerExisting.id
+var clientNsgId = createSubnets ? nsgClient!.outputs.nsgId : nsgClientExisting.id
+var dcNsgId = createSubnets ? nsgDc!.outputs.nsgId : nsgDcExisting.id
+var jumpboxNsgId = createSubnets ? nsgJumpbox!.outputs.nsgId : nsgJumpboxExisting.id
 
 // ========================================
 // OUTPUTS
@@ -428,7 +431,7 @@ output nsgs object = {
 // ========================================
 // Resolve subnet IDs using existing resource references.
 // Avoids module.outputs access because subnet modules are conditional (module | null).
-// Works for both new and existing deployments.
+// Resolves to newly-created subnets from modules (greenfield) or existing subnets (brownfield).
 
 output subnets object = {
   client: {

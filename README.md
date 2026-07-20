@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.1
+# Azure Multi-Region Lab (AMRL) v2.1.1
 
 ## Overview
 
@@ -90,11 +90,11 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
   - [Step 3: Region Mapping](#step-3-region-mapping)
   - [Step 4a: Subnet Mapping](#step-4a-subnet-mapping)
   - [Step 4b: Greenfield and Brownfield Deployments](#step-4b-greenfield-and-brownfield-deployments)
-    - [deploySubnets](#deploysubnets)
     - [Greenfield Deployments](#greenfield-deployments)
     - [Brownfield Deployments](#brownfield-deployments)
     - [Relationship Between Stages and Brownfield Deployments](#relationship-between-stages-and-brownfield-deployments)
-    - [Stage Dependency Considerations](#stage-dependency-considerations)
+    - [Parameters That Can Be Changed Between Deployments](#parameters-that-can-be-changed-between-deployments)
+    - [Changes Requiring Careful Planning](#changes-requiring-careful-planning)
     - [Supported Deployment Models](#supported-deployment-models)
   - [Step 5: VM Counts (Controls Scale)](#step-5-vm-counts-controls-scale)
   - [Step 6: Role-Based VM Sizing and Storage](#step-6-role-based-vm-sizing-and-storage)
@@ -240,6 +240,9 @@ The solution was developed iteratively, with each phase introducing additional a
 - **v2.1.0 — Directory Population**
   Added staged directory population to the identity workflow, including OU creation, AGDLP group seeding, share and NTFS permission provisioning, brownfield manager reconciliation, and user population driven by `departments`, `departmentCount`, and `usersPerDepartment`.
 
+- **v2.1.1 – Brownfield Networking Support**
+  Introduced region-aware networking reuse using `existingRegions`, allowing existing VNets, NSGs, and subnets to be referenced rather than redeployed. Added validation for invalid `existingRegions` entries and simplified networking orchestration by removing the obsolete `deploySubnets` control.
+
 ### Design Principles
 
 The design is based on the following principles:
@@ -304,10 +307,10 @@ Placement does not rely on deployment order.
 - Limitation: Must account for concurrent deployments.  
 
 ### Global DNS
-All VNets share the same DNS list derived from DC placement.
+Newly deployed VNets share the same DNS list derived from DC placement. Existing VNets reused during brownfield deployments retain their previously configured DNS settings.
 
-- Benefit: Simple and consistent.  
-- Limitation: Not latency-optimised per region.  
+- Benefit: Simple and consistent for new deployments.  
+- Limitation: Not latency-optimised per region. DNS normalisation across brownfield-reused VNets is not automatically performed.  
 
 [Back to top](#table-of-contents)
 ---
@@ -414,7 +417,9 @@ The DNS server list is derived dynamically from DC placements and ordered as fol
 2. Remaining regions containing DCs are included in deterministic order
 3. The list is truncated to a maximum of three DNS servers
 
-This same ordered DNS server list is applied consistently across all VNets.
+Newly created VNets receive the current DNS server list derived from DC placement.
+
+During brownfield deployments, existing VNets are reused and retain their existing DNS configuration. DNS normalisation across previously deployed VNets is not currently performed automatically.
 
 #### DNS Design Approach
 
@@ -779,20 +784,12 @@ Leave these values as-is unless redesigning networking.
 
 ### Step 4b: Greenfield and Brownfield Deployments
 
-### `deploySubnets`
+Networking create/reuse behaviour is controlled by `existingRegions`:
+- Regions listed in `existingRegions` have existing VNets, NSGs, and subnets that are reused
+- Regions not listed are created new (greenfield)
+- Route tables, peerings, and other dependent resources continue to be managed as needed
 
-```json
-"deploySubnets": { "value": true }
-```
-
-This parameter controls whether networking resources are created or reused.
-
-| Value | Behaviour |
-|---------|------------|
-| `true` | Creates NSGs, subnets, and the Azure Firewall subnet. |
-| `false` | Reuses existing networking resources instead of creating them. |
-
-### Greenfield Deployments
+#### Greenfield Deployments
 
 A greenfield deployment creates all networking components required by the solution:
 
@@ -803,9 +800,9 @@ A greenfield deployment creates all networking components required by the soluti
 - Route tables
 - VMs
 
-For new lab environments, leave `deploySubnets` set to `true`.
+For new lab environments, set `existingRegions` to an empty array.
 
-### Brownfield Deployments
+#### Brownfield Deployments
 
 A brownfield deployment reuses existing networking resources rather than creating new ones.
 
@@ -821,15 +818,52 @@ The existing networking resources should either:
 - Have been created by a previous deployment of this solution, or
 - Follow the same naming conventions, subnet structure, and resource relationships expected by the modules.
 
+Validation prevents regions from being marked as existing when they are not part of the current deployment.
 
-### Relationship Between Stages and Brownfield Deployments
+**Example: Invalid existingRegions**
+
+```json
+"regionCount": { "value": 2 },
+"regionIndexMap": {
+  "value": {
+    "southafricanorth": 1,
+    "centralindia": 2
+  }
+},
+"existingRegions": { "value": ["southafricanorth", "centralindia", "spaincentral"] }
+```
+
+Result: Validation error because `spaincentral` is not part of the currently selected region set. Only `southafricanorth` and `centralindia` are valid entries.
+
+**Example: Brownfield Expansion**
+
+Expanding from a 2-region deployment to 3 regions:
+
+```json
+"regionCount": { "value": 3 },
+"regionIndexMap": {
+  "value": {
+    "southafricanorth": 1,
+    "centralindia": 2,
+    "spaincentral": 3
+  }
+},
+"existingRegions": { "value": ["southafricanorth", "centralindia"] }
+```
+
+Result:
+- `southafricanorth` networking reused
+- `centralindia` networking reused  
+- `spaincentral` networking created
+
+#### Relationship Between Stages and Brownfield Deployments
 
 Stages and brownfield support serve different purposes:
 
 | Feature | Purpose |
 |----------|---------|
 | `stage` | Controls when resources are deployed |
-| `deploySubnets` | Controls whether networking resources are created or reused |
+| `existingRegions` | Controls whether networking resources are created or reused per region |
 
 Examples:
 
@@ -837,7 +871,7 @@ Examples:
 - `stage=control` → Deploy control-plane VMs (DCs and jumpboxes) only.
 - `stage=identity` → Deploy identity bootstrap and replica promotion modules (requires existing control-plane DC VMs).
 - `stage=workload` → Deploy workload VMs only.
-- `deploySubnets=false` → Reuse existing networking resources.
+- Add a region to `existingRegions` → Reuse existing networking resources in that region.
 
 #### Stage Dependency Diagram
 
@@ -850,12 +884,12 @@ flowchart LR
   C --> W[stage=workload]
   I --> W
   A[stage=all] --> N
-  D[deploySubnets=false] -.-> N
+  E[existingRegions includes a region] -.-> N
 ```
 
 These features can be used independently or together, provided the required networking resources and deployment framework assumptions are already in place.
 
-### Parameters That Can Be Changed Between Deployments
+#### Parameters That Can Be Changed Between Deployments
 
 The following changes are generally supported:
 
@@ -878,7 +912,7 @@ Typical examples include:
 - Updating operating system images
 - Resizing VMs
 
-### Changes Requiring Careful Planning
+#### Changes Requiring Careful Planning
 
 The following parameters may significantly affect topology or addressing:
 
@@ -889,22 +923,7 @@ The following parameters may significantly affect topology or addressing:
 
 Changing these values after deployment may require resource recreation or migration planning.
 
-### Current Limitation
-
-This solution is designed around the networking structure produced by its own modules.
-
-The following scenarios are not currently supported without additional customisation:
-
-- Existing corporate VNets with different subnet structures
-- Existing NSGs with different naming conventions
-- Networking environments created by unrelated templates
-- Arbitrary existing network topologies
-
-### Stage Dependency Considerations
-
-Control and workload deployments rely on networking structures defined by this deployment framework. Identity stage deployments additionally rely on existing control-plane DC VMs. While the stages can be executed independently after prerequisites are established, the current implementation is not intended for deploying compute resources into arbitrary pre-existing networking environments without additional customisation.
-
-### Supported Deployment Models
+#### Supported Deployment Models
 
 | Scenario | Supported |
 |-----------|-----------|
@@ -916,6 +935,8 @@ Control and workload deployments rely on networking structures defined by this d
 | Disaster recovery and VM rebuilds | Yes |
 | Modify VM counts, role-based sizes/disks, images, tags, and access settings | Yes |
 | Deploy into arbitrary existing networking | No |
+
+This solution is designed around the networking structure produced by its own modules. Deploying into arbitrary pre-existing VNets with different structures or naming conventions is not currently supported without additional customisation.
 
 Example brownfield workflow:
 
@@ -933,7 +954,7 @@ Result:
 - Replica DCs promoted
 - Existing infrastructure retained
 
-### Design Principle
+#### Design Principle
 
 The VNet module (`vnet.bicep`) is the authoritative source of truth for subnet and NSG identity:
 
@@ -964,11 +985,11 @@ For implementation details, see [Networking](#networking) and [Supporting Logic 
 }
 ```
 
-#### Step 5: What this does
+#### What This Does
 
 Defines HOW MANY VMs of each type to create.
 
-### Important behaviour
+#### Important Behaviour
 
 - DCs and jumpboxes are control-plane VMs and are placed before server and client VMs (workloads)
 - The first DC (`dc01`) and first jumpbox (`jmp01`) are pinned to the hub (primary region)
@@ -1032,26 +1053,25 @@ For example:
 }
 ```
 
-#### Step 6: What this does
+#### What This Does
 
-Defines VM size and OS disk settings per role.
+Defines VM size and OS disk settings per role:
+- `vmSizes` controls CPU and memory by role
+- `osDisks.storageAccountType` controls the disk performance tier by role
+- `osDisks.diskSizeGB` controls OS disk capacity by role
 
-- `vmSizes` controls CPU and memory by role.
-- `osDisks.storageAccountType` controls the disk performance tier by role.
-- `osDisks.diskSizeGB` controls OS disk capacity by role.
-
-#### Step 6: Supported OS disk properties
+#### Supported Properties
 
 - `storageAccountType`
 - `diskSizeGB`
 
-#### Step 6: Why this matters
+#### Why This Matters
 
 This enables right-sizing by role instead of forcing all VMs to use one shared compute profile.
 
 Manual pre-check: Azure regional vCPU quota still applies. Plan role choices according to subscription quota and target region limits.
 
-#### Step 6: VM lifecycle behaviour
+#### VM Lifecycle Behaviour
 
 The `vmAutoDeleteOptions` parameter controls whether dependent resources are automatically deleted when a VM is deleted.
 
@@ -1084,13 +1104,13 @@ With the default values above:
 }
 ```
 
-#### Step 7: What this does
+#### What This Does
 
 Defines the list of public IP addresses or ranges that are allowed to access the jumpboxes via RDP. These values are used to configure inbound NSG rules, restricting administrative access to only the specified sources.
 
 In `main.parameters.demo.json`, this value is a placeholder. Replace it in your local parameters file with your own public IP address.
 
-#### Jumpbox access notes
+#### Access Notes
 
 - Replace this example value with your own public IP address
 - If not configured correctly, you will not be able to access the jumpboxes
@@ -1491,19 +1511,36 @@ Reference: [softprops/action-gh-release](https://github.com/softprops/action-gh-
 
 The following checks are performed:
 
+#### Placement and Capacity Rules
 - Minimum required VM counts (at least 1 DC and 1 jumpbox)  
 - Region count does not exceed available mappings  
 - Primary pinning is enforced (`dc01` and `jmp01` must be in the primary region)  
 - Non-control VMs (server/client roles) are not allowed in the hub region  
 - Total VM count does not exceed regional capacity  
 - Non-control VM demand must fit within remaining spoke capacity after control-plane (DC and jumpbox) placement  
+- No region exceeds the maximum VM capacity  
+- DC distribution fits within region constraints  
+
+#### Configuration Rules
 - All regions defined in `regionKeys` exist in `regionIndexMap`  
 - Subnet index map includes required roles (firewall, dc, jumpbox, server, client)  
 - Region index values are continuous and start at 1  
-- No region exceeds the maximum VM capacity  
-- DC distribution fits within region constraints  
 - `vmSizes` includes all required role keys (dc, jumpbox, windowsServer, windowsClient, linuxServer, linuxClient)  
 - `osDisks` includes all required role keys (dc, jumpbox, windowsServer, windowsClient, linuxServer, linuxClient)  
+- All entries in `existingRegions` must also be present in the currently selected deployment region set  
+
+#### Identity and Department Rules
+- Department count does not exceed the number of defined departments  
+- At least one department is required (when `enableIdentity=true`)  
+- Users per department must be at least 1 (when `enableIdentity=true`)  
+- Department codes must be unique  
+
+#### Stage and Brownfield Deployment Rules
+- Stage deployment (control/workload/identity) requires either `stage=network` or `existingRegions` to include all deployed regions  
+- Hub region must either be created (`stage=network`) or reused (`existingRegions`)  
+- All spoke regions must either be created (`stage=network`) or reused (`existingRegions`)  
+- When mixing greenfield (create) and brownfield (reuse) regions in the same deployment, consistent creation mode is recommended  
+- `existingRegions` does not contain regions that are not in the current deployment  
 
 ### Bicep Template Validation Outputs
 
