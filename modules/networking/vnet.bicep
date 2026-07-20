@@ -10,12 +10,12 @@
 
 param vnetName string
 param location string
-param deploySubnets bool
 param addressPrefix string
 param subnetPrefix object
 param isHub bool
 param dnsServers array
 param jumpboxSubnets array
+param existingRegions array = []
 param jumpboxAllowedSources array
 param enableClientSsh bool
 param tags object = {}
@@ -24,6 +24,10 @@ param tags object = {}
 // SECURITY RULE BUILDING BLOCKS
 // Base rule arrays reused to build role-specific NSG rule sets.
 // ========================================
+
+var isExistingRegion = contains(existingRegions, location)
+
+var createSubnets = !isExistingRegion
 
 var internalNetworkRange = '10.0.0.0/8'
 
@@ -202,7 +206,11 @@ var subnetNames = {
 // Always created by this module.
 // ========================================
 
-resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
+resource existingVnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = if (isExistingRegion) {
+  name: vnetName
+}
+
+resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = if (!isExistingRegion) {
   name: vnetName
   location: location
   tags: tags
@@ -217,13 +225,13 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = {
 }
 
 // ========================================
-// CONDITIONAL MODULE DEPLOYMENTS (deploySubnets = true)
+// CONDITIONAL MODULE DEPLOYMENTS (createSubnets = true)
 // 1) Optional hub firewall subnet
 // 2) NSGs per role
 // 3) Subnets per role with NSG association
 // ========================================
 
-module nsgDc 'nsg.bicep' = if (deploySubnets) {
+module nsgDc 'nsg.bicep' = if (createSubnets) {
   name: '${vnetName}-nsg-dc'
   params: {
     nsgName: '${vnetName}-nsg-dc'
@@ -235,7 +243,7 @@ module nsgDc 'nsg.bicep' = if (deploySubnets) {
   }
 }
 
-module nsgJumpbox 'nsg.bicep' = if (deploySubnets) {
+module nsgJumpbox 'nsg.bicep' = if (createSubnets) {
   name: '${vnetName}-nsg-jumpbox'
   params: {
     nsgName: '${vnetName}-nsg-jumpbox'
@@ -247,7 +255,7 @@ module nsgJumpbox 'nsg.bicep' = if (deploySubnets) {
   }
 }
 
-module nsgServer 'nsg.bicep' = if (deploySubnets) {
+module nsgServer 'nsg.bicep' = if (createSubnets) {
   name: '${vnetName}-nsg-server'
   params: {
     nsgName: '${vnetName}-nsg-server'
@@ -259,7 +267,7 @@ module nsgServer 'nsg.bicep' = if (deploySubnets) {
   }
 }
 
-module nsgClient 'nsg.bicep' = if (deploySubnets) {
+module nsgClient 'nsg.bicep' = if (createSubnets) {
   name: '${vnetName}-nsg-client'
   params: {
     nsgName: '${vnetName}-nsg-client'
@@ -271,11 +279,8 @@ module nsgClient 'nsg.bicep' = if (deploySubnets) {
   }
 }
 
-module subnetDc 'subnet.bicep' = if (deploySubnets) {
+module subnetDc 'subnet.bicep' = if (createSubnets) {
   name: '${vnetName}-subnet-dc'
-  dependsOn: [
-    vnet
-  ]
   params: {
     vnetName: vnetName
     subnetName: subnetNames.dc
@@ -284,7 +289,7 @@ module subnetDc 'subnet.bicep' = if (deploySubnets) {
   }
 }
 
-module subnetJumpbox 'subnet.bicep' = if (deploySubnets) {
+module subnetJumpbox 'subnet.bicep' = if (createSubnets) {
   name: '${vnetName}-subnet-jumpbox'
   dependsOn: [
     subnetDc
@@ -297,7 +302,7 @@ module subnetJumpbox 'subnet.bicep' = if (deploySubnets) {
   }
 }
 
-module subnetServer 'subnet.bicep' = if (deploySubnets) {
+module subnetServer 'subnet.bicep' = if (createSubnets) {
   name: '${vnetName}-subnet-server'
   dependsOn: [
     subnetJumpbox
@@ -310,7 +315,7 @@ module subnetServer 'subnet.bicep' = if (deploySubnets) {
   }
 }
 
-module subnetClient 'subnet.bicep' = if (deploySubnets) {
+module subnetClient 'subnet.bicep' = if (createSubnets) {
   name: '${vnetName}-subnet-client'
   dependsOn: [
     subnetServer
@@ -323,7 +328,7 @@ module subnetClient 'subnet.bicep' = if (deploySubnets) {
   }
 }
 
-module subnetHub 'subnet.bicep' = if (isHub && deploySubnets) {
+module subnetHub 'subnet.bicep' = if (isHub && createSubnets) {
   name: 'AzureFirewallSubnet'
   dependsOn: [
     subnetClient
@@ -338,27 +343,29 @@ module subnetHub 'subnet.bicep' = if (isHub && deploySubnets) {
 
 // ========================================
 // EXISTING RESOURCE REFERENCES
-// Used for safe ID resolution and brownfield compatibility.
-// Avoids module.outputs access in conditional-module paths.
+// In brownfield deployments (isExistingRegion=true), networking resources are not created by this module.
+// Existing resource references allow safe ID resolution without module.outputs access,
+// avoiding null-reference errors in conditional-module paths.
 // ========================================
 
+
 resource subnetClientExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
-  parent: vnet
+  parent: existingVnet
   name: '${vnetName}-subnet-client'
 }
 
 resource subnetDcExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
-  parent: vnet
+  parent: existingVnet
   name: '${vnetName}-subnet-dc'
 }
 
 resource subnetJumpboxExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
-  parent: vnet
+  parent: existingVnet
   name: '${vnetName}-subnet-jumpbox'
 }
 
 resource subnetServerExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
-  parent: vnet
+  parent: existingVnet
   name: '${vnetName}-subnet-server'
 }
 
@@ -389,21 +396,29 @@ var jumpboxSubnetId = subnetJumpboxExisting.id
 var serverSubnetId = subnetServerExisting.id
 
 // ========================================
-// NSG ID RESOLUTION (GREENFIELD + BROWNFIELD)
+// NSG ID RESOLUTION
+// Greenfield (create new) or brownfield (reuse existing) NSG ID selection.
 // ========================================
 
-var serverNsgId = deploySubnets ? nsgServer!.outputs.nsgId : nsgServerExisting.id
-var clientNsgId = deploySubnets ? nsgClient!.outputs.nsgId : nsgClientExisting.id
-var dcNsgId = deploySubnets ? nsgDc!.outputs.nsgId : nsgDcExisting.id
-var jumpboxNsgId = deploySubnets ? nsgJumpbox!.outputs.nsgId : nsgJumpboxExisting.id
+
+var serverNsgId = createSubnets ? nsgServer!.outputs.nsgId : nsgServerExisting.id
+var clientNsgId = createSubnets ? nsgClient!.outputs.nsgId : nsgClientExisting.id
+var dcNsgId = createSubnets ? nsgDc!.outputs.nsgId : nsgDcExisting.id
+var jumpboxNsgId = createSubnets ? nsgJumpbox!.outputs.nsgId : nsgJumpboxExisting.id
 
 // ========================================
 // OUTPUTS
 // VNet metadata plus normalised NSG/subnet objects for downstream modules.
 // ========================================
 
-output vnetId string = vnet.id
-output vnetName string = vnet.name
+output vnetId string = isExistingRegion
+  ? existingVnet.id
+  : vnet.id
+
+output vnetName string = isExistingRegion
+  ? existingVnet.name
+  : vnet.name
+
 output nsgs object = {
   server: serverNsgId
   client: clientNsgId
@@ -416,7 +431,7 @@ output nsgs object = {
 // ========================================
 // Resolve subnet IDs using existing resource references.
 // Avoids module.outputs access because subnet modules are conditional (module | null).
-// Works for both new and existing deployments.
+// Resolves to newly-created subnets from modules (greenfield) or existing subnets (brownfield).
 
 output subnets object = {
   client: {

@@ -24,6 +24,13 @@ param hasTooManyDcs bool
 param departments object
 param departmentCount int
 param usersPerDepartment int
+param invalidExistingRegions array
+// Stage-based deployment flags for brownfield and dependency validation.
+param deployNetwork bool
+param deployControl bool
+param deployWorkload bool
+// Full existingRegions array used for brownfield consistency checks.
+param existingRegions array = []
 
 // ========================================
 // DERIVED METRICS
@@ -89,6 +96,44 @@ var hasMissingIndexes = [
 ]
 
 var invalidIndexSequence = contains(hasMissingIndexes, true)
+
+// ========================================
+// STAGE-TO-BROWNFIELD DEPENDENCY VALIDATION
+// Ensures that non-network stages have either stage=network deployed or existingRegions covers all regions.
+// ========================================
+
+var nonNetworkStageDeployed = deployControl || deployWorkload
+var networkStageSkipped = !deployNetwork
+var insufficientBrownfieldCoverage = length(existingRegions) < regionCount
+var insufficientBrownfieldForStage = nonNetworkStageDeployed && networkStageSkipped && insufficientBrownfieldCoverage
+
+// ========================================
+// HUB REGION AVAILABILITY VALIDATION
+// Hub region must either be created (stage=network) or reused (existingRegions).
+// Required for firewall and hub-spoke peering topology.
+// ========================================
+
+var hubRequiredButMissing = (deployControl || deployWorkload) && !deployNetwork && !contains(existingRegions, hubRegion)
+
+// ========================================
+// SPOKE REGION COVERAGE VALIDATION
+// All non-hub regions must either be created (stage=network) or reused (existingRegions).
+// Required for complete hub-spoke VNet peering topology.
+// ========================================
+
+var spokesNotCovered = filter(
+  regionKeys,
+  region => region != hubRegion && !contains(existingRegions, region) && !deployNetwork
+)
+
+var spokeRegionsCovered = empty(spokesNotCovered)
+
+// ========================================
+// GREENFIELD VS BROWNFIELD CONSISTENCY
+// Warns if mixing created and reused regions in same deployment.
+// ========================================
+
+var hasMixedCreationMode = deployNetwork && length(existingRegions) > 0 && length(existingRegions) < regionCount
 
 // ========================================
 // WORKLOAD CAPACITY VALIDATION
@@ -166,6 +211,11 @@ var validationFlags = {
   invalidMinimumDepartments: invalidMinimumDepartments
   invalidUsersPerDepartment: invalidUsersPerDepartment
   duplicateDepartmentCodes: duplicateDepartmentCodes
+  hasInvalidExistingRegions: length(invalidExistingRegions) > 0
+  insufficientBrownfieldForStage: insufficientBrownfieldForStage
+  hubRequiredButMissing: hubRequiredButMissing
+  spokeRegionsCovered: !spokeRegionsCovered
+  hasMixedCreationMode: hasMixedCreationMode
 }
 
 // ========================================
@@ -190,8 +240,23 @@ var msg14 = invalidDepartmentCount ? 'Department count exceeds the number of def
 var msg15 = invalidMinimumDepartments ? 'At least one department is required.' : ''
 var msg16 = invalidUsersPerDepartment ? 'Users per department must be at least 1.' : ''
 var msg17 = duplicateDepartmentCodes ? 'Department codes must be unique.' : ''
+var msg18 = length(invalidExistingRegions) > 0
+  ? 'existingRegions contains regions that are not selected for the current deployment.'
+  : ''
+var msg19 = insufficientBrownfieldForStage
+  ? 'Stage deployment (control/workload/identity) requires either stage=network or existingRegions to include all deployed regions.'
+  : ''
+var msg20 = hubRequiredButMissing
+  ? 'Hub region is required but not available. Either deploy stage=network or add hub region to existingRegions.'
+  : ''
+var msg21 = !spokeRegionsCovered
+  ? 'One or more spoke regions are not available. Either deploy stage=network or add all spoke regions to existingRegions.'
+  : ''
+var msg22 = hasMixedCreationMode
+  ? 'Mixing greenfield (create) and brownfield (reuse) regions in same deployment. Ensure consistent creation mode across all regions.'
+  : ''
 
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : 'All validation checks passed.'
+var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : 'All validation checks passed.'
 
 // ========================================
 // OUTPUTS
@@ -208,4 +273,5 @@ output workloadCapacityDebug array = workloadCapacityDebug
 output departmentCount int = departmentCount
 output usersPerDepartment int = usersPerDepartment
 output requestedDirectoryAccounts int = requestedDirectoryAccounts
+output invalidExistingRegions array = invalidExistingRegions
 
