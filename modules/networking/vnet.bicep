@@ -16,6 +16,7 @@ param subnetPrefix object
 param isHub bool
 param dnsServers array
 param jumpboxSubnets array
+param existingRegions array = []
 param jumpboxAllowedSources array
 param enableClientSsh bool
 param tags object = {}
@@ -24,6 +25,10 @@ param tags object = {}
 // SECURITY RULE BUILDING BLOCKS
 // Base rule arrays reused to build role-specific NSG rule sets.
 // ========================================
+
+var isExistingRegion = contains(existingRegions, location)
+
+var createSubnets = !isExistingRegion
 
 var internalNetworkRange = '10.0.0.0/8'
 
@@ -271,7 +276,7 @@ module nsgClient 'nsg.bicep' = if (deploySubnets) {
   }
 }
 
-module subnetDc 'subnet.bicep' = if (deploySubnets) {
+module subnetDc 'subnet.bicep' = if (createSubnets) {
   name: '${vnetName}-subnet-dc'
   dependsOn: [
     vnet
@@ -284,7 +289,7 @@ module subnetDc 'subnet.bicep' = if (deploySubnets) {
   }
 }
 
-module subnetJumpbox 'subnet.bicep' = if (deploySubnets) {
+module subnetJumpbox 'subnet.bicep' = if (createSubnets) {
   name: '${vnetName}-subnet-jumpbox'
   dependsOn: [
     subnetDc
@@ -297,7 +302,7 @@ module subnetJumpbox 'subnet.bicep' = if (deploySubnets) {
   }
 }
 
-module subnetServer 'subnet.bicep' = if (deploySubnets) {
+module subnetServer 'subnet.bicep' = if (createSubnets) {
   name: '${vnetName}-subnet-server'
   dependsOn: [
     subnetJumpbox
@@ -310,7 +315,7 @@ module subnetServer 'subnet.bicep' = if (deploySubnets) {
   }
 }
 
-module subnetClient 'subnet.bicep' = if (deploySubnets) {
+module subnetClient 'subnet.bicep' = if (createSubnets) {
   name: '${vnetName}-subnet-client'
   dependsOn: [
     subnetServer
@@ -323,7 +328,7 @@ module subnetClient 'subnet.bicep' = if (deploySubnets) {
   }
 }
 
-module subnetHub 'subnet.bicep' = if (isHub && deploySubnets) {
+module subnetHub 'subnet.bicep' = if (isHub && createSubnets) {
   name: 'AzureFirewallSubnet'
   dependsOn: [
     subnetClient

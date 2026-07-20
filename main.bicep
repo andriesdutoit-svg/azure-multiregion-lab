@@ -40,6 +40,8 @@ param regionIndexMap object
 param deploySubnets bool
 param subnetIndexMap object
 param regionCount int
+@description('Regions that already exist and whose networking resources should be reused.')
+param existingRegions array = []
 param maxVmsPerRegion int
 param vmCounts object
 param jumpboxAllowedSources array
@@ -455,6 +457,7 @@ module vnets 'modules/networking/vnet.bicep' = [
       isHub: region == hubRegion
 
       deploySubnets: deploySubnets
+      existingRegions: existingRegions
 
       addressPrefix: addressPrefixes[i]
       subnetPrefix: subnetPrefixesArray[i]

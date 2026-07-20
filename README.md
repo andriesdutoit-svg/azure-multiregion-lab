@@ -225,6 +225,9 @@ The solution was developed iteratively, with each phase introducing additional a
 - **v1.11 — Hub-Spoke Networking**  
   Hub-and-spoke VNet peering combined with centralised firewall-based routing, spoke route tables, and refined network flow control across regions.
 
+- **v1.12 — Stage-Based Deployment Control**  
+  Introduced stage-based deployment orchestration (`network`, `control`, `workload`, `all`) and refined subnet/firewall index handling to support safer incremental and brownfield-aligned deployment flows.
+
 - **v1.13.1 — Role-Based VM Sizing and Storage**  
   Role-based compute sizing and OS disk configuration (`vmSizes`, `osDisks`) with per-role disk size support.
 
@@ -932,14 +935,14 @@ Result:
 
 ### Design Principle
 
-The VNet module (`vnet.bicep`) is the authoritative source of truth for:
+The VNet module (`vnet.bicep`) is the authoritative source of truth for subnet and NSG identity:
 
-- Subnet creation
+- Subnet naming and baseline creation
 - NSG creation
 - Subnet IDs
 - NSG IDs
 
-Other modules consume these outputs instead of reconstructing names or resource IDs. This prevents naming drift and ensures consistency across the deployment.
+The route table module applies spoke subnet route table associations after VNet baseline creation. This keeps naming/ID derivation centralised while allowing staged networking updates.
 
 For implementation details, see [Networking](#networking) and [Supporting Logic in main.bicep](#supporting-logic-in-mainbicep).
 
