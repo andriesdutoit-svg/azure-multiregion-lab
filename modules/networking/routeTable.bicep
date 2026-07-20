@@ -25,8 +25,6 @@ param clientSubnetId string
 // ========================================
 //
 
-var vnetId = substring(serverSubnetId, 0, indexOf(serverSubnetId, '/subnets/'))
-
 // Server subnet name from ARM ID
 var serverSubnetName = last(split(serverSubnetId, '/subnets/'))
 
@@ -73,3 +71,6 @@ resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
     ]
   }
 }
+
+output serverRouteTableId string = rtServer.id
+output clientRouteTableId string = rtClient.id

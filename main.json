@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "14706789946964338614"
+      "templateHash": "1464358746791412264"
     }
   },
   "parameters": {
@@ -1967,7 +1967,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.45.15.27210",
-              "templateHash": "18101077451203338584"
+              "templateHash": "4838028421792504003"
             }
           },
           "parameters": {
@@ -1985,7 +1985,6 @@
             }
           },
           "variables": {
-            "vnetId": "[substring(parameters('serverSubnetId'), 0, indexOf(parameters('serverSubnetId'), '/subnets/'))]",
             "serverSubnetName": "[last(split(parameters('serverSubnetId'), '/subnets/'))]",
             "clientSubnetName": "[last(split(parameters('clientSubnetId'), '/subnets/'))]"
           },
@@ -2026,7 +2025,17 @@
                 ]
               }
             }
-          ]
+          ],
+          "outputs": {
+            "serverRouteTableId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/routeTables', format('{0}-rt', variables('serverSubnetName')))]"
+            },
+            "clientRouteTableId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/routeTables', format('{0}-rt', variables('clientSubnetName')))]"
+            }
+          }
         }
       },
       "dependsOn": [

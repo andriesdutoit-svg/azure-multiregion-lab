@@ -513,7 +513,7 @@ module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
 }
 
 // ========================================
-// DEPLOYMENT STAGE 5: ROUTE TABLES (SPOKE REGIONS)
+// DEPLOYMENT STAGE 5a: ROUTE TABLES (SPOKE REGIONS)
 // ========================================
 
 // Suppressions in this module are intentional: BCP318 appears because vnet/firewall outputs are conditionally evaluated
