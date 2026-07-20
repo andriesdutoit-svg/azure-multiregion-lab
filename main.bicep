@@ -541,15 +541,6 @@ module routeTables 'modules/networking/routeTable.bicep' = [
       #disable-next-line BCP318
       clientSubnetId: vnets[i].outputs.subnets.client.id
 
-      serverSubnetPrefix: subnetPrefixesArray[i].server
-      clientSubnetPrefix: subnetPrefixesArray[i].client
-
-      #disable-next-line BCP318
-      serverNsgId: vnets[i].outputs.nsgs.server
-
-      #disable-next-line BCP318
-      clientNsgId: vnets[i].outputs.nsgs.client
-
       #disable-next-line BCP318
       nextHopIp: firewall.outputs.firewallPrivateIp
     }

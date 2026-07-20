@@ -14,13 +14,9 @@ param nextHopIp string
 
 // Server subnet inputs
 param serverSubnetId string
-param serverSubnetPrefix string
-param serverNsgId string
 
 // Client subnet inputs
 param clientSubnetId string
-param clientSubnetPrefix string
-param clientNsgId string
 
 // ========================================
 // DERIVED IDENTIFIERS
@@ -30,33 +26,12 @@ param clientNsgId string
 //
 
 var vnetId = substring(serverSubnetId, 0, indexOf(serverSubnetId, '/subnets/'))
-var vnetName = last(split(vnetId, '/virtualNetworks/'))
 
 // Server subnet name from ARM ID
 var serverSubnetName = last(split(serverSubnetId, '/subnets/'))
 
 // Client subnet name from ARM ID
 var clientSubnetName = last(split(clientSubnetId, '/subnets/'))
-
-// ========================================
-// EXISTING DEPENDENCY: TARGET VNET
-// ========================================
-
-resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
-  name: vnetName
-}
-
-// ========================================
-// EXISTING NSG REFERENCES (for dependency)
-// ========================================
-
-resource serverNsg 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing = {
-  name: last(split(serverNsgId, '/'))
-}
-
-resource clientNsg 'Microsoft.Network/networkSecurityGroups@2022-07-01' existing = {
-  name: last(split(clientNsgId, '/'))
-}
 
 // ========================================
 // RESOURCE CREATED: ROUTE TABLES
@@ -96,51 +71,5 @@ resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
         }
       }
     ]
-  }
-}
-
-// ========================================
-// SUBNET UPDATES
-// Re-apply subnet prefix + NSG and attach route table association.
-// ========================================
-
-// Server subnet update
-resource serverSubnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
-  name: serverSubnetName
-  parent: vnet
-  dependsOn: [
-    serverNsg
-  ]
-  properties: {
-    addressPrefix: serverSubnetPrefix
-
-    networkSecurityGroup: {
-      id: serverNsgId
-    }
-
-    routeTable: {
-      id: rtServer.id
-    }
-  }
-}
-
-// Client subnet update
-resource clientSubnetUpdate 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
-  name: clientSubnetName
-  parent: vnet
-  dependsOn: [
-    serverSubnetUpdate
-    clientNsg
-  ]
-  properties: {
-    addressPrefix: clientSubnetPrefix
-
-    networkSecurityGroup: {
-      id: clientNsgId
-    }
-
-    routeTable: {
-      id: rtClient.id
-    }
   }
 }

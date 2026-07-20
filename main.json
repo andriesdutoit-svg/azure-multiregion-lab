@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "5818986973695647083"
+      "templateHash": "14706789946964338614"
     }
   },
   "parameters": {
@@ -1956,18 +1956,6 @@
           "clientSubnetId": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('{0}-rg-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()])), 'Microsoft.Resources/deployments', format('{0}-vnet-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()])), '2025-04-01').outputs.subnets.value.client.id]"
           },
-          "serverSubnetPrefix": {
-            "value": "[variables('subnetPrefixesArray')[copyIndex()].server]"
-          },
-          "clientSubnetPrefix": {
-            "value": "[variables('subnetPrefixesArray')[copyIndex()].client]"
-          },
-          "serverNsgId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('{0}-rg-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()])), 'Microsoft.Resources/deployments', format('{0}-vnet-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()])), '2025-04-01').outputs.nsgs.value.server]"
-          },
-          "clientNsgId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('{0}-rg-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()])), 'Microsoft.Resources/deployments', format('{0}-vnet-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()])), '2025-04-01').outputs.nsgs.value.client]"
-          },
           "nextHopIp": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('{0}-rg-{1}', parameters('prefix'), variables('hubRegion'))), 'Microsoft.Resources/deployments', format('{0}-firewall-{1}', parameters('prefix'), variables('hubRegion'))), '2025-04-01').outputs.firewallPrivateIp.value]"
           }
@@ -1979,7 +1967,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.45.15.27210",
-              "templateHash": "1302139621579428683"
+              "templateHash": "18101077451203338584"
             }
           },
           "parameters": {
@@ -1992,25 +1980,12 @@
             "serverSubnetId": {
               "type": "string"
             },
-            "serverSubnetPrefix": {
-              "type": "string"
-            },
-            "serverNsgId": {
-              "type": "string"
-            },
             "clientSubnetId": {
-              "type": "string"
-            },
-            "clientSubnetPrefix": {
-              "type": "string"
-            },
-            "clientNsgId": {
               "type": "string"
             }
           },
           "variables": {
             "vnetId": "[substring(parameters('serverSubnetId'), 0, indexOf(parameters('serverSubnetId'), '/subnets/'))]",
-            "vnetName": "[last(split(variables('vnetId'), '/virtualNetworks/'))]",
             "serverSubnetName": "[last(split(parameters('serverSubnetId'), '/subnets/'))]",
             "clientSubnetName": "[last(split(parameters('clientSubnetId'), '/subnets/'))]"
           },
@@ -2050,49 +2025,12 @@
                   }
                 ]
               }
-            },
-            {
-              "type": "Microsoft.Network/virtualNetworks/subnets",
-              "apiVersion": "2022-07-01",
-              "name": "[format('{0}/{1}', variables('vnetName'), variables('serverSubnetName'))]",
-              "properties": {
-                "addressPrefix": "[parameters('serverSubnetPrefix')]",
-                "networkSecurityGroup": {
-                  "id": "[parameters('serverNsgId')]"
-                },
-                "routeTable": {
-                  "id": "[resourceId('Microsoft.Network/routeTables', format('{0}-rt', variables('serverSubnetName')))]"
-                }
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/routeTables', format('{0}-rt', variables('serverSubnetName')))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Network/virtualNetworks/subnets",
-              "apiVersion": "2022-07-01",
-              "name": "[format('{0}/{1}', variables('vnetName'), variables('clientSubnetName'))]",
-              "properties": {
-                "addressPrefix": "[parameters('clientSubnetPrefix')]",
-                "networkSecurityGroup": {
-                  "id": "[parameters('clientNsgId')]"
-                },
-                "routeTable": {
-                  "id": "[resourceId('Microsoft.Network/routeTables', format('{0}-rt', variables('clientSubnetName')))]"
-                }
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/routeTables', format('{0}-rt', variables('clientSubnetName')))]",
-                "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('serverSubnetName'))]"
-              ]
             }
           ]
         }
       },
       "dependsOn": [
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('{0}-rg-{1}', parameters('prefix'), variables('hubRegion'))), 'Microsoft.Resources/deployments', format('{0}-firewall-{1}', parameters('prefix'), variables('hubRegion')))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('{0}-rg-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()])), 'Microsoft.Resources/deployments', format('{0}-vnet-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()]))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('{0}-rg-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()])), 'Microsoft.Resources/deployments', format('{0}-vnet-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()]))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('{0}-rg-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()])), 'Microsoft.Resources/deployments', format('{0}-vnet-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()]))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('{0}-rg-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()])), 'Microsoft.Resources/deployments', format('{0}-vnet-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()]))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, format('{0}-rg-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()])), 'Microsoft.Resources/deployments', format('{0}-vnet-{1}', parameters('prefix'), variables('regionKeys')[copyIndex()]))]"
