@@ -91,6 +91,10 @@
       "value": false
     },
 
+    "existingRegions": {
+      "value": []
+    },
+
     "domainName": {
       "value": "amrl.lab"
     },

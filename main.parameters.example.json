@@ -59,7 +59,7 @@
     },
 
     "regionCount": {
-      "value": 27
+      "value": 3
     },
 
     "maxVmsPerRegion": {
@@ -68,12 +68,12 @@
 
     "vmCounts": {
       "value": {
-        "dc": 28,
-        "jumpbox": 4,
-        "windowsServer": 6,
-        "windowsClient": 6,
-        "linuxServer": 6,
-        "linuxClient": 6
+        "dc": 1,
+        "jumpbox": 1,
+        "windowsServer": 1,
+        "windowsClient": 1,
+        "linuxServer": 1,
+        "linuxClient": 1
       }
     },
 
@@ -92,12 +92,16 @@
       "value": false
     },
 
+    "existingRegions": {
+      "value": []
+    },
+
     "domainName": {
       "value": "amrl.lab"
     },
 
     "usersPerDepartment": {
-      "value": 50
+      "value": 10
     },
 
     "departments": {
@@ -112,31 +116,12 @@
         "Marketing": "MAR",
         "Legal": "LEG",
         "Procurement": "PRO",
-        "Research": "RES",
-        "Support": "SUP",
-        "Training": "TRA",
-        "Administration": "ADM",
-        "QualityAssurance": "QAS",
-        "Logistics": "LOG",
-        "CustomerService": "CUS",
-        "BusinessDevelopment": "BUS",
-        "PublicRelations": "PUB",
-        "Security": "SEC",
-        "Compliance": "COM",
-        "Strategy": "STR",
-        "Innovation": "INN",
-        "Sustainability": "SUS",
-        "DataAnalytics": "DAT",
-        "ProjectManagement": "PROJ",
-        "ProductManagement": "PROD",
-        "Design": "DES",
-        "ContentCreation": "CONC",
-        "EventManagement": "EVT"
+        "Research": "RES"
       }
     },
 
     "departmentCount": {
-      "value": 30
+      "value": 10
     },
 
     "windowsServerImage": {
