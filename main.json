@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "1464358746791412264"
+      "templateHash": "685448782309822146"
     }
   },
   "parameters": {
@@ -675,7 +675,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.45.15.27210",
-              "templateHash": "12098035183888904273"
+              "templateHash": "130226249549776134"
             }
           },
           "parameters": {
@@ -872,6 +872,7 @@
           },
           "resources": [
             {
+              "condition": "[not(variables('isExistingRegion'))]",
               "type": "Microsoft.Network/virtualNetworks",
               "apiVersion": "2022-07-01",
               "name": "[parameters('vnetName')]",
@@ -889,7 +890,7 @@
               }
             },
             {
-              "condition": "[parameters('deploySubnets')]",
+              "condition": "[variables('createSubnets')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "[format('{0}-nsg-dc', parameters('vnetName'))]",
@@ -980,7 +981,7 @@
               }
             },
             {
-              "condition": "[parameters('deploySubnets')]",
+              "condition": "[variables('createSubnets')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "[format('{0}-nsg-jumpbox', parameters('vnetName'))]",
@@ -1071,7 +1072,7 @@
               }
             },
             {
-              "condition": "[parameters('deploySubnets')]",
+              "condition": "[variables('createSubnets')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "[format('{0}-nsg-server', parameters('vnetName'))]",
@@ -1162,7 +1163,7 @@
               }
             },
             {
-              "condition": "[parameters('deploySubnets')]",
+              "condition": "[variables('createSubnets')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "[format('{0}-nsg-client', parameters('vnetName'))]",
@@ -1326,8 +1327,7 @@
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.Resources/deployments', format('{0}-nsg-dc', parameters('vnetName')))]",
-                "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+                "[resourceId('Microsoft.Resources/deployments', format('{0}-nsg-dc', parameters('vnetName')))]"
               ]
             },
             {
@@ -1645,11 +1645,11 @@
           "outputs": {
             "vnetId": {
               "type": "string",
-              "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+              "value": "[if(variables('isExistingRegion'), resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName')), resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName')))]"
             },
             "vnetName": {
               "type": "string",
-              "value": "[parameters('vnetName')]"
+              "value": "[if(variables('isExistingRegion'), parameters('vnetName'), parameters('vnetName'))]"
             },
             "nsgs": {
               "type": "object",
