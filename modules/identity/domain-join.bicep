@@ -1,15 +1,12 @@
 targetScope = 'resourceGroup'
 
 param vmName string
-
 param domainName string
-
 param serverAdminUsername string
-
 @secure()
 param serverAdminPassword string
-
-param computerOuPath string
+param directoryModel string
+param vmType string
 
 var joinDomainScript = loadTextContent('./scripts/Join-Domain.ps1')
 
@@ -34,16 +31,20 @@ resource domainJoin 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' =
         value: domainName
       }
       {
+        name: 'DirectoryModel'
+        value: directoryModel
+      }
+      {
+        name: 'VmType'
+        value: vmType
+      }
+      {
         name: 'ServerAdminUsername'
         value: serverAdminUsername
       }
       {
         name: 'ServerAdminPassword'
         value: serverAdminPassword
-      }
-      {
-        name: 'ComputerOuPath'
-        value: computerOuPath
       }
     ]
   }

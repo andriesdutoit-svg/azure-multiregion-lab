@@ -8,6 +8,7 @@ param departments object
 param departmentCount int
 @secure()
 param clientAdminPassword string
+param directoryModel string
 
 var populateAdScript = loadTextContent('./scripts/Populate-AD.ps1')
 var namesCsvContent = loadTextContent('./data/names.csv')
@@ -32,6 +33,10 @@ resource populateDirectory 'Microsoft.Compute/virtualMachines/runCommands@2023-0
       {
         name: 'DomainName'
         value: domainName
+      }
+      {
+        name: 'DirectoryModel'
+        value: directoryModel
       }
       {
         name: 'NamesCsvContent'

@@ -1,16 +1,43 @@
 param(
     [string]$DomainName,
+    [string]$DirectoryModel,
+    [string]$VMType,
     [string]$ServerAdminUsername,
-    [string]$ServerAdminPassword,
-    [string]$ComputerOuPath
+    [string]$ServerAdminPassword
 )
 
-Import-Module ActiveDirectory -ErrorAction Stop
+$model = $DirectoryModel | ConvertFrom-Json
 
 Write-Host "Starting AMRL Domain Join"
 
 Write-Host "DomainName = $DomainName"
-Write-Host "ComputerOuPath = $ComputerOuPath"
+Write-Host "VMType = $VMType"
+
+# Validate the OU mapping for the given VM type
+
+$computerOu = $model.computerOuMapping.$VmType
+
+Write-Host "ComputerOu = $computerOu"
+
+if ([string]::IsNullOrWhiteSpace($computerOu)) {
+    throw "No OU mapping defined for VM type: $VmType"
+}
+
+$ouSegments = $computerOu -split '/'
+
+[array]::Reverse($ouSegments)
+
+$ouDn = ($ouSegments | ForEach-Object {
+    "OU=$_"
+}) -join ','
+
+$domainDn = (($DomainName -split '\.') | ForEach-Object {
+    "DC=$_"
+}) -join ','
+
+$fullOuPath = "$ouDn,OU=$($model.rootOuName),$domainDn"
+
+Write-Host "Full OU Path = $fullOuPath"
 
 if ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {
     throw "ServerAdminPassword was not supplied"
@@ -44,52 +71,59 @@ $credential = New-Object System.Management.Automation.PSCredential(
     $securePassword
 )
 
-# Validate the domain name by resolving its DNS name
+# Wait for the domain DNS name to be resolvable
 
-try {
-    Resolve-DnsName $DomainName -ErrorAction Stop | Out-Null
-
-    Write-Host "Successfully resolved domain DNS name."
-}
-catch {
-    throw "Unable to resolve domain DNS name: $DomainName"
-}
-
-# Attempt to discover a domain controller for the specified domain
+$dnsResolved = $false
 
 for ($attempt = 1; $attempt -le 30; $attempt++) {
     try {
-        $domainController = Get-ADDomainController `
-            -Discover `
-            -DomainName $DomainName `
-            -ErrorAction Stop
+        Resolve-DnsName $DomainName -ErrorAction Stop | Out-Null
 
-        Write-Host "Discovered domain controller: $($domainController.HostName)"
+        Write-Host "Successfully resolved domain DNS name."
 
+        $dnsResolved = $true
         break
     }
     catch {
-        Write-Host "Attempt $attempt of 30: Domain controller not yet reachable."
-
-        if ($attempt -eq 30) {
-            throw "Unable to discover a domain controller for $DomainName"
-        }
+        Write-Host "Attempt $attempt of 30: Unable to resolve $DomainName"
 
         Start-Sleep -Seconds 10
     }
+}
+
+if (-not $dnsResolved) {
+    throw "Unable to resolve domain DNS name: $DomainName"
 }
 
 # Domain join operation
 
 Write-Host "Joining computer to domain $DomainName"
 
-Add-Computer `
-    -DomainName $DomainName `
-    -Credential $credential `
-    -OUPath $ComputerOuPath `
-    -ErrorAction Stop
+if ($null -ne $fullOuPath) {
+    Add-Computer `
+        -DomainName $DomainName `
+        -Credential $credential `
+        -OUPath $fullOuPath `
+        -ErrorAction Stop
+}
+else {
+    Add-Computer `
+        -DomainName $DomainName `
+        -Credential $credential `
+        -ErrorAction Stop
+}
 
 Write-Host "Domain join completed successfully."
+
+# Verify domain membership
+
+$computerSystem = Get-CimInstance Win32_ComputerSystem
+
+if (-not $computerSystem.PartOfDomain) {
+    throw "Domain join operation completed, but the computer is still not reporting domain membership."
+}
+
+Write-Host "Domain membership verified."
 
 Write-Host "Restarting computer to complete domain join."
 

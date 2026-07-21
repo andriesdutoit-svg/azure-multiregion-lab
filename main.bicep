@@ -56,7 +56,6 @@ param departmentCount int
 
 param enableIdentity bool
 param domainName string
-param computerOuPaths object
 
 // Stage flags for conditional deployment of modules
 var deployNetwork = stage == 'network' || stage == 'all'
@@ -651,6 +650,52 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 // DEPLOYMENT STAGE 7: IDENTITY BOOTSTRAP (PRIMARY DC)
 // ========================================
 
+var directoryModel = {
+  preventOuDeletion: false
+
+  rootOuName: '_ROOT'
+
+  customOus: [
+    'Computers'
+    'Computers/Servers'
+    'Computers/Clients'
+    'Groups'
+    'Groups/GGS'
+    'Groups/DLGS'
+    'Users'
+    'Users/Disabled'
+  ]
+
+  computerOuMapping: {
+    srvwin: 'Computers/Servers'
+    srvlin: 'Computers/Servers'
+    cliwin: 'Computers/Clients'
+    clilin: 'Computers/Clients'
+  }
+
+  groupOuMapping: {
+    globalSecurity: 'Groups/GGS'
+    domainLocalSecurity: 'Groups/DLGS'
+  }
+
+  groupNaming: {
+    globalSecurityPrefix: 'GGS'
+    domainLocalSecurityPrefix: 'DLGS'
+  }
+
+  shares: {
+    root: {
+      name: 'Shares'
+      path: 'C:\\Shares'
+    }
+  }
+
+  coreOuMapping: {
+    users: 'Users'
+    groups: 'Groups'
+  }
+}
+
 module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
   name: '${prefix}-ad-forest'
   scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
@@ -703,6 +748,7 @@ module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
     departments: departments
     clientAdminPassword: clientAdminPassword
     departmentCount: departmentCount
+    directoryModel: string(directoryModel)
   }
 }
 
@@ -718,10 +764,10 @@ module domainJoinWindowsServers 'modules/identity/domain-join.bicep' = [
     params: {
       vmName: vm.name
       domainName: domainName
+      directoryModel: string(directoryModel)
+      vmType: vm.type
       serverAdminUsername: serverAdminUsername
       serverAdminPassword: serverAdminPassword
-
-      computerOuPath: computerOuPaths.windowsServer
     }
   }
 ]

@@ -124,15 +124,6 @@
       "value": 10
     },
 
-    "computerOuPaths": {
-      "value": {
-        "windowsServer": "OU=Servers,OU=Computers,OU=_ROOT",
-        "windowsClient": "OU=Clients,OU=Computers,OU=_ROOT",
-        "linuxServer": "OU=Servers,OU=Computers,OU=_ROOT",
-        "linuxClient": "OU=Clients,OU=Computers,OU=_ROOT"
-      }
-    },
-
     "windowsServerImage": {
       "value": {
         "publisher": "MicrosoftWindowsServer",
