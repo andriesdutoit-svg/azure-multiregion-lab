@@ -56,6 +56,7 @@ param departmentCount int
 
 param enableIdentity bool
 param domainName string
+param computerOuPaths object
 
 // Stage flags for conditional deployment of modules
 var deployNetwork = stage == 'network' || stage == 'all'
@@ -704,6 +705,26 @@ module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
     departmentCount: departmentCount
   }
 }
+
+module domainJoinWindowsServers 'modules/identity/domain-join.bicep' = [
+  for vm in filter(activeWindowsVMs, vm => vm.type == 'srvwin'): if (deployIdentity) {
+    name: '${prefix}-domainjoin-${vm.name}'
+    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
+
+    dependsOn: [
+      adPopulate
+    ]
+
+    params: {
+      vmName: vm.name
+      domainName: domainName
+      serverAdminUsername: serverAdminUsername
+      serverAdminPassword: serverAdminPassword
+
+      computerOuPath: computerOuPaths.windowsServer
+    }
+  }
+]
 
 // ========================================
 // DEPLOYMENT STAGE 8: LINUX VMS

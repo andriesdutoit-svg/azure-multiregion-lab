@@ -172,11 +172,13 @@ The demo parameter template contains these three placeholders:
 
 1. Copy `main.parameters.demo.json` to a local parameters file.
 2. Replace the three placeholders listed above in your local parameters file.
-3. Create an Azure Key Vault (Key Vault) (if you do not already have one) and add these secrets:
+3. Create an Azure Key Vault (if you do not already have one) and add these secrets:
   - `jumpboxAdminPassword`
   - `serverAdminPassword`
   - `clientAdminPassword`
+
    See [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required) for required configuration.
+   
 4. Deploy locally:
 
 ```bash
