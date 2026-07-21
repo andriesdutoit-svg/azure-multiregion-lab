@@ -57,6 +57,8 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
   - [Identity Architecture](#identity-architecture)
     - [AD Integration](#ad-integration)
     - [Identity Automation Design](#identity-automation-design)
+    - [Directory Model Configuration](#directory-model-configuration)
+    - [AD Domain Automation](#ad-domain-automation)
   - [Security Model](#security-model)
   - [Workload Distribution](#workload-distribution)
 
@@ -178,7 +180,7 @@ The demo parameter template contains these three placeholders:
   - `clientAdminPassword`
 
    See [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required) for required configuration.
-   
+
 4. Deploy locally:
 
 ```bash
@@ -495,17 +497,36 @@ Benefits:
 
 PowerShell scripts are embedded into Azure VM Run Command resources at deployment time using Bicep `loadTextContent()`.
 
+#### Directory Model Configuration
+
+The directory model is a JSON object hardcoded in [main.bicep](main.bicep#L653) that defines the Active Directory structure created during directory population. The model specifies OU hierarchy, computer-to-OU mappings, group naming conventions, and share configuration.
+
+The directory model is **not parameterised** because these values represent a stable architectural decision unlikely to change between deployments. Customisation requires editing [main.bicep](main.bicep#L653).
+
+Directory model structure:
+
+- **`rootOuName`** – Top-level OU beneath the domain root (default: `_ROOT`)
+- **`customOus`** – Hierarchical OU structure for computers, groups, and users, including reserved OUs for disabled users and share-related groups
+- **`computerOuMapping`** – Maps VM types to OU locations (e.g., `srvwin` → `Computers/Servers`)
+- **`groupOuMapping`** – Designates OUs for global security groups (user-facing) and domain local security groups (permission-granting)
+- **`groupNaming`** – Configurable prefixes for group naming:
+  - `globalSecurityPrefix` – prepended to user-facing department groups (e.g., `GGS_Sales_ALL`)
+  - `domainLocalSecurityPrefix` – prepended to share permission groups (e.g., `DLGS_Sales_Share_RW`)
+- **`shares`** – Defines root share path and name for departmental share storage
+- **`coreOuMapping`** – References to core OUs used by scripts (users, groups)
+
+The directory model is passed to the AD population PowerShell script as a JSON string and used to create all AD objects consistently across the forest.
+
 #### Directory Population
 
 The identity stage performs:
 
-- OU creation
-- Department OU creation
-- AGDLP group creation
-- Share creation
-- NTFS permission assignment
-- Manager population
-- User population
+- OU creation (hierarchy and department-specific OUs)
+- AGDLP group creation (global and domain local security groups using prefixes from the directory model)
+- Share creation and NTFS permission assignment
+- Manager and user population
+
+Group naming and OU placement are driven by the [directory model](#directory-model-configuration). AGDLP nesting is automatically configured: global security groups (containing users) are nested into domain local security groups (which hold the actual file share permissions).
 
 Configuration is deployment-driven through parameters:
 
@@ -545,6 +566,16 @@ Population rules:
 - Username collisions are skipped.
 - Standard user population stops with a warning when unique names are exhausted.
 - Manager bootstrap fails for a department if no unique CSV name remains.
+
+#### AD Domain Automation
+
+Domain-join automation runs after directory population completes. When `enableIdentity=true`, Windows servers are automatically joined to the AD domain:
+
+- Domain join targets Windows servers only (`srvwin` VM type)
+- Domain join is filtered to exclude Windows clients
+- Servers are joined after directory population completes
+- Joins are idempotent: re-execution skips already-joined servers
+- OU placement can be customised per VM type through deployment parameters
 
 ### Security Model
 
