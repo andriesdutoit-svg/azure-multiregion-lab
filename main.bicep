@@ -406,7 +406,7 @@ var jumpboxSubnets = [
 // ========================================
 
 module validationEngine 'modules/logic/validation.bicep' = {
-  name: '${prefix}-validation-engine'
+  name: '${prefix}-validation-engine-${take(deployment().name, 20)}'
   params: {
     vmCounts: vmCounts
     vmSizes: vmSizes
@@ -753,7 +753,7 @@ module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
 }
 
 module domainJoinWindowsServers 'modules/identity/domain-join.bicep' = [
-  for vm in filter(activeWindowsVMs, vm => vm.type == 'srvwin'): if (deployIdentity) {
+  for vm in filter(activeWindowsVMs, vm => vm.type == 'srvwin' || vm.type == 'cliwin'): if (deployIdentity) {
     name: '${prefix}-domainjoin-${vm.name}'
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
@@ -819,6 +819,27 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
       osDisk: roleSizingMap[vm.type].osDisk
 
       vmAutoDeleteOptions: vmAutoDeleteOptions
+    }
+  }
+]
+
+module domainJoinLinuxServers 'modules/identity/domain-join-linux.bicep' = [
+  for vm in filter(activeLinuxVMs, vm => vm.type == 'srvlin'): if (deployIdentity) {
+    name: '${prefix}-domainjoin-${vm.name}'
+
+    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
+
+    dependsOn: [
+      adPopulate
+    ]
+
+    params: {
+      vmName: vm.name
+      domainName: domainName
+      directoryModel: string(directoryModel)
+      vmType: vm.type
+      serverAdminUsername: serverAdminUsername
+      serverAdminPassword: serverAdminPassword
     }
   }
 ]
