@@ -281,6 +281,9 @@ module nsgClient 'nsg.bicep' = if (createSubnets) {
 
 module subnetDc 'subnet.bicep' = if (createSubnets) {
   name: '${vnetName}-subnet-dc'
+  dependsOn: [
+    vnet
+  ]
   params: {
     vnetName: vnetName
     subnetName: subnetNames.dc

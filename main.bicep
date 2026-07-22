@@ -778,7 +778,9 @@ module domainJoinWindowsServers 'modules/identity/domain-join.bicep' = [
 
 // Same ordering guarantee as Windows VMs: network pathing is established first.
 
-var activeLinuxVMs = deployWorkload ? linuxVMList : []
+var activeLinuxVMs = (deployWorkload || deployIdentity)
+  ? linuxVMList
+  : []
 
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
   for vm in activeLinuxVMs: {

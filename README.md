@@ -102,6 +102,11 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
   - [Step 6: Role-Based VM Sizing and Storage](#step-6-role-based-vm-sizing-and-storage)
   - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
   - [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required)
+    - [Why Key Vault is needed](#why-key-vault-is-needed)
+    - [Create Foundation RG](#create-foundation-rg)
+    - [Create Key Vault](#create-key-vault)
+    - [Add Secrets](#add-secrets)
+    - [Link Key Vault in Parameters](#link-key-vault-in-parameters)
   - [Step 8a: Identity Foundation Stage (Optional)](#step-8a-identity-foundation-stage-optional)
   - [Step 9: Deploy](#step-9-deploy)
     - [Full Deployment](#full-deployment)
@@ -1168,14 +1173,42 @@ Ensure that the name of this RG does not start with the prefix selected earlier,
 
 ### Create Key Vault
 
-Ensure that the correct Azure Role-Based Access Control (RBAC) role is assigned to create the key vault and secrets. For example: [Key Vault Secrets Officer](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/security#key-vault-secrets-officer)
+Ensure that the correct Azure Role-Based Access Control (RBAC) role is assigned. For example, to assign the [Key Vault Secrets Officer](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/security#key-vault-secrets-officer) role to the current user:
+
+```bash
+CURRENT_USER=$(az ad signed-in-user show --query id -o tsv)
+az role assignment create \
+  --assignee $CURRENT_USER \
+  --role "Key Vault Secrets Officer" \
+  --scope /subscriptions/<subscription-id>/resourceGroups/<foundation-rg>
+```
+
+Create the Key Vault with Azure Service bypass enabled (allowing Azure services to access it) and template deployment access enabled (allowing Azure Resource Manager to retrieve secrets during template deployment):
 
 ```bash
 az keyvault create \
   --name <key-vault-name> \
   --resource-group <foundation-rg> \
   --location <azure-region> \
+  --bypass AzureServices \
   --enabled-for-template-deployment true
+```
+
+Verify the Key Vault configuration:
+
+```bash
+az keyvault show \
+  --name <key-vault-name> \
+  --query "{TemplateDeployment:properties.enabledForTemplateDeployment,Bypass:properties.networkAcls.bypass}"
+```
+
+Expected result:
+
+```json
+{
+  "TemplateDeployment": true,
+  "Bypass": "AzureServices"
+}
 ```
 
 ### Add Secrets
@@ -1200,45 +1233,6 @@ az keyvault secret set --vault-name <key-vault-name> --name clientAdminPassword 
 ```
 
 Repeat for other passwords.
-
-#### Required Key Vault Configuration
-
-This solution uses Azure Resource Manager Key Vault references for secure password retrieval.
-
-To support local and GitHub Actions validation, the Key Vault must allow Azure Resource Manager access.
-
-##### Enable Azure Service Bypass
-
-```bash
-az keyvault update \
-  --name <key-vault-name> \
-  --bypass AzureServices
-```
-
-##### Enable ARM Template Deployment Access
-
-```bash
-az keyvault update \
-  --name <key-vault-name> \
-  --enabled-for-template-deployment true
-```
-
-##### Verify Configuration
-
-```bash
-az keyvault show \
-  --name <key-vault-name> \
-  --query "{TemplateDeployment:properties.enabledForTemplateDeployment,Bypass:properties.networkAcls.bypass}"
-```
-
-Expected result:
-
-```json
-{
-  "TemplateDeployment": true,
-  "Bypass": "AzureServices"
-}
-```
 
 Reference: [Use Azure Key Vault to pass secure parameter values during deployment](https://aka.ms/arm-keyvault)
 

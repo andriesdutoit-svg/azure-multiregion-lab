@@ -16,7 +16,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' existing = {
 
 resource domainJoin 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' = {
   parent: vm
-  name: 'join-domain'
+  name: 'join-domain-linux'
 
   location: resourceGroup().location
 
