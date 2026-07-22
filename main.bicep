@@ -571,9 +571,12 @@ var workloadWindowsVMs = filter(windowsVMList, vm =>
   vm.type == 'srvwin' || vm.type == 'cliwin'
 )
 
+var deployIdentityTargets = deployWorkload || deployIdentity
+
+
 var activeWindowsVMs = concat(
   deployControl ? controlWindowsVMs : [],
-  deployWorkload ? workloadWindowsVMs : []
+  deployIdentityTargets ? workloadWindowsVMs : []
 )
 
 // ------------------------------
@@ -683,6 +686,11 @@ var directoryModel = {
     domainLocalSecurityPrefix: 'DLGS'
   }
 
+  platformAdminGroups: {
+    windowsAdmins: 'Windows_Admins'
+    linuxAdmins: 'Linux_Admins'
+  }
+
   shares: {
     root: {
       name: 'Shares'
@@ -752,7 +760,7 @@ module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
   }
 }
 
-module domainJoinWindowsServers 'modules/identity/domain-join.bicep' = [
+module domainJoinWindows 'modules/identity/domain-join.bicep' = [
   for vm in filter(activeWindowsVMs, vm => vm.type == 'srvwin' || vm.type == 'cliwin'): if (deployIdentity) {
     name: '${prefix}-domainjoin-${vm.name}'
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
@@ -778,7 +786,7 @@ module domainJoinWindowsServers 'modules/identity/domain-join.bicep' = [
 
 // Same ordering guarantee as Windows VMs: network pathing is established first.
 
-var activeLinuxVMs = (deployWorkload || deployIdentity)
+var activeLinuxVMs = deployIdentityTargets
   ? linuxVMList
   : []
 
@@ -825,8 +833,8 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
   }
 ]
 
-module domainJoinLinuxServers 'modules/identity/domain-join-linux.bicep' = [
-  for vm in filter(activeLinuxVMs, vm => vm.type == 'srvlin'): if (deployIdentity) {
+module domainJoinLinux 'modules/identity/domain-join-linux.bicep' = [
+  for vm in filter(activeLinuxVMs, vm => vm.type == 'srvlin' || vm.type == 'clilin'): if (deployIdentity) {
     name: '${prefix}-domainjoin-${vm.name}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')

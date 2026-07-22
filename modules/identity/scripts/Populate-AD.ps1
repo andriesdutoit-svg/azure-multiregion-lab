@@ -511,6 +511,14 @@ function Invoke-Phase3DepartmentSecurityGroups {
     $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
     $dlgsPrefix = $PopulationModel.groupNaming.domainLocalSecurityPrefix
 
+    $windowsAdminsGroup = (
+        "${ggsPrefix}_$($PopulationModel.platformAdminGroups.windowsAdmins)"
+    )
+
+    $linuxAdminsGroup = (
+        "${ggsPrefix}_$($PopulationModel.platformAdminGroups.linuxAdmins)"
+    )
+
     Write-Host "[i] Department security group generation starting"
 
     $ggsOU = Get-ManagedOU `
@@ -528,6 +536,18 @@ function Invoke-Phase3DepartmentSecurityGroups {
     if (-not $dlgsOU -or [string]::IsNullOrWhiteSpace($dlgsOU.DistinguishedName)) {
         throw "Unable to resolve group OU: $($PopulationModel.groupOuMapping.domainLocalSecurity)"
     }
+
+    Ensure-ADGroup `
+        -Name $windowsAdminsGroup `
+        -Path $ggsOU.DistinguishedName `
+        -GroupCategory Security `
+        -GroupScope Global
+
+    Ensure-ADGroup `
+        -Name $linuxAdminsGroup `
+        -Path $ggsOU.DistinguishedName `
+        -GroupCategory Security `
+        -GroupScope Global
 
     foreach ($department in $SelectedDepartments) {
 

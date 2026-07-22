@@ -111,13 +111,48 @@ log_info "Domain join completed"
 # Phase 7 - SSSD configuration
 #
 
+log_info "Configuring SSSD"
+
+if ! grep -q "^ad_gpo_access_control = permissive" /etc/sssd/sssd.conf; then
+    cat >> /etc/sssd/sssd.conf <<EOF
+
+ad_gpo_access_control = permissive
+EOF
+fi
+
+chmod 600 /etc/sssd/sssd.conf
+
 systemctl enable sssd
 systemctl restart sssd
 
 log_info "SSSD configured"
 
+log_info "Configuring automatic home directory creation"
+
+pam-auth-update --enable mkhomedir
+
+log_info "Home directory creation configured"
+
 #
-# Phase 8 - Validation
+# Phase 8 - Access configuration
+#
+
+realm permit --all
+
+log_info "Configuring Linux administrator sudo rights"
+
+if cat >/etc/sudoers.d/linux-admins <<EOF
+%GGS_Linux_Admins@amrl.lab ALL=(ALL:ALL) ALL
+EOF
+then
+    chmod 440 /etc/sudoers.d/linux-admins
+    log_info "Linux administrator sudo rights configured"
+else
+    log_warn "Failed to configure Linux administrator sudo rights"
+fi
+
+#
+# Phase 9 - Validation
 #
 
 log_info "Validating domain membership"
