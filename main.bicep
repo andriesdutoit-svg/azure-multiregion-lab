@@ -810,6 +810,13 @@ module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
   }
 }
 
+// ========================================
+// DEPLOYMENT STAGE 7b: WINDOWS DOMAIN JOIN
+// Joins Windows servers (srvwin) and clients (cliwin) to the AD domain.
+// Runs after directory population. OU placement is driven by VM type via the directory model.
+// Participates in the reconciliation model: existing domain membership is detected and skipped.
+// ========================================
+
 module domainJoinWindows 'modules/identity/domain-join.bicep' = [
   for vm in filter(activeWindowsVMs, vm => vm.type == 'srvwin' || vm.type == 'cliwin'): if (deployIdentity) {
     name: '${prefix}-domainjoin-${vm.name}'
@@ -884,6 +891,13 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
     }
   }
 ]
+
+// ========================================
+// DEPLOYMENT STAGE 8b: LINUX DOMAIN JOIN
+// Joins Linux servers (srvlin) and clients (clilin) to the AD domain using realmd/SSSD integration.
+// Runs after directory population. OU placement is driven by VM type via the directory model.
+// Participates in the reconciliation model: existing domain membership is detected and skipped.
+// ========================================
 
 module domainJoinLinux 'modules/identity/domain-join-linux.bicep' = [
   for vm in filter(activeLinuxVMs, vm => vm.type == 'srvlin' || vm.type == 'clilin'): if (deployIdentity) {

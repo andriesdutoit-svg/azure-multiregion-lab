@@ -35,7 +35,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateRange(0, 10000)]
     [int]$UsersPerDepartment,
-    
+
     [string]$ReconciliationToken
 )
 
@@ -654,7 +654,7 @@ function Invoke-Phase4DepartmentGroupNesting {
     $platformAdminUsersGroup = (
         "${ggsPrefix}_" +
         "$($PopulationModel.platformAdminGroups.sourceDepartmentCode)" +
-        "_Users"
+        "_ALL"
     )
 
     if (Get-ADGroup -Identity $platformAdminUsersGroup -ErrorAction SilentlyContinue) {

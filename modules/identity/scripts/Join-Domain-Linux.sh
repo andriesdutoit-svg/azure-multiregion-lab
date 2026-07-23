@@ -16,6 +16,26 @@ DIRECTORY_MODEL="${DirectoryModel}"
 #   → produces group name "AMRL_LinuxAdmins" for sudoers configuration.
 LINUX_ADMINS_GROUP=""
 VM_TYPE="${VmType}"
+
+COMPUTER_OU=$(echo "${DIRECTORY_MODEL}" | jq -r \
+    ".computerOuMapping.${VM_TYPE}")
+
+COMPUTER_OU_DN=$(echo "${COMPUTER_OU}" | awk -F'/' '
+{
+    for (i=NF; i>=1; i--) {
+        printf "OU=%s", $i
+
+        if (i > 1) {
+            printf ","
+        }
+    }
+}')
+
+ROOT_OU_NAME=$(echo "${DIRECTORY_MODEL}" | jq -r \
+    '.rootOuName')
+
+FULL_COMPUTER_OU_DN="${COMPUTER_OU_DN},OU=${ROOT_OU_NAME}"
+
 SERVER_ADMIN_USERNAME="${ServerAdminUsername}"
 SERVER_ADMIN_PASSWORD="${ServerAdminPassword}"
 RECONCILIATION_TOKEN="${ReconciliationToken}"
@@ -33,6 +53,15 @@ log_error() {
 }
 
 log_info "Starting AMRL Linux Domain Join"
+
+log_info "Computer OU = ${COMPUTER_OU}"
+log_info "Computer OU DN = ${COMPUTER_OU_DN}"
+log_info "Full Computer OU DN = ${FULL_COMPUTER_OU_DN}"
+
+if [[ -z "${COMPUTER_OU}" || "${COMPUTER_OU}" == "null" ]]; then
+    log_error "No OU mapping defined for VM type: ${VM_TYPE}"
+    exit 1
+fi
 
 #
 # Phase 1 - Validation
@@ -63,7 +92,7 @@ log_info "Input validation completed successfully"
 
 ALREADY_JOINED=false
 
-if realm list | grep -qi "^domain-name: ${DOMAIN_NAME}$"; then
+if realm list | grep -qi "domain-name:[[:space:]]*${DOMAIN_NAME}$"; then
     log_info "Computer is already joined to ${DOMAIN_NAME}"
     ALREADY_JOINED=true
 fi
@@ -131,11 +160,12 @@ log_info "Domain discovery completed"
 
 if [[ "${ALREADY_JOINED}" == "false" ]]; then
 
-    log_info "Joining domain"
+    log_info "realm join OU = ${FULL_COMPUTER_OU_DN}"
 
     echo "${SERVER_ADMIN_PASSWORD}" | realm join \
         "${DOMAIN_NAME}" \
-        --user="${SERVER_ADMIN_USERNAME}"
+        --user="${SERVER_ADMIN_USERNAME}" \
+        --computer-ou="${FULL_COMPUTER_OU_DN}"
 
     log_info "Domain join completed"
 

@@ -24,6 +24,7 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
 <summary><strong>Overview</strong></summary>
 
 - [Overview](#overview)
+  - [Key Concepts](#key-concepts)
   - [Project Evolution](#project-evolution)
   - [Design Principles](#design-principles)
 
@@ -213,12 +214,31 @@ For full parameter-by-parameter guidance, continue with [Start Guide (Detailed)]
 >
 > Use `az vm image list-publishers --location <region>` and `az vm list-sizes --location <region>` to check availability in your subscription.
 
-Identity note: `main.parameters.demo.json` keeps `enableIdentity` disabled by default for fast baseline demos.
+#### Identity Setup Notes
 
-Identity notes:
-
+- `main.parameters.demo.json` keeps `enableIdentity` disabled by default for fast baseline demos.
 - `stage=identity` is not a standalone first-run path; control-plane DC VMs must already exist (or use `stage=all`).
 - Identity scope includes forest bootstrap, replica promotion, directory population for OU, group, and user seeding, and automated domain join for Windows servers and clients and Linux systems.
+
+---
+
+## Key Concepts
+
+**Greenfield Deployment**: Creating entirely new infrastructure from scratch. All networking, compute, and identity resources are created fresh.
+
+**Brownfield Deployment**: Reusing existing infrastructure (typically networking) and adding new resources on top. Controlled by the `existingRegions` parameter.
+
+**Reconciliation Model**: Identity automation that can be safely re-executed. Scripts check whether the target state already exists before making changes. If something is missing, it is recreated automatically.
+
+**AGDLP**: Active Directory Group Policy Linking pattern. Global Security Groups (containing users) are nested into Domain Local Security Groups (which hold actual file share permissions).
+
+**Stage**: Deployment execution mode that controls which resource types are deployed (`network`, `control`, `identity`, `workload`, or `all`).
+
+**DC (Domain Controller)**: Primary (`dc01`) or replica (`dc02`, `dc03`, etc.) domain controllers. The primary DC creates the forest; replicas sync from it.
+
+**Idempotent**: Deployments can be run multiple times safely. Re-running produces the same end state without errors or unwanted recreation.
+
+---
 
 ### Project Evolution
 
@@ -266,8 +286,8 @@ The solution was developed iteratively, with each phase introducing additional a
 - **v2.1.1 – Brownfield Networking Support**
   Region-aware networking reuse using `existingRegions` for brownfield deployments.
 
-- **v2.2 – Domain Join Automation & Department Parameter Refactoring**
-  Automated domain join for Windows servers and clients and Linux systems with customisable OU placement. Refactored department parameters into `sysAdminDepartment` and `additionalDepartments`.
+- **v2.2 – Domain Join Automation, Reconciliation & Department Parameter Refactoring**
+  Automated domain join for Windows servers and clients and Linux systems with customisable OU placement. Introduced identity reconciliation through re-executable Azure VM Run Commands, allowing identity deployments to safely self-heal and recreate missing required objects. Refactored department parameters into sysAdminDepartment and additionalDepartments.
 
 ### Design Principles
 
@@ -481,6 +501,10 @@ Identity deployment behaviour:
 - Identity deployments are idempotent and can be safely re-executed.
 - Identity deployment is automatically included in `stage=all` when `enableIdentity=true`.
 
+- Identity automation follows a reconciliation model: operational scripts are re-executed during identity deployments and determine whether remediation is required.
+- Existing compliant resources are not recreated.
+- Missing required objects are restored automatically.
+
 #### Identity Deployment Flow
 
 Use this flow to understand how `enableIdentity` and `stage` determine forest bootstrap, replica promotion, and directory population.
@@ -521,9 +545,9 @@ PowerShell scripts are embedded into Azure VM Run Command resources at deploymen
 
 #### Directory Model Configuration
 
-The directory model is a JSON object hardcoded in [main.bicep](main.bicep#L653) that defines the Active Directory structure created during directory population. The model specifies OU hierarchy, computer-to-OU mappings, group naming conventions, and share configuration.
+The directory model is a JSON object hardcoded in [main.bicep](main.bicep#L701) that defines the Active Directory structure created during directory population. The model specifies OU hierarchy, computer-to-OU mappings, group naming conventions, and share configuration.
 
-The directory model is **not parameterised** because these values represent a stable architectural decision unlikely to change between deployments. Customisation requires editing [main.bicep](main.bicep#L653).
+The directory model is **not parameterised** because these values represent a stable architectural decision unlikely to change between deployments. Customisation requires editing [main.bicep](main.bicep#L701).
 
 Directory model structure:
 
@@ -557,57 +581,108 @@ Configuration is deployment-driven through parameters:
 - `departmentCount` – Limits how many total departments (from both mandatory and additional) are activated during deployment
 - `usersPerDepartment` – Controls the target number of standard users per department
 
+Platform administrative groups are populated from the system administration department's ALL group.
+
+Example:
+
+GGS_ICT_ALL
+ ├─ GGS_Windows_Admins
+ └─ GGS_Linux_Admins
+
+This ensures both standard users and managers within the designated administration department inherit platform administration rights.
+
 Behaviour notes:
 
 - Populate logic is executed through Azure VM Command with script content embedded from the repository using Bicep `loadTextContent()`.
 - Deployments are intentionally non-destructive: reruns reconcile existing objects and recreate only missing required objects.
 - The `sysAdminDepartment` is always included in the deployment; `departmentCount` must be at least 1 (reflecting `sysAdminDepartment` alone) and can be increased to include entries from `additionalDepartments`.
 
-Greenfield expectations:
+- Identity automation uses a reconciliation approach rather than one-time provisioning.
+- Existing compliant objects are preserved.
+- Missing required OUs, groups, memberships, users, and shares are recreated during subsequent identity deployments.
 
-- Baseline OUs, departmental OUs, security groups, AGDLP nesting, shares, and NTFS ACLs are created.
-- `sysAdminDepartment` is always created.
-- Additional departments are created up to the limit specified by `departmentCount`, selected from `additionalDepartments`.
-- User population targets are applied per department as `1 manager + usersPerDepartment standard users`.
+<details>
+<summary><strong>Greenfield Expectations</strong></summary>
 
-Brownfield reconciliation model:
+When deploying identity to a fresh environment:
 
-- Departmental context is OU-driven: OU location determines department ownership during remediation.
-- Manager eligibility is title-driven within that OU context: accounts are treated as managers only when title matches `*Manager*`.
-- Exactly one manager is supported per department. If multiple managers exist, the first is retained and additional managers are demoted.
-- If no manager exists in a department, a new manager is created from an unused CSV record (existing users are not promoted).
-- Removing a department from `sysAdminDepartment` or `additionalDepartments` does not delete its existing OU or users; that OU remains and becomes unmanaged by subsequent runs.
-- Adding a new department to `additionalDepartments` (or increasing `departmentCount`) creates and reconciles that department in addition to already existing departments.
-- Reporting lines are repaired from departmental context:
-  - unmanaged users are assigned to the departmental manager
-  - invalid or cross-department manager links are reassigned to the departmental manager
-- Non-manager users are remediated for Department attribute and departmental group memberships.
+- Baseline OUs, departmental OUs, security groups, AGDLP nesting, shares, and NTFS ACLs are created
+- `sysAdminDepartment` is always created
+- Additional departments are created up to `departmentCount`, selected from `additionalDepartments`
+- User population: `1 manager + usersPerDepartment standard users` per department
 
-Population rules:
+</details>
 
-- `usersPerDepartment` is enforced as a minimum target for standard users (managers excluded from this count).
-- Under-populated departments are topped up.
-- Over-populated departments are preserved; surplus users are not removed.
-- New users are added round-robin across departments.
-- Username collisions are skipped.
-- Standard user population stops with a warning when unique names are exhausted.
-- Manager bootstrap fails for a department if no unique CSV name remains.
+<details>
+<summary><strong>Brownfield Reconciliation Model</strong></summary>
+
+When redeploying or modifying an existing identity environment:
+
+**Department Management**:
+- Departmental context is OU-driven: OU location determines department ownership during remediation
+- Removing a department does not delete its OU or users (OU becomes unmanaged)
+- Adding a new department creates and reconciles it in addition to existing departments
+
+**Manager Rules**:
+- Accounts are managers only when title matches `*Manager*`
+- Exactly one manager per department
+  - Multiple managers: first is retained, others demoted
+  - No manager: new manager created from unused CSV records (existing users never promoted)
+
+**User Reporting Lines**:
+- Unmanaged users assigned to departmental manager
+- Invalid or cross-department links reassigned to departmental manager
+- Non-manager users remediated for Department attribute and group memberships
+
+</details>
+
+<details>
+<summary><strong>Population Rules</strong></summary>
+
+**User Targets**:
+- `usersPerDepartment` is enforced as a **minimum** for standard users (managers counted separately)
+- Under-populated departments topped up
+- Over-populated departments preserved (surplus users not removed)
+
+**New User Addition**:
+- Added round-robin across departments
+- Username collisions skipped
+- Stops with warning when unique names exhausted
+- Manager bootstrap fails if no unique CSV name available
+
+</details>
+
+#### Identity Reconciliation Model
+
+Identity automation uses a reconciliation model rather than a one-time provisioning model.
+
+Azure VM Run Commands are re-executed during identity deployments. Each script determines whether remediation is required and exits successfully when the target state is already achieved.
+
+Examples:
+
+- Existing forests are detected and skipped.
+- Existing domain membership is detected and skipped.
+- Missing users are recreated.
+- Missing required groups are recreated.
 
 #### AD Domain Automation
 
-Domain-join automation runs after directory population completes. When `enableIdentity=true`:
+Domain-join automation runs after directory population. When `enableIdentity=true`, both Windows and Linux systems participate in the identity reconciliation model — existing compliant systems are detected and skipped, and re-execution during identity redeployments triggers remediation only when needed.
 
 **Windows Systems**:
 - Windows servers (`srvwin`) and clients (`cliwin`) are automatically joined to the AD domain
-- Servers are placed in the `Computers/Servers` OU; clients in `Computers/Clients`
-- Joins are idempotent: re-execution skips already-joined systems
+- Servers placed in the `Computers/Servers` OU; clients in `Computers/Clients` OU
 - OU placement is driven by VM type through the directory model
 
 **Linux Systems**:
 - Linux servers (`srvlin`) and clients (`clilin`) are joined to AD using realmd/SSSD integration
 - Joined systems can authenticate using domain credentials
 - Configured groups are granted sudo rights on Linux systems
-- Joins are idempotent: re-execution skips already-joined systems
+- Linux servers joined into the `Computers/Servers` OU; clients into `Computers/Clients` OU
+- Placement derived from the directory model in the same way as Windows systems
+- Missing memberships are restored.
+
+The deployment intentionally avoids destructive remediation. Existing custom objects and administrator-created objects are preserved.
 
 ### Security Model
 
@@ -682,6 +757,12 @@ The project is structured to separate concerns and promote modular reuse.
 
 - **modules/identity/ad-populate.bicep**
   Deploys directory population automation to the primary DC.
+
+- **modules/identity/domain-join.bicep**
+  Deploys Windows domain join automation to Windows servers and clients.
+
+- **modules/identity/domain-join-linux.bicep**
+  Deploys Linux domain join automation using realmd/SSSD integration.
 
 - **modules/identity/scripts/Install-Forest.ps1**
   Creates the AD forest and DNS infrastructure.
@@ -777,11 +858,17 @@ Start by copying `main.parameters.demo.json` to a local parameters file, then ed
 
 #### maxVmsPerRegion
 - The **maximum number of VMs allowed in each region**
-- **Subscription quotas**: Manual pre-check guidance: Use this to help plan around Azure CPU quotas. The template enforces VM count limits, not vCPU quota checks.
-- Regional vCPU quotas vary by subscription type. Trial and student subscriptions typically have lower regional quotas than standard subscriptions.
-- Example:
-  - If each VM uses 2 vCPUs and your regional quota is 4: set `maxVmsPerRegion = 2`
-  - Check regional vCPU quota with: `az compute vm list-usage --location <region> -o table`
+
+> **⚠️ Important**: Manual pre-check guidance. The template enforces VM count limits, not vCPU quota checks.
+> 
+> Regional vCPU quotas vary significantly by subscription type:
+> - **Trial/Free subscriptions**: Typically 4–8 vCPU per region
+> - **Student subscriptions**: Usually 4 vCPU per region
+> - **Standard/Pay-as-you-go**: Often 20+ vCPU per region
+> 
+> **Example**: If each VM uses 2 vCPUs and your regional quota is 4, set `maxVmsPerRegion = 2`.
+> 
+> Check your quota with: `az compute vm list-usage --location <region> -o table`
 
 
 [Back to top](#table-of-contents)
@@ -805,7 +892,7 @@ For example:
 
 #### regionIndexMap
 
-Example with common regions and how to verify availability:
+Example with common regions:
 
 ```json
 "regionIndexMap": {
@@ -817,10 +904,12 @@ Example with common regions and how to verify availability:
 }
 ```
 
-**Important**: Before selecting regions, verify they are available in your subscription type:
-- Trial and student subscriptions may have restricted region access
-- Some regions may be unavailable in certain subscriptions
-- Check regional availability with: `az account list-locations -o table`
+> **⚠️ Important**: Verify regions are available in your subscription type before deployment.
+> 
+> Trial and student subscriptions often have restricted region access. Check availability with:
+> ```bash
+> az account list-locations -o table
+> ```
 
 #### Step 3: Rules
 
@@ -864,11 +953,12 @@ Leave these values as-is unless redesigning networking.
 ### Step 4b: Greenfield and Brownfield Deployments
 
 Networking create/reuse behaviour is controlled by `existingRegions`:
-- Regions listed in `existingRegions` have existing VNets, NSGs, and subnets that are reused
-- Regions not listed are created new (greenfield)
+- Regions listed in `existingRegions` have existing VNets, NSGs, and subnets that are **reused**
+- Regions not listed are **created new** (greenfield)
 - Route tables, peerings, and other dependent resources continue to be managed as needed
 
-#### Greenfield Deployments
+<details>
+<summary><strong>Greenfield Deployments</strong></summary>
 
 A greenfield deployment creates all networking components required by the solution:
 
@@ -879,25 +969,32 @@ A greenfield deployment creates all networking components required by the soluti
 - Route tables
 - VMs
 
-For new lab environments, set `existingRegions` to an empty array.
+For new lab environments, set `existingRegions` to an empty array:
+```json
+"existingRegions": { "value": [] }
+```
 
-#### Brownfield Deployments
+</details>
+
+<details>
+<summary><strong>Brownfield Deployments</strong></summary>
 
 A brownfield deployment reuses existing networking resources rather than creating new ones.
 
-This solution supports deployment framework-managed brownfield scenarios, including:
+Supported scenarios:
 
-- Redeployment of an existing environment.
-- Recovery or rebuild of VMs.
-- Incremental deployment of additional workloads.
-- Separate execution of the `network`, `control`, `identity`, and `workload` stages within environments created and managed by this deployment framework.
+- Redeployment of an existing environment
+- Recovery or rebuild of VMs
+- Incremental deployment of additional workloads
+- Separate execution of `network`, `control`, `identity`, and `workload` stages
 
-The existing networking resources should either:
-
+**Requirements**: Existing networking resources must either:
 - Have been created by a previous deployment of this solution, or
-- Follow the same naming conventions, subnet structure, and resource relationships expected by the modules.
+- Follow the same naming conventions, subnet structure, and resource relationships expected by the modules
 
-Validation prevents regions from being marked as existing when they are not part of the current deployment.
+> **Note**: Validation prevents regions from being marked as existing when they are not part of the current deployment.
+
+</details>
 
 **Example: Invalid existingRegions**
 
@@ -1089,7 +1186,7 @@ totalVMs ≤ regionCount × maxVmsPerRegion
 
 ### Step 6: Role-Based VM Sizing and Storage
 
-For example:
+Example configuration:
 
 ```json
 "vmSizes": {
@@ -1104,53 +1201,30 @@ For example:
 },
 "osDisks": {
   "value": {
-    "dc": {
-      "storageAccountType": "Premium_LRS",
-      "diskSizeGB": 128
-    },
-    "jumpbox": {
-      "storageAccountType": "StandardSSD_LRS",
-      "diskSizeGB": 64
-    },
-    "windowsServer": {
-      "storageAccountType": "Premium_LRS",
-      "diskSizeGB": 128
-    },
-    "windowsClient": {
-      "storageAccountType": "StandardSSD_LRS",
-      "diskSizeGB": 64
-    },
-    "linuxServer": {
-      "storageAccountType": "Premium_LRS",
-      "diskSizeGB": 128
-    },
-    "linuxClient": {
-      "storageAccountType": "StandardSSD_LRS",
-      "diskSizeGB": 64
-    }
+    "dc": { "storageAccountType": "Premium_LRS", "diskSizeGB": 128 },
+    "jumpbox": { "storageAccountType": "StandardSSD_LRS", "diskSizeGB": 64 },
+    "windowsServer": { "storageAccountType": "Premium_LRS", "diskSizeGB": 128 },
+    "windowsClient": { "storageAccountType": "StandardSSD_LRS", "diskSizeGB": 64 },
+    "linuxServer": { "storageAccountType": "Premium_LRS", "diskSizeGB": 128 },
+    "linuxClient": { "storageAccountType": "StandardSSD_LRS", "diskSizeGB": 64 }
   }
 }
 ```
 
-#### What This Does
+**What This Does**:
+- `vmSizes`: CPU and memory allocation per role
+- `osDisks.storageAccountType`: Disk performance tier per role (Premium vs StandardSSD)
+- `osDisks.diskSizeGB`: OS disk capacity per role
 
-Defines VM size and OS disk settings per role:
-- `vmSizes` controls CPU and memory by role
-- `osDisks.storageAccountType` controls the disk performance tier by role
-- `osDisks.diskSizeGB` controls OS disk capacity by role
-
-#### Subscription and Regional Availability
-
-**VM Size Availability**: Not all VM sizes are available in all regions or subscription types.
-- Trial/free subscriptions may have restricted VM size access
-- Student subscriptions typically support only basic sizes
-- Some premium sizes (e.g., `Standard_B2ms`) may not be available in all regions
-- Verify VM size availability: `az vm list-sizes --location <region> -o table`
-
-**OS Image Availability**: Windows and Linux images may not be available in all regions.
-- Some regions may lack specific Ubuntu versions or Windows Server editions
-- Trial subscriptions may have image restrictions
-- Verify image availability: `az vm image list-publishers --location <region> -o table`
+> **⚠️ Availability Note**: Not all VM sizes or images are available in all regions or subscription types.
+> 
+> **Verify availability before deploying**:
+> ```bash
+> az vm list-sizes --location <region> -o table
+> az vm image list-publishers --location <region> -o table
+> ```
+> 
+> Trial/free and student subscriptions often have restricted access to premium sizes and regional variants.
 
 #### VM Lifecycle Behaviour
 
@@ -1202,9 +1276,12 @@ In `main.parameters.demo.json`, this value is a placeholder. Replace it in your 
 
 ### Step 8: Key Vault Setup (Required)
 
-### Why Key Vault is needed
+> **⚠️ Critical**: Passwords are **NOT** stored in the template. They are securely stored in Azure Key Vault and referenced during deployment.
 
-Passwords are NOT stored in the template. They are securely stored in Key Vault.
+Key Vault provides:
+- Secure credential storage
+- No secrets in parameter files
+- Role-based access control (RBAC) over who can retrieve secrets
 
 ### Create Foundation RG
 
@@ -1736,7 +1813,7 @@ Future identity automation may continue to incorporate adapted portions of Set-D
 
 - Additional directory population scenarios and data customisation guidance.
 - Group Policy deployment and management.
-- Identity stage hardening and rollback guidance.
+- Further reconciliation and compliance-driven identity automation.
 - Azure Bastion integration.
 - Enhanced monitoring and operational visibility.
 
