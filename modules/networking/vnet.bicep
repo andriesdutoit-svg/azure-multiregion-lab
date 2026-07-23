@@ -31,6 +31,18 @@ var createSubnets = !isExistingRegion
 
 var internalNetworkRange = '10.0.0.0/8'
 
+// ========================================
+// SECURITY RULE BUILDING BLOCKS
+// Rule arrays are composed by role-specific NSG to enforce segmentation:
+// - adRules: Core AD services (DNS, Kerberos, LDAP) for domain join
+// - adAdvancedRules: Advanced AD services (NTP, Global Catalog, LDAPS, RPC)
+// - jumpboxRules: SSH inbound + AD client access (for domain join)
+// - serverRules: Workload services (WinRM, SSH) + AD access
+// - clientRules: AD access only (for domain join)
+// - firewallRules: Internal + VPN routing
+// Each role-specific NSG combines the applicable rule sets.
+// ========================================
+
 var adRules = [
   {
     name: 'Allow-DNS'

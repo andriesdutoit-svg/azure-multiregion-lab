@@ -22,7 +22,7 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
-    [string]$MandatoryDepartmentsJson,
+    [string]$SysAdminDepartmentJson,
 
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
@@ -34,7 +34,9 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateRange(0, 10000)]
-    [int]$UsersPerDepartment
+    [int]$UsersPerDepartment,
+    
+    [string]$ReconciliationToken
 )
 
 Write-Host "Starting AMRL Directory Population"
@@ -60,7 +62,9 @@ Start-Transcript `
 Write-Host "[i] Log file: $logFile"
 
 # Helper functions: idempotent Ensure-* operations.
+# All functions check for existing objects before creation to support re-execution.
 
+# Get-ManagedOU: Traverse nested OU hierarchy by path string (e.g., 'Computers/Servers')
 function Get-ManagedOU {
     param(
         [string]$OuPath,
@@ -85,6 +89,8 @@ function Get-ManagedOU {
     return $ou
 }
 
+# Ensure-OrganizationalUnit: Create OU if not exists; return existing OU if present (idempotent).
+# Supports nested paths (e.g., path 'OU=Computers,DC=...' creates Computers OU within domain).
 function Ensure-OrganizationalUnit {
     param(
         [string]$Name,
@@ -116,6 +122,9 @@ function Ensure-OrganizationalUnit {
         -SearchScope OneLevel
 }
 
+# Ensure-ADGroup: Create AGDLP group if not exists; return existing group if present (idempotent).
+# GroupScope: DomainLocal (DLGS) for local resource permissions, Global (GGS) for distribution/membership.
+# Follows AGDLP nesting: Global group contains users, DomainLocal group grants resource permissions.
 function Ensure-ADGroup {
     param(
         [string]$Name,
@@ -350,16 +359,21 @@ Write-Host "[+] Creating User: $SamAccountName"
     )
 }
 
+# Get-SelectedDepartments: Filter department lists to match InputDepartmentCount.
+# Always includes all sysAdminDepartments (mandatory); fills remaining slots with additionalDepartments.
+# Example: sysAdminDepartments=[IT], additionalDepartments=[Finance,HR], InputDepartmentCount=2
+#   → Returns [IT, Finance] (IT mandatory + 1 additional)
+# Validates that InputDepartmentCount >= length(sysAdminDepartments); throws if underconstrained.
 function Get-SelectedDepartments {
     param(
-        [string]$MandatoryDepartmentsJson,
+        [string]$SysAdminDepartmentJson,
         [string]$AdditionalDepartmentsJson,
         [int]$InputDepartmentCount
     )
 
-    $mandatoryDepartments = @(
+    $sysAdminDepartments = @(
         (
-            $MandatoryDepartmentsJson |
+            $SysAdminDepartmentJson |
             ConvertFrom-Json
         ).PSObject.Properties
     )
@@ -371,22 +385,22 @@ function Get-SelectedDepartments {
         ).PSObject.Properties
     )
 
-    if ($InputDepartmentCount -lt $mandatoryDepartments.Count) {
+    if ($InputDepartmentCount -lt $sysAdminDepartments.Count) {
         throw (
             "DepartmentCount ($InputDepartmentCount) is less than " +
-            "the number of mandatory departments ($($mandatoryDepartments.Count))."
+            "the number of mandatory departments ($($sysAdminDepartments.Count))."
         )
     }
 
     $remainingDepartmentSlots =
-        $InputDepartmentCount - $mandatoryDepartments.Count
+        $InputDepartmentCount - $sysAdminDepartments.Count
 
     $selectedAdditionalDepartments =
         $additionalDepartments |
         Select-Object -First $remainingDepartmentSlots
 
     return @(
-        $mandatoryDepartments +
+        $sysAdminDepartments +
         $selectedAdditionalDepartments
     )
 }
@@ -637,21 +651,25 @@ function Invoke-Phase4DepartmentGroupNesting {
 
     Write-Host "[i] Department group nesting starting"
 
-    $ictUsersGroup = "${ggsPrefix}_ICT_Users"
+    $platformAdminUsersGroup = (
+        "${ggsPrefix}_" +
+        "$($PopulationModel.platformAdminGroups.sourceDepartmentCode)" +
+        "_Users"
+    )
 
-    if (Get-ADGroup -Identity $ictUsersGroup -ErrorAction SilentlyContinue) {
+    if (Get-ADGroup -Identity $platformAdminUsersGroup -ErrorAction SilentlyContinue) {
 
         Ensure-ADGroupMember `
             -GroupName $windowsAdminsGroup `
-            -MemberName $ictUsersGroup
+            -MemberName $platformAdminUsersGroup
 
         Ensure-ADGroupMember `
             -GroupName $linuxAdminsGroup `
-            -MemberName $ictUsersGroup
+            -MemberName $platformAdminUsersGroup
     }
     else {
         Write-Warning (
-            "$ictUsersGroup not found. " +
+            "$platformAdminUsersGroup not found. " +
             "Skipping platform admin group nesting."
         )
     }
@@ -1615,14 +1633,40 @@ function Invoke-Phase7RoundRobinUserPopulation {
 # 6. Populate missing users
 #
 
-try {
-    $currentDomain = Get-ADDomain -ErrorAction Stop
+Write-Host "[INFO] Waiting for Active Directory availability"
 
-    Write-Host "Connected to domain: $($currentDomain.DNSRoot)"
+$currentDomain = $null
+
+for ($attempt = 1; $attempt -le 30; $attempt++) {
+
+    try {
+
+        $currentDomain = Get-ADDomain -ErrorAction Stop
+
+        Write-Host (
+            "[INFO] Connected to domain: " +
+            $currentDomain.DNSRoot
+        )
+
+        break
+    }
+    catch {
+
+        Write-Host (
+            "[INFO] Attempt $attempt of 30 - " +
+            "Active Directory not ready yet"
+        )
+
+        Start-Sleep -Seconds 20
+    }
 }
-catch {
-    Write-Error "Unable to access Active Directory"
-    throw
+
+if ($null -eq $currentDomain) {
+
+    throw (
+        "Active Directory did not become available " +
+        "within the expected time."
+    )
 }
 
 $model = $DirectoryModel | ConvertFrom-Json
@@ -1644,7 +1688,7 @@ if ($CSVNames.Count -eq 0) {
 $domainDN = (Get-ADRootDSE).rootDomainNamingContext
 
 $departments = Get-SelectedDepartments `
-    -MandatoryDepartmentsJson $MandatoryDepartmentsJson `
+    -SysAdminDepartmentJson $SysAdminDepartmentJson `
     -AdditionalDepartmentsJson $AdditionalDepartmentsJson `
     -InputDepartmentCount $DepartmentCount
 

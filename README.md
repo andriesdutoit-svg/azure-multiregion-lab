@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.1.1
+# Azure Multi-Region Lab (AMRL) v2.2
 
 ## Overview
 
@@ -198,13 +198,27 @@ az deployment sub create \
 
 For full parameter-by-parameter guidance, continue with [Start Guide (Detailed)](#start-guide-detailed).
 
+> **Note on Subscription Types**
+>
+> Available regions, VM sizes, VM images, and regional vCPU quotas vary significantly by subscription type:
+> - **Trial/Free subscriptions**: Often have restricted regions and may not support all VM sizes or images
+> - **Student subscriptions**: Typically limited to a small set of regions with reduced quota
+> - **Standard/Pay-as-you-go subscriptions**: Generally have broader availability
+>
+> Before deploying, verify that your subscription supports:
+> - The regions specified in `regionIndexMap`
+> - The VM sizes specified in `vmSizes`
+> - The OS images (Windows, Ubuntu) in your target regions
+> - Sufficient vCPU quota for your `maxVmsPerRegion` and `regionCount` settings
+>
+> Use `az vm image list-publishers --location <region>` and `az vm list-sizes --location <region>` to check availability in your subscription.
+
 Identity note: `main.parameters.demo.json` keeps `enableIdentity` disabled by default for fast baseline demos.
 
 Identity notes:
 
 - `stage=identity` is not a standalone first-run path; control-plane DC VMs must already exist (or use `stage=all`).
-- Current identity scope includes forest bootstrap, replica promotion, and directory population for OU, group, and user seeding.
-- Domain join and related hardening remain future work.
+- Identity scope includes forest bootstrap, replica promotion, directory population for OU, group, and user seeding, and automated domain join for Windows servers and clients and Linux systems.
 
 ### Project Evolution
 
@@ -243,14 +257,17 @@ The solution was developed iteratively, with each phase introducing additional a
 - **v1.13.2 — GitHub Actions and CI/CD Foundation**  
   Introduced GitHub Actions CI/CD with Azure OpenID Connect (OIDC) authentication, Bicep build/lint checks, deployment validation, What-If integration, and a demo deployment profile.
 
-- **v2.0.0 — Identity Foundation**
-  Introduced staged Active Directory (AD) deployment with `enableIdentity`, `domainName`, `stage=identity`, automated forest creation on the primary DC, automated replica DC promotion, and reusable PowerShell-based identity orchestration using Azure VM Run Command.
+- **v2.0 — Identity Foundation**
+  Staged Active Directory (AD) deployment with automated forest creation and replica promotion via Azure VM Run Command.
 
-- **v2.1.0 — Directory Population**
-  Added staged directory population to the identity workflow, including OU creation, AGDLP group seeding, share and NTFS permission provisioning, brownfield manager reconciliation, and user population driven by `departments`, `departmentCount`, and `usersPerDepartment`.
+- **v2.1 — Directory Population**
+  Directory population with OU creation, AGDLP group seeding, share provisioning, and idempotent user population.
 
 - **v2.1.1 – Brownfield Networking Support**
-  Introduced region-aware networking reuse using `existingRegions`, allowing existing VNets, NSGs, and subnets to be referenced rather than redeployed. Added validation for invalid `existingRegions` entries and simplified networking orchestration by removing the obsolete `deploySubnets` control.
+  Region-aware networking reuse using `existingRegions` for brownfield deployments.
+
+- **v2.2 – Domain Join Automation & Department Parameter Refactoring**
+  Automated domain join for Windows servers and clients and Linux systems with customisable OU placement. Refactored department parameters into `sysAdminDepartment` and `additionalDepartments`.
 
 ### Design Principles
 
@@ -535,18 +552,22 @@ Group naming and OU placement are driven by the [directory model](#directory-mod
 
 Configuration is deployment-driven through parameters:
 
-- departments
-- departmentCount
-- usersPerDepartment
+- `sysAdminDepartment` – A mandatory single-entry object defining the system administration department (e.g., `{ "Information Technology": "ICT" }`)
+- `additionalDepartments` – An optional multi-entry object defining additional departments (e.g., `{ "Finance": "FIN", "Human Resources": "HR" }`)
+- `departmentCount` – Limits how many total departments (from both mandatory and additional) are activated during deployment
+- `usersPerDepartment` – Controls the target number of standard users per department
 
 Behaviour notes:
 
-- Populate logic is executed through Azure VM Run Command with script content embedded from the repository using Bicep `loadTextContent()`.
+- Populate logic is executed through Azure VM Command with script content embedded from the repository using Bicep `loadTextContent()`.
 - Deployments are intentionally non-destructive: reruns reconcile existing objects and recreate only missing required objects.
+- The `sysAdminDepartment` is always included in the deployment; `departmentCount` must be at least 1 (reflecting `sysAdminDepartment` alone) and can be increased to include entries from `additionalDepartments`.
 
 Greenfield expectations:
 
 - Baseline OUs, departmental OUs, security groups, AGDLP nesting, shares, and NTFS ACLs are created.
+- `sysAdminDepartment` is always created.
+- Additional departments are created up to the limit specified by `departmentCount`, selected from `additionalDepartments`.
 - User population targets are applied per department as `1 manager + usersPerDepartment standard users`.
 
 Brownfield reconciliation model:
@@ -555,8 +576,8 @@ Brownfield reconciliation model:
 - Manager eligibility is title-driven within that OU context: accounts are treated as managers only when title matches `*Manager*`.
 - Exactly one manager is supported per department. If multiple managers exist, the first is retained and additional managers are demoted.
 - If no manager exists in a department, a new manager is created from an unused CSV record (existing users are not promoted).
-- Removing a department from `departments` does not delete its existing OU or users; that OU remains and becomes unmanaged by subsequent runs.
-- Adding a new department to `departments` creates and reconciles that department in addition to already existing departments.
+- Removing a department from `sysAdminDepartment` or `additionalDepartments` does not delete its existing OU or users; that OU remains and becomes unmanaged by subsequent runs.
+- Adding a new department to `additionalDepartments` (or increasing `departmentCount`) creates and reconciles that department in addition to already existing departments.
 - Reporting lines are repaired from departmental context:
   - unmanaged users are assigned to the departmental manager
   - invalid or cross-department manager links are reassigned to the departmental manager
@@ -574,13 +595,19 @@ Population rules:
 
 #### AD Domain Automation
 
-Domain-join automation runs after directory population completes. When `enableIdentity=true`, Windows servers are automatically joined to the AD domain:
+Domain-join automation runs after directory population completes. When `enableIdentity=true`:
 
-- Domain join targets Windows servers only (`srvwin` VM type)
-- Domain join is filtered to exclude Windows clients
-- Servers are joined after directory population completes
-- Joins are idempotent: re-execution skips already-joined servers
-- OU placement can be customised per VM type through deployment parameters
+**Windows Systems**:
+- Windows servers (`srvwin`) and clients (`cliwin`) are automatically joined to the AD domain
+- Servers are placed in the `Computers/Servers` OU; clients in `Computers/Clients`
+- Joins are idempotent: re-execution skips already-joined systems
+- OU placement is driven by VM type through the directory model
+
+**Linux Systems**:
+- Linux servers (`srvlin`) and clients (`clilin`) are joined to AD using realmd/SSSD integration
+- Joined systems can authenticate using domain credentials
+- Configured groups are granted sudo rights on Linux systems
+- Joins are idempotent: re-execution skips already-joined systems
 
 ### Security Model
 
@@ -665,6 +692,12 @@ The project is structured to separate concerns and promote modular reuse.
 - **modules/identity/scripts/Populate-AD.ps1**
   Performs idempotent directory OU, group, share and user population.
 
+- **modules/identity/scripts/Join-Domain.ps1**
+  Joins Windows servers to the AD domain with customisable OU placement.
+
+- **modules/identity/scripts/Join-Domain-Linux.sh**
+  Joins Linux servers and clients to the AD domain using realmd/SSSD integration and configures sudo group membership.
+
 ---
 
 #### Peering
@@ -744,13 +777,11 @@ Start by copying `main.parameters.demo.json` to a local parameters file, then ed
 
 #### maxVmsPerRegion
 - The **maximum number of VMs allowed in each region**
-- Manual pre-check guidance: Use this to help plan around Azure CPU quotas. The template enforces VM count limits, not vCPU quota checks.
-
-Example:
-If each VM uses 2 vCPUs and quota is 4:
-```
-maxVmsPerRegion = 2
-```
+- **Subscription quotas**: Manual pre-check guidance: Use this to help plan around Azure CPU quotas. The template enforces VM count limits, not vCPU quota checks.
+- Regional vCPU quotas vary by subscription type. Trial and student subscriptions typically have lower regional quotas than standard subscriptions.
+- Example:
+  - If each VM uses 2 vCPUs and your regional quota is 4: set `maxVmsPerRegion = 2`
+  - Check regional vCPU quota with: `az compute vm list-usage --location <region> -o table`
 
 
 [Back to top](#table-of-contents)
@@ -772,14 +803,24 @@ For example:
 }
 ```
 
-#### Step 3: What this does
+#### regionIndexMap
 
-- Defines WHICH regions are available
-- Defines the ORDER of regions
+Example with common regions and how to verify availability:
 
-#### Step 3: Why order matters
+```json
+"regionIndexMap": {
+  "value": {
+    "westeurope": 1,
+    "northeurope": 2,
+    "uksouth": 3
+  }
+}
+```
 
-The placement engine uses this order to distribute VMs.
+**Important**: Before selecting regions, verify they are available in your subscription type:
+- Trial and student subscriptions may have restricted region access
+- Some regions may be unavailable in certain subscriptions
+- Check regional availability with: `az account list-locations -o table`
 
 #### Step 3: Rules
 
@@ -1098,16 +1139,18 @@ Defines VM size and OS disk settings per role:
 - `osDisks.storageAccountType` controls the disk performance tier by role
 - `osDisks.diskSizeGB` controls OS disk capacity by role
 
-#### Supported Properties
+#### Subscription and Regional Availability
 
-- `storageAccountType`
-- `diskSizeGB`
+**VM Size Availability**: Not all VM sizes are available in all regions or subscription types.
+- Trial/free subscriptions may have restricted VM size access
+- Student subscriptions typically support only basic sizes
+- Some premium sizes (e.g., `Standard_B2ms`) may not be available in all regions
+- Verify VM size availability: `az vm list-sizes --location <region> -o table`
 
-#### Why This Matters
-
-This enables right-sizing by role instead of forcing all VMs to use one shared compute profile.
-
-Manual pre-check: Azure regional vCPU quota still applies. Plan role choices according to subscription quota and target region limits.
+**OS Image Availability**: Windows and Linux images may not be available in all regions.
+- Some regions may lack specific Ubuntu versions or Windows Server editions
+- Trial subscriptions may have image restrictions
+- Verify image availability: `az vm image list-publishers --location <region> -o table`
 
 #### VM Lifecycle Behaviour
 
@@ -1243,7 +1286,7 @@ Related: [CI Workflow Validation (`validate.yml`)](#ci-workflow-validation-valid
 
 ### Step 8a: Identity Foundation Stage (Optional)
 
-Use this stage when you want to bootstrap AD forest creation, replica promotion, and directory population.
+Use this stage when you want to bootstrap AD forest creation, replica promotion, directory population, and domain join automation for servers and clients.
 
 Required parameters:
 
@@ -1251,8 +1294,9 @@ Required parameters:
 "enableIdentity": { "value": true },
 "domainName": { "value": "amrl.lab" },
 "usersPerDepartment": { "value": 50 },
-"departments": { "value": { "Finance": "FIN" } },
-"departmentCount": { "value": 1 }
+"sysAdminDepartment": { "value": { "Information Technology": "ICT" } },
+"additionalDepartments": { "value": { "Finance": "FIN", "Human Resources": "HR" } },
+"departmentCount": { "value": 2 }
 ```
 
 Important behaviour:
@@ -1263,18 +1307,11 @@ Important behaviour:
 - Forest creation runs only on the primary DC.
 - Replica promotion runs only on additional DCs.
 - Directory population runs on the primary DC after forest and replica steps.
+- Domain join automation runs on servers and clients after directory population completes.
 - Identity deployments are idempotent and can be safely re-executed.
 - `stage=all` automatically executes identity deployment when `enableIdentity=true`.
 
-Department parameter behaviour:
-
-- `departments` is an object that maps department names to short codes, for example `"Finance": "FIN"`.
-- `departmentCount` limits how many entries are taken from `departments` during a deployment.
-- `usersPerDepartment` controls the target number of standard users per department.
-- Existing departments are reconciled in place; missing required objects are recreated.
-- Departments removed from the parameter set are not deleted; they remain present but unmanaged by further population runs.
-- Departments newly added to the parameter set are created and managed alongside existing departments.
-- For full greenfield and brownfield reconciliation behaviour, see [Directory Population](#directory-population).
+For detailed information on department parameter behaviour, greenfield expectations, and brownfield reconciliation model, see [Directory Population](#directory-population).
 
 [Back to top](#table-of-contents)
 ---
@@ -1557,10 +1594,10 @@ The following checks are performed:
 - All entries in `existingRegions` must also be present in the currently selected deployment region set  
 
 #### Identity and Department Rules
-- Department count does not exceed the number of defined departments  
-- At least one department is required (when `enableIdentity=true`)  
+- Department count must be at least 1 and not exceed the total number of defined departments (1 + length of `additionalDepartments`)  
+- `sysAdminDepartment` must contain exactly one entry (when `enableIdentity=true`)  
 - Users per department must be at least 1 (when `enableIdentity=true`)  
-- Department codes must be unique  
+- Department codes must be unique across both `sysAdminDepartment` and `additionalDepartments`  
 
 #### Stage and Brownfield Deployment Rules
 - Stage deployment (control/workload/identity) requires either `stage=network` or `existingRegions` to include all deployed regions  
@@ -1698,7 +1735,6 @@ Future identity automation may continue to incorporate adapted portions of Set-D
 ## Future Plans
 
 - Additional directory population scenarios and data customisation guidance.
-- Domain join automation for Windows servers and clients.
 - Group Policy deployment and management.
 - Identity stage hardening and rollback guidance.
 - Azure Bastion integration.

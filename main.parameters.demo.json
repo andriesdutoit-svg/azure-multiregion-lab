@@ -103,18 +103,24 @@
       "value": 10
     },
 
-    "departments": {
+    "sysAdminDepartment": {
+      "value": {
+        "Information Technology": "ICT"
+      }
+    },
+
+    "additionalDepartments": {
       "value": {
         "Finance": "FIN",
-        "HR": "HR",
-        "ICT": "ICT",
+        "Human Resources": "HR",
         "Sales": "SAL",
         "Engineering": "ENG",
-        "Operation": "OPE",
+        "Operations": "OPS",
         "Marketing": "MAR",
         "Legal": "LEG",
         "Procurement": "PRO",
-        "Research": "RES"
+        "Research": "RES",
+        "Support": "SUP"
       }
     },
 

@@ -13,7 +13,8 @@ Forest creation logic separated from AD population logic.
 
 param(
     [string]$DomainName,
-    [string]$ServerAdminPassword
+    [string]$ServerAdminPassword,
+    [string]$ReconciliationToken
 )
 
 # Logs are surfaced by VM Run Command output.

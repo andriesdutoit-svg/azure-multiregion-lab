@@ -3,7 +3,8 @@ param(
     [string]$DirectoryModel,
     [string]$VMType,
     [string]$ServerAdminUsername,
-    [string]$ServerAdminPassword
+    [string]$ServerAdminPassword,
+    [string]$ReconciliationToken
 )
 
 $model = $DirectoryModel | ConvertFrom-Json

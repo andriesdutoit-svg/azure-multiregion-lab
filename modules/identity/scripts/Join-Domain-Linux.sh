@@ -1,17 +1,24 @@
 #!/bin/bash
 
+# ============================================================================
+# LINUX DOMAIN JOIN SCRIPT
+# Joins Linux VMs to Active Directory domain using realmd/SSSD integration.
+# Idempotent: script checks for existing domain membership before join attempt.
+# ============================================================================
+
 set -euo pipefail
 
 DOMAIN_NAME="${DomainName}"
 DIRECTORY_MODEL="${DirectoryModel}"
-LINUX_ADMINS_GROUP=$(echo "${DIRECTORY_MODEL}" | jq -r '
-  .groupNaming.globalSecurityPrefix +
-  "_" +
-  .platformAdminGroups.linuxAdmins
-')
+# Extract Linux admins group name from directory model JSON.
+# Constructs AGDLP group name: {globalSecurityPrefix}_{linuxAdmins group name}.
+# Example: From model {groupNaming: {globalSecurityPrefix: "AMRL"}, platformAdminGroups: {linuxAdmins: "LinuxAdmins"}}
+#   → produces group name "AMRL_LinuxAdmins" for sudoers configuration.
+LINUX_ADMINS_GROUP=""
 VM_TYPE="${VmType}"
 SERVER_ADMIN_USERNAME="${ServerAdminUsername}"
 SERVER_ADMIN_PASSWORD="${ServerAdminPassword}"
+RECONCILIATION_TOKEN="${ReconciliationToken}"
 
 log_info() {
     echo "[INFO] $1"
@@ -49,7 +56,9 @@ fi
 log_info "Input validation completed successfully"
 
 #
-# Phase 2 - Already joined check
+# Phase 2 - Idempotency check: already joined?
+# Realm list output includes domain-name field only for joined domains.
+# Script exits early if already joined, supporting safe re-execution.
 #
 
 ALREADY_JOINED=false
@@ -82,6 +91,19 @@ apt-get install -y \
     jq
 
 log_info "Prerequisite installation completed"
+
+LINUX_ADMINS_GROUP=$(echo "${DIRECTORY_MODEL}" | jq -r '
+  .groupNaming.globalSecurityPrefix +
+  "_" +
+  .platformAdminGroups.linuxAdmins
+')
+
+if [[ -z "${LINUX_ADMINS_GROUP}" || "${LINUX_ADMINS_GROUP}" == "null" ]]; then
+    log_error "Unable to determine Linux administrators group from directory model"
+    exit 1
+fi
+
+log_info "Linux administrators group = ${LINUX_ADMINS_GROUP}"
 
 #
 # Phase 4 - DNS validation
@@ -125,6 +147,9 @@ fi
 
 #
 # Phase 7 - SSSD configuration
+# SSSD (System Security Services Daemon) authenticates users and enforces group membership.
+# ad_gpo_access_control = permissive: Allows login by any domain user; GPO restrictions not enforced at login.
+# Sudo rights are instead enforced via sudoers file entries using AGDLP groups (see Phase 8).
 #
 
 log_info "Configuring SSSD"
@@ -151,6 +176,10 @@ log_info "Home directory creation configured"
 
 #
 # Phase 8 - Access configuration
+# realm permit --all: Allows login for any domain user (permissive access model).
+# Sudo rights are controlled by AGDLP group membership configured in sudoers file.
+# %{LINUX_ADMINS_GROUP}@{DOMAIN_NAME}: Sudoers entry grants sudo to domain-based AGDLP group.
+# Example: %AMRL_LinuxAdmins@amrl.local ALL=(ALL:ALL) ALL → domain admins can sudo without password.
 #
 
 realm permit --all

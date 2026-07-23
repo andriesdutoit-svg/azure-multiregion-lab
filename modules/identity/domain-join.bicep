@@ -8,6 +8,8 @@ param serverAdminPassword string
 param directoryModel string
 param vmType string
 
+param reconciliationToken string
+
 var joinDomainScript = loadTextContent('./scripts/Join-Domain.ps1')
 
 resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' existing = {
@@ -45,6 +47,10 @@ resource domainJoin 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' =
       {
         name: 'ServerAdminPassword'
         value: serverAdminPassword
+      }
+      {
+        name: 'ReconciliationToken'
+        value: reconciliationToken
       }
     ]
   }

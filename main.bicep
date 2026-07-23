@@ -16,12 +16,41 @@ param stage string
 // ========================================
 
 // ========================================
-// INPUTS
+// CONFIGURATION INPUTS
 // ========================================
 
-@description('Prefix for all resources')
-param prefix string
-param tags object
+// ----
+// Regional & Deployment Configuration
+// ----
+param regionIndexMap object
+param regionCount int
+param maxVmsPerRegion int
+@description('Regions where VNets, NSGs, subnets, and route tables already exist and should be reused. Resources in listed regions are reused; resources in other regions are created (greenfield).')
+param existingRegions array
+
+// ----
+// Networking Configuration
+// ----
+param subnetIndexMap object
+param jumpboxAllowedSources array
+param enableClientSsh bool
+
+// ----
+// Compute: VM Sizing & Images
+// ----
+param vmCounts object
+// Role-based VM size map keyed by logical workload roles.
+param vmSizes object
+// Role-based OS disk map (storage SKU + disk size) keyed by logical workload roles.
+param osDisks object
+param windowsServerImage object
+param windowsClientImage object
+param ubuntuImage object
+param vmAutoDeleteOptions object
+
+// ----
+// Admin Credentials & Access
+// ----
 param jumpboxAdminUsername string
 @secure()
 param jumpboxAdminPassword string
@@ -32,33 +61,31 @@ param clientAdminUsername string
 @secure()
 param clientAdminPassword string
 param adminPublicKey string
-param windowsServerImage object
-param windowsClientImage object
-param ubuntuImage object
-param regionIndexMap object
-param subnetIndexMap object
-param regionCount int
-@description('Regions where VNets, NSGs, subnets, and route tables already exist and should be reused. Resources in listed regions are reused; resources in other regions are created (greenfield).')
-param existingRegions array
-param maxVmsPerRegion int
-param vmCounts object
-param jumpboxAllowedSources array
-param enableClientSsh bool
-// Role-based VM size map keyed by logical workload roles.
-param vmSizes object
-// Role-based OS disk map (storage SKU + disk size) keyed by logical workload roles.
-param osDisks object
-param vmAutoDeleteOptions object
 
-param usersPerDepartment int
-param mandatoryDepartments object
-param additionalDepartments object
-param departmentCount int
-
+// ----
+// Identity & Directory Management
+// ----
 param enableIdentity bool
 param domainName string
+param sysAdminDepartment object
+param additionalDepartments object
+param departmentCount int
+param usersPerDepartment int
 
-// Stage flags for conditional deployment of modules
+// ----
+// Tagging & Resource Identification
+// ----
+@description('Prefix for all resources')
+param prefix string
+param tags object
+
+var reconciliationToken = deployment().name
+
+// ========================================
+// STAGE FLAGS
+// Determines which deployment stages execute during this run
+// ========================================
+
 var deployNetwork = stage == 'network' || stage == 'all'
 var deployControl = stage == 'control' || stage == 'all'
 // Identity bootstrap is currently not an independent first-run stage.
@@ -66,11 +93,14 @@ var deployControl = stage == 'control' || stage == 'all'
 var deployIdentity = enableIdentity && (stage == 'identity' || stage == 'all')
 var deployWorkload = stage == 'workload' || stage == 'all'
 
-//
 // ========================================
-// VM MODEL (builds unified list of all VMs)
+// VM MODEL BUILDING
+// Constructs unified list of all VMs from role-based counts
 // ========================================
-//
+
+// ----
+// Array building for each VM role type
+// ----
 
 var dcArray = [
   for i in range(0, vmCounts.dc): {
@@ -274,6 +304,8 @@ var vmPlacements = [
         ? primaryRegion
 
       // Workloads NEVER go to hub and only consume remaining spoke capacity slots.
+      // Workload placement uses modulo (%) to distribute across available slots fairly,
+      // avoiding concentration in a single spoke if capacity allows distribution.
       : !(vm.type == 'dc' || vm.type == 'jmp')
         ? totalWorkloadRegionCapacity > 0
           ? first(filter(
@@ -282,11 +314,13 @@ var vmPlacements = [
             )).?region ?? regionKeys[1]
           : regionKeys[1]
 
-      // DC/JMP prefer spokes first
+      // DC/JMP prefer spokes first: round-robin across non-hub regions until spokes exhaust.
+      // (regionCount - 1) excludes hub from round-robin; index + 1 shifts to spoke range [1..N-1].
         : roundRobinControlPlaneVmIndexList[i] < (regionCount - 1)
         ? regionKeys[(roundRobinControlPlaneVmIndexList[i] % (regionCount - 1)) + 1]
 
       // Once the first spoke pass is exhausted, additional control-plane VMs may use the hub.
+      // Full modulo wraps across all regions, allowing hub placement on overflow.
       : regionKeys[roundRobinControlPlaneVmIndexList[i] % regionCount]
   }
 ]
@@ -371,6 +405,12 @@ var subnetPrefixesArray = [
   }
 ]
 
+// ----
+// DNS configuration: derived from actual DC placements
+// ----
+// DNS servers are dynamically derived from DC placement positions, not static configuration.
+// This ensures VNets point to DCs that actually exist in the deployment.
+//
 // Collect the region key for each DC placement entry.
 // Non-DC VMs emit an empty marker that gets removed later.
 var dcPlacements = [
@@ -387,13 +427,14 @@ var orderedDcRegions = concat(
   filter(dcRegions, r => r != primaryRegion)
 )
 
-// Build candidate DNS server IPs from the DC subnet (.4) in each ordered DC region.
+// Build candidate DNS server IPs from the DC subnet's fourth IP (.4) in each ordered DC region.
+// .4 is the 4th usable IP in the /24 subnet (after .0, .1, .2, .3 reserved by Azure).
 // This derives DNS from where DCs are actually placed, rather than from static region assumptions.
 var dnsCandidates = [
   for region in orderedDcRegions: '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.4'
 ]
 
-// Each VNet supports up to 3 custom DNS servers.
+// Each VNet supports up to 3 custom DNS servers; limit to avoid waste.
 var dnsServers = take(dnsCandidates, 3)
 
 var jumpboxSubnets = [
@@ -421,7 +462,7 @@ module validationEngine 'modules/logic/validation.bicep' = {
     primaryRegion: primaryRegion
     hubRegion: hubRegion
     hasTooManyDcs: hasTooManyDcs
-    mandatoryDepartments: mandatoryDepartments
+    sysAdminDepartment: sysAdminDepartment
     additionalDepartments: additionalDepartments
     departmentCount: departmentCount
     usersPerDepartment: usersPerDepartment
@@ -615,6 +656,8 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
       
       // BCP318 suppressions below are intentional: subnet outputs are resolved by VM type at runtime,
       // but the static analyser cannot always prove the selected branch is non-null in this conditional chain.
+      // Role-to-subnet mapping: DC→dc subnet, JMP→jumpbox subnet, Windows servers→server subnet, clients→client subnet.
+      // Each role has a dedicated subnet enforcing network segmentation and security group policies.
       subnetId: vm.type == 'dc'
         #disable-next-line BCP318
         ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.dc.id
@@ -691,7 +734,7 @@ var directoryModel = {
   platformAdminGroups: {
     windowsAdmins: 'Windows_Admins'
     linuxAdmins: 'Linux_Admins'
-    sourceDepartmentCode: first(items(mandatoryDepartments))!.value
+    sourceDepartmentCode: first(items(sysAdminDepartment))!.value
   }
 
   shares: {
@@ -720,6 +763,7 @@ module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
     dcVmName: primaryDc!.name
     domainName: domainName
     serverAdminPassword: serverAdminPassword
+    reconciliationToken: reconciliationToken
   }
 }
 
@@ -738,6 +782,7 @@ module replicaDcs 'modules/identity/ad-replicadc.bicep' = [
       domainName: domainName
       serverAdminUsername: serverAdminUsername
       serverAdminPassword: serverAdminPassword
+      reconciliationToken: reconciliationToken
     }
   }
 ]
@@ -756,11 +801,12 @@ module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
     dcVmName: primaryDc!.name
     domainName: domainName
     usersPerDepartment: usersPerDepartment
-    mandatoryDepartments: mandatoryDepartments
+    sysAdminDepartment: sysAdminDepartment
     additionalDepartments: additionalDepartments
     clientAdminPassword: clientAdminPassword
     departmentCount: departmentCount
     directoryModel: string(directoryModel)
+    reconciliationToken: reconciliationToken
   }
 }
 
@@ -780,6 +826,7 @@ module domainJoinWindows 'modules/identity/domain-join.bicep' = [
       vmType: vm.type
       serverAdminUsername: serverAdminUsername
       serverAdminPassword: serverAdminPassword
+      reconciliationToken: reconciliationToken
     }
   }
 ]
@@ -813,7 +860,8 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
       adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
       adminPublicKey: adminPublicKey
 
-      // srvlin -> server subnet, clilin -> client subnet
+      // Role-to-subnet mapping for Linux VMs: srvlin→server subnet, clilin→client subnet.
+      // Each role has a dedicated subnet enforcing network segmentation and security group policies.
       // BCP318 suppressions below are intentional: subnet output selection is conditional by VM type,
       // and the static analyser treats these indexed outputs as potentially nullable.
       subnetId: vm.type == 'srvlin'
@@ -854,6 +902,7 @@ module domainJoinLinux 'modules/identity/domain-join-linux.bicep' = [
       vmType: vm.type
       serverAdminUsername: serverAdminUsername
       serverAdminPassword: serverAdminPassword
+      reconciliationToken: reconciliationToken
     }
   }
 ]

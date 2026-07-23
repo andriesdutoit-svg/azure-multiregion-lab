@@ -19,18 +19,25 @@ Replica DC promotion logic.
 param(
     [string]$DomainName,
     [string]$ServerAdminUsername,
-    [string]$ServerAdminPassword
+    [string]$ServerAdminPassword,
+    [string]$ReconciliationToken
 )
 
 Write-Host "Preparing replica DC promotion for: $DomainName"
 
+# Convert plain-text password parameter to SecureString immediately.
+# VM Run Command passes all parameters as strings; password is not logged to output.
 $SecurePassword = ConvertTo-SecureString `
     $ServerAdminPassword `
     -AsPlainText `
     -Force
 
+# Extract NETBIOS domain name from FQDN (e.g., 'contoso.com' → 'CONTOSO').
+# Used for credential context: credentials must reference the domain in NETBIOS\username format.
 $NetBiosName = $DomainName.Split('.')[0].ToUpper()
 
+# Build domain credential using NETBIOS\username format for authentication context.
+# Required for Install-ADDSDomainController -Credential to work correctly.
 $DomainCredential = New-Object System.Management.Automation.PSCredential(
     "$NetBiosName\$ServerAdminUsername",
     $SecurePassword
@@ -40,6 +47,8 @@ Write-Host "Using credential $NetBiosName\$ServerAdminUsername"
 
 Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 
+# Idempotency check: if server is already a DC, exit 0 without re-promoting.
+# Get-ADDomain will fail (caught) if this server is not yet a DC.
 try {
     $CurrentDomain = Get-ADDomain -ErrorAction Stop
 
