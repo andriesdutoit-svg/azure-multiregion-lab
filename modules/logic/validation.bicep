@@ -21,7 +21,8 @@ param maxVmsPerRegion int
 param primaryRegion string
 param hubRegion string
 param hasTooManyDcs bool
-param departments object
+param mandatoryDepartments object
+param additionalDepartments object
 param departmentCount int
 param usersPerDepartment int
 param invalidExistingRegions array
@@ -173,14 +174,19 @@ var hasInsufficientWorkloadCapacity = nonControlVmCount > totalWorkloadRegionCap
 // Validates department/user input integrity for identity population.
 // ========================================
 
-var invalidDepartmentCount = departmentCount > length(items(departments))
+var totalAvailableDepartments = length(items(mandatoryDepartments)) + length(items(additionalDepartments))
 
-var invalidMinimumDepartments = departmentCount < 1
+var invalidDepartmentCount = departmentCount > totalAvailableDepartments
+
+var invalidMinimumDepartments = departmentCount < length(items(mandatoryDepartments))
 
 var invalidUsersPerDepartment = usersPerDepartment < 1
 
 var departmentCodes = [
-  for d in items(departments): d.value
+  for d in concat(
+    items(mandatoryDepartments),
+    items(additionalDepartments)
+  ): d.value
 ]
 
 var duplicateDepartmentCodes = length(distinct(departmentCodes)) != length(departmentCodes)
@@ -236,7 +242,8 @@ var msg10 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed 
 var msg11 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
 var msg12 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
 var msg13 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
-var msg14 = invalidDepartmentCount ? 'Department count exceeds the number of defined departments.' : ''
+var msg14 = invalidDepartmentCount
+  ? 'Department count exceeds the number of available mandatory and additional departments.' : ''
 var msg15 = invalidMinimumDepartments ? 'At least one department is required.' : ''
 var msg16 = invalidUsersPerDepartment ? 'Users per department must be at least 1.' : ''
 var msg17 = duplicateDepartmentCodes ? 'Department codes must be unique.' : ''

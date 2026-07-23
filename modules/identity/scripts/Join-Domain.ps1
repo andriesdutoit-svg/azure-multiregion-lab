@@ -8,6 +8,10 @@ param(
 
 $model = $DirectoryModel | ConvertFrom-Json
 
+$windowsAdminsGroup = (
+    "$($model.groupNaming.globalSecurityPrefix)_$($model.platformAdminGroups.windowsAdmins)"
+)
+
 Write-Host "Starting AMRL Domain Join"
 
 Write-Host "DomainName = $DomainName"
@@ -124,6 +128,28 @@ if (-not $computerSystem.PartOfDomain) {
 }
 
 Write-Host "Domain membership verified."
+
+Write-Host "Configuring local administrator access"
+
+$netbiosName = $DomainName.Split('.')[0].ToUpper()
+
+try {
+    Add-LocalGroupMember `
+        -Group "Administrators" `
+        -Member "$netbiosName\$windowsAdminsGroup" `
+        -ErrorAction Stop
+
+    Write-Host (
+        "Added $netbiosName\$windowsAdminsGroup " +
+        "to local Administrators"
+    )
+}
+catch {
+    Write-Warning (
+        "Unable to add $netbiosName\$windowsAdminsGroup " +
+        "to local Administrators. $_"
+    )
+}
 
 Write-Host "Restarting computer to complete domain join."
 

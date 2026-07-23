@@ -4,6 +4,11 @@ set -euo pipefail
 
 DOMAIN_NAME="${DomainName}"
 DIRECTORY_MODEL="${DirectoryModel}"
+LINUX_ADMINS_GROUP=$(echo "${DIRECTORY_MODEL}" | jq -r '
+  .groupNaming.globalSecurityPrefix +
+  "_" +
+  .platformAdminGroups.linuxAdmins
+')
 VM_TYPE="${VmType}"
 SERVER_ADMIN_USERNAME="${ServerAdminUsername}"
 SERVER_ADMIN_PASSWORD="${ServerAdminPassword}"
@@ -47,9 +52,11 @@ log_info "Input validation completed successfully"
 # Phase 2 - Already joined check
 #
 
+ALREADY_JOINED=false
+
 if realm list | grep -qi "^domain-name: ${DOMAIN_NAME}$"; then
     log_info "Computer is already joined to ${DOMAIN_NAME}"
-    exit 0
+    ALREADY_JOINED=true
 fi
 
 #
@@ -71,7 +78,8 @@ apt-get install -y \
     packagekit \
     oddjob \
     oddjob-mkhomedir \
-    samba-common-bin
+    samba-common-bin \
+    jq
 
 log_info "Prerequisite installation completed"
 
@@ -99,13 +107,21 @@ log_info "Domain discovery completed"
 # Phase 6 - Domain join
 #
 
-log_info "Joining domain"
+if [[ "${ALREADY_JOINED}" == "false" ]]; then
 
-echo "${SERVER_ADMIN_PASSWORD}" | realm join \
-    "${DOMAIN_NAME}" \
-    --user="${SERVER_ADMIN_USERNAME}"
+    log_info "Joining domain"
 
-log_info "Domain join completed"
+    echo "${SERVER_ADMIN_PASSWORD}" | realm join \
+        "${DOMAIN_NAME}" \
+        --user="${SERVER_ADMIN_USERNAME}"
+
+    log_info "Domain join completed"
+
+else
+
+    log_info "Skipping domain join because the computer is already joined"
+
+fi
 
 #
 # Phase 7 - SSSD configuration
@@ -142,11 +158,16 @@ realm permit --all
 log_info "Configuring Linux administrator sudo rights"
 
 if cat >/etc/sudoers.d/linux-admins <<EOF
-%GGS_Linux_Admins@amrl.lab ALL=(ALL:ALL) ALL
+%${LINUX_ADMINS_GROUP}@${DOMAIN_NAME} ALL=(ALL:ALL) ALL
 EOF
 then
     chmod 440 /etc/sudoers.d/linux-admins
-    log_info "Linux administrator sudo rights configured"
+
+    if visudo -cf /etc/sudoers.d/linux-admins; then
+        log_info "Linux administrator sudo rights configured"
+    else
+        log_warn "Invalid sudoers configuration detected"
+    fi
 else
     log_warn "Failed to configure Linux administrator sudo rights"
 fi

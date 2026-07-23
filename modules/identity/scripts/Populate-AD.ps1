@@ -22,7 +22,11 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
-    [string]$DepartmentsJson,
+    [string]$MandatoryDepartmentsJson,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$AdditionalDepartmentsJson,
 
     [Parameter(Mandatory = $true)]
     [ValidateRange(1, 1000)]
@@ -348,16 +352,43 @@ Write-Host "[+] Creating User: $SamAccountName"
 
 function Get-SelectedDepartments {
     param(
-        [string]$InputDepartmentsJson,
+        [string]$MandatoryDepartmentsJson,
+        [string]$AdditionalDepartmentsJson,
         [int]$InputDepartmentCount
     )
 
-    $allDepartments = (
-        $InputDepartmentsJson |
-        ConvertFrom-Json
-    ).PSObject.Properties
+    $mandatoryDepartments = @(
+        (
+            $MandatoryDepartmentsJson |
+            ConvertFrom-Json
+        ).PSObject.Properties
+    )
 
-    return ($allDepartments | Select-Object -First $InputDepartmentCount)
+    $additionalDepartments = @(
+        (
+            $AdditionalDepartmentsJson |
+            ConvertFrom-Json
+        ).PSObject.Properties
+    )
+
+    if ($InputDepartmentCount -lt $mandatoryDepartments.Count) {
+        throw (
+            "DepartmentCount ($InputDepartmentCount) is less than " +
+            "the number of mandatory departments ($($mandatoryDepartments.Count))."
+        )
+    }
+
+    $remainingDepartmentSlots =
+        $InputDepartmentCount - $mandatoryDepartments.Count
+
+    $selectedAdditionalDepartments =
+        $additionalDepartments |
+        Select-Object -First $remainingDepartmentSlots
+
+    return @(
+        $mandatoryDepartments +
+        $selectedAdditionalDepartments
+    )
 }
 
 function Initialize-NamesCsvRecords {
@@ -596,7 +627,34 @@ function Invoke-Phase4DepartmentGroupNesting {
     $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
     $dlgsPrefix = $PopulationModel.groupNaming.domainLocalSecurityPrefix
 
+    $windowsAdminsGroup = (
+        "${ggsPrefix}_$($PopulationModel.platformAdminGroups.windowsAdmins)"
+    )
+
+    $linuxAdminsGroup = (
+        "${ggsPrefix}_$($PopulationModel.platformAdminGroups.linuxAdmins)"
+    )
+
     Write-Host "[i] Department group nesting starting"
+
+    $ictUsersGroup = "${ggsPrefix}_ICT_Users"
+
+    if (Get-ADGroup -Identity $ictUsersGroup -ErrorAction SilentlyContinue) {
+
+        Ensure-ADGroupMember `
+            -GroupName $windowsAdminsGroup `
+            -MemberName $ictUsersGroup
+
+        Ensure-ADGroupMember `
+            -GroupName $linuxAdminsGroup `
+            -MemberName $ictUsersGroup
+    }
+    else {
+        Write-Warning (
+            "$ictUsersGroup not found. " +
+            "Skipping platform admin group nesting."
+        )
+    }
 
     foreach ($department in $SelectedDepartments) {
 
@@ -1584,8 +1642,10 @@ if ($CSVNames.Count -eq 0) {
 }
 
 $domainDN = (Get-ADRootDSE).rootDomainNamingContext
+
 $departments = Get-SelectedDepartments `
-    -InputDepartmentsJson $DepartmentsJson `
+    -MandatoryDepartmentsJson $MandatoryDepartmentsJson `
+    -AdditionalDepartmentsJson $AdditionalDepartmentsJson `
     -InputDepartmentCount $DepartmentCount
 
 $rootOUdn = Invoke-Phase1OuStructure `

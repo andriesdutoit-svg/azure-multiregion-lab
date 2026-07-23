@@ -4,7 +4,8 @@ param dcVmName string
 param domainName string
 
 param usersPerDepartment int
-param departments object
+param mandatoryDepartments object
+param additionalDepartments object
 param departmentCount int
 @secure()
 param clientAdminPassword string
@@ -47,8 +48,12 @@ resource populateDirectory 'Microsoft.Compute/virtualMachines/runCommands@2023-0
         value: clientAdminPassword
       }
       {
-        name: 'DepartmentsJson'
-        value: string(departments)
+        name: 'MandatoryDepartmentsJson'
+        value: string(mandatoryDepartments)
+      }
+      {
+        name: 'AdditionalDepartmentsJson'
+        value: string(additionalDepartments)
       }
       {
         name: 'DepartmentCount'

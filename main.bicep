@@ -51,7 +51,8 @@ param osDisks object
 param vmAutoDeleteOptions object
 
 param usersPerDepartment int
-param departments object
+param mandatoryDepartments object
+param additionalDepartments object
 param departmentCount int
 
 param enableIdentity bool
@@ -420,7 +421,8 @@ module validationEngine 'modules/logic/validation.bicep' = {
     primaryRegion: primaryRegion
     hubRegion: hubRegion
     hasTooManyDcs: hasTooManyDcs
-    departments: departments
+    mandatoryDepartments: mandatoryDepartments
+    additionalDepartments: additionalDepartments
     departmentCount: departmentCount
     usersPerDepartment: usersPerDepartment
     invalidExistingRegions: invalidExistingRegions
@@ -689,6 +691,7 @@ var directoryModel = {
   platformAdminGroups: {
     windowsAdmins: 'Windows_Admins'
     linuxAdmins: 'Linux_Admins'
+    sourceDepartmentCode: first(items(mandatoryDepartments))!.value
   }
 
   shares: {
@@ -753,7 +756,8 @@ module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
     dcVmName: primaryDc!.name
     domainName: domainName
     usersPerDepartment: usersPerDepartment
-    departments: departments
+    mandatoryDepartments: mandatoryDepartments
+    additionalDepartments: additionalDepartments
     clientAdminPassword: clientAdminPassword
     departmentCount: departmentCount
     directoryModel: string(directoryModel)
