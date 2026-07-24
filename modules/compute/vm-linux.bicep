@@ -12,7 +12,7 @@ param vmName string
 param subnetId string
 param vmSize string
 param adminUsername string
-param adminPublicKey string
+param sshPublicKey string
 param tags object = {}
 param image object
 param osDisk object
@@ -20,8 +20,11 @@ param vmAutoDeleteOptions object
 param assignPublicIp bool
 
 // ========================================
-// RESOURCE CREATED: NETWORK INTERFACE
-// Always created; attaches to target subnet.
+// RESOURCES & OUTPUTS
+// ========================================
+
+// ========================================
+// Network Interface
 // ========================================
 
 resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
@@ -48,8 +51,8 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
 }
 
 // ========================================
-// RESOURCE CREATED: LINUX VM
-// System-assigned identity + Trusted Launch + SSH-only authentication.
+// Linux VM
+// System-assigned identity, Trusted Launch, SSH-only authentication
 // ========================================
 
 resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
@@ -84,7 +87,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
           publicKeys: [
             {
               path: '/home/${adminUsername}/.ssh/authorized_keys'
-              keyData: adminPublicKey
+              keyData: sshPublicKey
             }
           ]
         }

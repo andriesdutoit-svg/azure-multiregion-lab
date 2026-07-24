@@ -6,3 +6,6 @@
 
 # Test parameter file
 main.parameters.test.json
+
+# VS Code workspace settings
+.vscode/

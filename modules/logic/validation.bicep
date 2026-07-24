@@ -21,7 +21,8 @@ param maxVmsPerRegion int
 param primaryRegion string
 param hubRegion string
 param hasTooManyDcs bool
-param departments object
+param sysAdminDepartment object
+param additionalDepartments object
 param departmentCount int
 param usersPerDepartment int
 param invalidExistingRegions array
@@ -33,8 +34,8 @@ param deployWorkload bool
 param existingRegions array = []
 
 // ========================================
-// DERIVED METRICS
-// Counts and boolean checks evaluated from the final placement result.
+// PLACEMENT & CAPACITY VALIDATION
+// Counts and boolean checks evaluated from the final placement result
 // ========================================
 
 var vmPerRegionCounts = [
@@ -98,28 +99,28 @@ var hasMissingIndexes = [
 var invalidIndexSequence = contains(hasMissingIndexes, true)
 
 // ========================================
-// STAGE-TO-BROWNFIELD DEPENDENCY VALIDATION
-// Ensures that non-network stages have either stage=network deployed or existingRegions covers all regions.
+// BROWNFIELD & DEPLOYMENT DEPENDENCY VALIDATION
+// Ensures network infrastructure and brownfield coverage meet stage requirements
 // ========================================
+
+// ----
+// Stage-to-brownfield dependency validation
+// ----
 
 var nonNetworkStageDeployed = deployControl || deployWorkload
 var networkStageSkipped = !deployNetwork
 var insufficientBrownfieldCoverage = length(existingRegions) < regionCount
 var insufficientBrownfieldForStage = nonNetworkStageDeployed && networkStageSkipped && insufficientBrownfieldCoverage
 
-// ========================================
-// HUB REGION AVAILABILITY VALIDATION
-// Hub region must either be created (stage=network) or reused (existingRegions).
-// Required for firewall and hub-spoke peering topology.
-// ========================================
+// ----
+// Hub region availability validation
+// ----
 
 var hubRequiredButMissing = (deployControl || deployWorkload) && !deployNetwork && !contains(existingRegions, hubRegion)
 
-// ========================================
-// SPOKE REGION COVERAGE VALIDATION
-// All non-hub regions must either be created (stage=network) or reused (existingRegions).
-// Required for complete hub-spoke VNet peering topology.
-// ========================================
+// ----
+// Spoke region coverage validation
+// ----
 
 var spokesNotCovered = filter(
   regionKeys,
@@ -128,16 +129,15 @@ var spokesNotCovered = filter(
 
 var spokeRegionsCovered = empty(spokesNotCovered)
 
-// ========================================
-// GREENFIELD VS BROWNFIELD CONSISTENCY
-// Warns if mixing created and reused regions in same deployment.
-// ========================================
+// ----
+// Greenfield vs brownfield consistency
+// ----
 
 var hasMixedCreationMode = deployNetwork && length(existingRegions) > 0 && length(existingRegions) < regionCount
 
 // ========================================
 // WORKLOAD CAPACITY VALIDATION
-// Confirms that spokes still have enough remaining workload slots after control-plane placement.
+// Confirms that spokes have remaining workload slots after control-plane placement
 // ========================================
 
 // Per-region control-plane occupancy and remaining workload capacity.
@@ -169,18 +169,23 @@ var totalWorkloadRegionCapacity = reduce(
 var hasInsufficientWorkloadCapacity = nonControlVmCount > totalWorkloadRegionCapacity
 
 // ========================================
-// DIRECTORY POPULATION VALIDATION
-// Validates department/user input integrity for identity population.
+// IDENTITY & DIRECTORY POPULATION VALIDATION
+// Validates department/user input integrity for identity population
 // ========================================
 
-var invalidDepartmentCount = departmentCount > length(items(departments))
+var totalAvailableDepartments = length(items(sysAdminDepartment)) + length(items(additionalDepartments))
 
-var invalidMinimumDepartments = departmentCount < 1
+var invalidDepartmentCount = departmentCount > totalAvailableDepartments
+
+var invalidMinimumDepartments = departmentCount < length(items(sysAdminDepartment))
 
 var invalidUsersPerDepartment = usersPerDepartment < 1
 
 var departmentCodes = [
-  for d in items(departments): d.value
+  for d in concat(
+    items(sysAdminDepartment),
+    items(additionalDepartments)
+  ): d.value
 ]
 
 var duplicateDepartmentCodes = length(distinct(departmentCodes)) != length(departmentCodes)
@@ -221,13 +226,17 @@ var validationFlags = {
 // ========================================
 // MESSAGE COMPOSITION
 // First-match message preserves stable and concise feedback.
+// Messages are categorized by validation concern; only the first error is returned.
 // ========================================
 
+// Placement & Capacity Validation (msg1-5, msg10-11): VM placement logic, region capacity
 var msg1 = invalidMinimums ? 'At least 1 DC and 1 Jumpbox are required.' : ''
 var msg2 = invalidRegionCount ? 'Region count exceeds available regions.' : ''
 var msg3 = invalidPrimaryPinning ? 'Primary pinning failed: dc01 and jmp01 must be placed in the primary region.' : ''
 var msg4 = hasNonControlInHub ? 'One or more non-control VMs were placed in the hub region.' : ''
 var msg5 = missingRegionIndex ? 'One or more regions are missing in regionIndexMap.' : ''
+
+// Configuration & Role Validation (msg6-8, msg12): VM role sizing, region indexing, OS disk definitions
 var msg6 = hasInvalidSubnetIndex ? 'Subnet index map must include firewall, dc, jumpbox, server, and client.' : ''
 var msg7 = hasMissingVmSizeRole ? 'vmSizes must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.' : ''
 var msg8 = hasMissingOsDiskRole ? 'osDisks must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.' : ''
@@ -236,10 +245,15 @@ var msg10 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed 
 var msg11 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
 var msg12 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
 var msg13 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
-var msg14 = invalidDepartmentCount ? 'Department count exceeds the number of defined departments.' : ''
+
+// Identity & Directory Population Validation (msg14-17): Department configuration, user counts
+var msg14 = invalidDepartmentCount
+  ? 'Department count exceeds the number of available mandatory and additional departments.' : ''
 var msg15 = invalidMinimumDepartments ? 'At least one department is required.' : ''
 var msg16 = invalidUsersPerDepartment ? 'Users per department must be at least 1.' : ''
 var msg17 = duplicateDepartmentCodes ? 'Department codes must be unique.' : ''
+
+// Brownfield & Deployment Stage Validation (msg18-21): Region reuse, hub/spoke availability for incremental deployments
 var msg18 = length(invalidExistingRegions) > 0
   ? 'existingRegions contains regions that are not selected for the current deployment.'
   : ''

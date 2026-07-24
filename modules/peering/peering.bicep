@@ -27,16 +27,12 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
 
 // ========================================
 // PEERING RULE
-// Hub peers with every spoke.
-// Each spoke peers only with the hub.
-// ========================================
-
-// ========================================
-// RESOURCE CREATED: VNET PEERINGS
+// Hub peers with every spoke. Each spoke peers only with the hub. No spoke-to-spoke peering.
+// This enforces hub-centric traffic routing: spoke-to-spoke traffic must traverse hub firewall.
 // ========================================
 
 resource peerings 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2022-07-01' = [
-  for target in regionKeys: if (sourceRegion == hubRegion && target != hubRegion || sourceRegion != hubRegion && target == hubRegion) {
+  for target in regionKeys: if ((sourceRegion == hubRegion && target != hubRegion) || (sourceRegion != hubRegion && target == hubRegion)) {
     name: '${vnet.name}-to-${prefix}-vnet-${target}'
     parent: vnet
     properties: {

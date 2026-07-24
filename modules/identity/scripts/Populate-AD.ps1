@@ -10,6 +10,10 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
+    [string]$DirectoryModel,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
     [string]$NamesCsvContent,
 
     [Parameter(Mandatory = $true)]
@@ -18,7 +22,11 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
-    [string]$DepartmentsJson,
+    [string]$SysAdminDepartmentJson,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$AdditionalDepartmentsJson,
 
     [Parameter(Mandatory = $true)]
     [ValidateRange(1, 1000)]
@@ -26,7 +34,9 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateRange(0, 10000)]
-    [int]$UsersPerDepartment
+    [int]$UsersPerDepartment,
+
+    [string]$ReconciliationToken
 )
 
 Write-Host "Starting AMRL Directory Population"
@@ -52,7 +62,35 @@ Start-Transcript `
 Write-Host "[i] Log file: $logFile"
 
 # Helper functions: idempotent Ensure-* operations.
+# All functions check for existing objects before creation to support re-execution.
 
+# Get-ManagedOU: Traverse nested OU hierarchy by path string (e.g., 'Computers/Servers')
+function Get-ManagedOU {
+    param(
+        [string]$OuPath,
+        [string]$RootOuDn
+    )
+
+    $segments = $OuPath -split '/'
+
+    $searchBase = $RootOuDn
+    $ou = $null
+
+    foreach ($segment in $segments) {
+        $ou = Get-ADOrganizationalUnit `
+            -LDAPFilter "(ou=$segment)" `
+            -SearchBase $searchBase `
+            -SearchScope OneLevel `
+            -ErrorAction Stop
+
+        $searchBase = $ou.DistinguishedName
+    }
+
+    return $ou
+}
+
+# Ensure-OrganizationalUnit: Create OU if not exists; return existing OU if present (idempotent).
+# Supports nested paths (e.g., path 'OU=Computers,DC=...' creates Computers OU within domain).
 function Ensure-OrganizationalUnit {
     param(
         [string]$Name,
@@ -84,6 +122,9 @@ function Ensure-OrganizationalUnit {
         -SearchScope OneLevel
 }
 
+# Ensure-ADGroup: Create AGDLP group if not exists; return existing group if present (idempotent).
+# GroupScope: DomainLocal (DLGS) for local resource permissions, Global (GGS) for distribution/membership.
+# Follows AGDLP nesting: Global group contains users, DomainLocal group grants resource permissions.
 function Ensure-ADGroup {
     param(
         [string]$Name,
@@ -318,39 +359,50 @@ Write-Host "[+] Creating User: $SamAccountName"
     )
 }
 
-function Get-DirectoryPopulationModel {
-    return (@'
-{
-    "PreventOUDeletion":false,
-    "RootOUName":"_ROOT",
-    "CustomOUs":[
-        "Computers",
-        "Computers/Servers",
-        "Computers/Clients",
-        "Groups",
-        "Groups/GGS",
-        "Groups/DLGS",
-        "Users",
-        "Users/Disabled"
-    ],
-    "RootShareName":"Shares",
-    "RootSharePath":"C:\\Shares"
-}
-'@ | ConvertFrom-Json)
-}
-
+# Get-SelectedDepartments: Filter department lists to match InputDepartmentCount.
+# Always includes all sysAdminDepartments (mandatory); fills remaining slots with additionalDepartments.
+# Example: sysAdminDepartments=[IT], additionalDepartments=[Finance,HR], InputDepartmentCount=2
+#   → Returns [IT, Finance] (IT mandatory + 1 additional)
+# Validates that InputDepartmentCount >= length(sysAdminDepartments); throws if underconstrained.
 function Get-SelectedDepartments {
     param(
-        [string]$InputDepartmentsJson,
+        [string]$SysAdminDepartmentJson,
+        [string]$AdditionalDepartmentsJson,
         [int]$InputDepartmentCount
     )
 
-    $allDepartments = (
-        $InputDepartmentsJson |
-        ConvertFrom-Json
-    ).PSObject.Properties
+    $sysAdminDepartments = @(
+        (
+            $SysAdminDepartmentJson |
+            ConvertFrom-Json
+        ).PSObject.Properties
+    )
 
-    return ($allDepartments | Select-Object -First $InputDepartmentCount)
+    $additionalDepartments = @(
+        (
+            $AdditionalDepartmentsJson |
+            ConvertFrom-Json
+        ).PSObject.Properties
+    )
+
+    if ($InputDepartmentCount -lt $sysAdminDepartments.Count) {
+        throw (
+            "DepartmentCount ($InputDepartmentCount) is less than " +
+            "the number of mandatory departments ($($sysAdminDepartments.Count))."
+        )
+    }
+
+    $remainingDepartmentSlots =
+        $InputDepartmentCount - $sysAdminDepartments.Count
+
+    $selectedAdditionalDepartments =
+        $additionalDepartments |
+        Select-Object -First $remainingDepartmentSlots
+
+    return @(
+        $sysAdminDepartments +
+        $selectedAdditionalDepartments
+    )
 }
 
 function Initialize-NamesCsvRecords {
@@ -427,20 +479,20 @@ function Invoke-Phase1OuStructure {
     Write-Host "[i] OU generation starting"
 
     $rootOU = Ensure-OrganizationalUnit `
-        -Name $PopulationModel.RootOUName `
+        -Name $PopulationModel.rootOuName `
         -Path $DomainDn `
-        -ProtectedFromAccidentalDeletion $PopulationModel.PreventOUDeletion
+        -ProtectedFromAccidentalDeletion $PopulationModel.preventOuDeletion
 
     $rootOUdn = $rootOU.DistinguishedName
 
-    foreach ($ouName in $PopulationModel.CustomOUs) {
+    foreach ($ouName in $PopulationModel.customOus) {
 
         if ($ouName -notlike "*/*") {
 
             Ensure-OrganizationalUnit `
                 -Name $ouName `
                 -Path $rootOUdn `
-                -ProtectedFromAccidentalDeletion $PopulationModel.PreventOUDeletion |
+                -ProtectedFromAccidentalDeletion $PopulationModel.preventOuDeletion |
                 Out-Null
         }
         else {
@@ -456,7 +508,7 @@ function Invoke-Phase1OuStructure {
             Ensure-OrganizationalUnit `
                 -Name $childOU `
                 -Path $parentOUObject.DistinguishedName `
-                -ProtectedFromAccidentalDeletion $PopulationModel.PreventOUDeletion |
+                -ProtectedFromAccidentalDeletion $PopulationModel.preventOuDeletion |
                 Out-Null
         }
     }
@@ -470,15 +522,15 @@ function Invoke-Phase2DepartmentOus {
     param(
         [object[]]$SelectedDepartments,
         [string]$RootOuDn,
-        [bool]$PreventOuDeletion
+        [bool]$PreventOuDeletion,
+        [object]$PopulationModel
     )
 
     Write-Host "[i] Department OU generation starting"
 
-    $usersOU = Get-ADOrganizationalUnit `
-        -LDAPFilter "(ou=Users)" `
-        -SearchBase $RootOuDn `
-        -ErrorAction Stop
+    $usersOU = Get-ManagedOU `
+        -OuPath $PopulationModel.coreOuMapping.users `
+        -RootOuDn $RootOuDn
 
     foreach ($department in $SelectedDepartments) {
 
@@ -497,64 +549,81 @@ function Invoke-Phase2DepartmentOus {
 function Invoke-Phase3DepartmentSecurityGroups {
     param(
         [object[]]$SelectedDepartments,
-        [string]$RootOuDn
+        [string]$RootOuDn,
+        [object]$PopulationModel
+    )
+
+    $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
+    $dlgsPrefix = $PopulationModel.groupNaming.domainLocalSecurityPrefix
+
+    $windowsAdminsGroup = (
+        "${ggsPrefix}_$($PopulationModel.platformAdminGroups.windowsAdmins)"
+    )
+
+    $linuxAdminsGroup = (
+        "${ggsPrefix}_$($PopulationModel.platformAdminGroups.linuxAdmins)"
     )
 
     Write-Host "[i] Department security group generation starting"
 
-    $groupsOU = Get-ADOrganizationalUnit `
-        -LDAPFilter "(ou=Groups)" `
-        -SearchBase $RootOuDn `
-        -ErrorAction Stop
+    $ggsOU = Get-ManagedOU `
+        -OuPath $PopulationModel.groupOuMapping.globalSecurity `
+        -RootOuDn $RootOuDn
 
-    $ggsOU = Get-ADOrganizationalUnit `
-        -LDAPFilter "(ou=GGS)" `
-        -SearchBase $groupsOU.DistinguishedName `
-        -ErrorAction Stop
-
-    $dlgsOU = Get-ADOrganizationalUnit `
-        -LDAPFilter "(ou=DLGS)" `
-        -SearchBase $groupsOU.DistinguishedName `
-        -ErrorAction Stop
+    $dlgsOU = Get-ManagedOU `
+        -OuPath $PopulationModel.groupOuMapping.domainLocalSecurity `
+        -RootOuDn $RootOuDn
 
     if (-not $ggsOU -or [string]::IsNullOrWhiteSpace($ggsOU.DistinguishedName)) {
-        throw "Unable to resolve GGS OU under $($groupsOU.DistinguishedName)."
+        throw "Unable to resolve group OU: $($PopulationModel.groupOuMapping.globalSecurity)"
     }
 
     if (-not $dlgsOU -or [string]::IsNullOrWhiteSpace($dlgsOU.DistinguishedName)) {
-        throw "Unable to resolve DLGS OU under $($groupsOU.DistinguishedName)."
+        throw "Unable to resolve group OU: $($PopulationModel.groupOuMapping.domainLocalSecurity)"
     }
+
+    Ensure-ADGroup `
+        -Name $windowsAdminsGroup `
+        -Path $ggsOU.DistinguishedName `
+        -GroupCategory Security `
+        -GroupScope Global
+
+    Ensure-ADGroup `
+        -Name $linuxAdminsGroup `
+        -Path $ggsOU.DistinguishedName `
+        -GroupCategory Security `
+        -GroupScope Global
 
     foreach ($department in $SelectedDepartments) {
 
         $code = $department.Value
 
         Ensure-ADGroup `
-            -Name "GGS_${code}_ALL" `
+            -Name "${ggsPrefix}_${code}_ALL" `
             -Path $ggsOU.DistinguishedName `
             -GroupCategory Security `
             -GroupScope Global
 
         Ensure-ADGroup `
-            -Name "GGS_${code}_Managers" `
+            -Name "${ggsPrefix}_${code}_Managers" `
             -Path $ggsOU.DistinguishedName `
             -GroupCategory Security `
             -GroupScope Global
 
         Ensure-ADGroup `
-            -Name "GGS_${code}_Users" `
+            -Name "${ggsPrefix}_${code}_Users" `
             -Path $ggsOU.DistinguishedName `
             -GroupCategory Security `
             -GroupScope Global
 
         Ensure-ADGroup `
-            -Name "DLGS_${code}_Share_RW" `
+            -Name "${dlgsPrefix}_${code}_Share_RW" `
             -Path $dlgsOU.DistinguishedName `
             -GroupCategory Security `
             -GroupScope DomainLocal
 
         Ensure-ADGroup `
-            -Name "DLGS_${code}_Share_RO" `
+            -Name "${dlgsPrefix}_${code}_Share_RO" `
             -Path $dlgsOU.DistinguishedName `
             -GroupCategory Security `
             -GroupScope DomainLocal
@@ -565,22 +634,57 @@ function Invoke-Phase3DepartmentSecurityGroups {
 
 function Invoke-Phase4DepartmentGroupNesting {
     param(
-        [object[]]$SelectedDepartments
+        [object[]]$SelectedDepartments,
+        [object]$PopulationModel
+    )
+
+    $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
+    $dlgsPrefix = $PopulationModel.groupNaming.domainLocalSecurityPrefix
+
+    $windowsAdminsGroup = (
+        "${ggsPrefix}_$($PopulationModel.platformAdminGroups.windowsAdmins)"
+    )
+
+    $linuxAdminsGroup = (
+        "${ggsPrefix}_$($PopulationModel.platformAdminGroups.linuxAdmins)"
     )
 
     Write-Host "[i] Department group nesting starting"
+
+    $platformAdminUsersGroup = (
+        "${ggsPrefix}_" +
+        "$($PopulationModel.platformAdminGroups.sourceDepartmentCode)" +
+        "_ALL"
+    )
+
+    if (Get-ADGroup -Identity $platformAdminUsersGroup -ErrorAction SilentlyContinue) {
+
+        Ensure-ADGroupMember `
+            -GroupName $windowsAdminsGroup `
+            -MemberName $platformAdminUsersGroup
+
+        Ensure-ADGroupMember `
+            -GroupName $linuxAdminsGroup `
+            -MemberName $platformAdminUsersGroup
+    }
+    else {
+        Write-Warning (
+            "$platformAdminUsersGroup not found. " +
+            "Skipping platform admin group nesting."
+        )
+    }
 
     foreach ($department in $SelectedDepartments) {
 
         $code = $department.Value
 
         Ensure-ADGroupMember `
-            -GroupName "DLGS_${code}_Share_RW" `
-            -MemberName "GGS_${code}_Managers"
+            -GroupName "${dlgsPrefix}_${code}_Share_RW" `
+            -MemberName "${ggsPrefix}_${code}_Managers"
 
         Ensure-ADGroupMember `
-            -GroupName "DLGS_${code}_Share_RO" `
-            -MemberName "GGS_${code}_Users"
+            -GroupName "${dlgsPrefix}_${code}_Share_RO" `
+            -MemberName "${ggsPrefix}_${code}_Users"
     }
 
     Write-Host "[i] Department group nesting completed"
@@ -594,7 +698,9 @@ function Invoke-Phase5DepartmentShares {
 
     Write-Host "[i] Root share creation starting"
 
-    $rootSharePath = $PopulationModel.RootSharePath
+    $dlgsPrefix = $PopulationModel.groupNaming.domainLocalSecurityPrefix
+
+    $rootSharePath = $PopulationModel.shares.root.path
 
     if (-not (Test-Path $rootSharePath)) {
 
@@ -639,7 +745,7 @@ function Invoke-Phase5DepartmentShares {
         $code = $department.Value
 
         $departmentSharePath = Join-Path `
-            -Path $PopulationModel.RootSharePath `
+            -Path $PopulationModel.shares.root.path `
             -ChildPath $department.Name
 
         if (-not (Test-Path $departmentSharePath)) {
@@ -678,7 +784,7 @@ function Invoke-Phase5DepartmentShares {
         $dirACL = Get-Acl $departmentSharePath
 
         $acrw = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            "DLGS_${code}_Share_RW",
+            "${dlgsPrefix}_${code}_Share_RW",
             "Modify",
             "ContainerInherit,ObjectInherit",
             "None",
@@ -686,7 +792,7 @@ function Invoke-Phase5DepartmentShares {
         )
 
         $acro = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            "DLGS_${code}_Share_RO",
+            "${dlgsPrefix}_${code}_Share_RO",
             "ReadAndExecute",
             "ContainerInherit,ObjectInherit",
             "None",
@@ -740,8 +846,11 @@ function Get-DepartmentManagerInfo {
         [object]$UsersOu,
         [System.Collections.ArrayList]$CsvNames,
         [SecureString]$Password,
-        [string]$DomainName
+        [string]$DomainName,
+        [object]$PopulationModel
     )
+
+    $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
 
     $departmentInfo = @{}
 
@@ -793,13 +902,13 @@ function Get-DepartmentManagerInfo {
                 #
 
                 Remove-ADGroupMember `
-                    -Identity "GGS_$($department.Value)_Managers" `
+                    -Identity "${ggsPrefix}_$($department.Value)_Managers" `
                     -Members $duplicateManager `
                     -Confirm:$false `
                     -ErrorAction SilentlyContinue
 
                 Ensure-ADPrincipalGroupMembership `
-                    -GroupName "GGS_$($department.Value)_Users" `
+                    -GroupName "${ggsPrefix}_$($department.Value)_Users" `
                     -MemberName $duplicateManager.SamAccountName
             }
 
@@ -824,7 +933,7 @@ function Get-DepartmentManagerInfo {
 
                 Get-ADPrincipalGroupMembership $managerObject |
                 Where-Object {
-                    $_.Name -like 'GGS_*_Users'
+                    $_.Name -like "${ggsPrefix}_*_Users"
                 } |
                 ForEach-Object {
 
@@ -841,8 +950,8 @@ function Get-DepartmentManagerInfo {
 
                 Get-ADPrincipalGroupMembership $managerObject |
                 Where-Object {
-                    $_.Name -like 'GGS_*_Managers' -and
-                    $_.Name -ne "GGS_$($department.Value)_Managers"
+                    $_.Name -like "${ggsPrefix}_*_Managers" -and
+                    $_.Name -ne "${ggsPrefix}_$($department.Value)_Managers"
                 } |
                 ForEach-Object {
 
@@ -859,8 +968,8 @@ function Get-DepartmentManagerInfo {
 
                 Get-ADPrincipalGroupMembership $managerObject |
                 Where-Object {
-                    $_.Name -like 'GGS_*_ALL' -and
-                    $_.Name -ne "GGS_$($department.Value)_ALL"
+                    $_.Name -like "${ggsPrefix}_*_ALL" -and
+                    $_.Name -ne "${ggsPrefix}_$($department.Value)_ALL"
                 } |
                 ForEach-Object {
 
@@ -878,11 +987,11 @@ function Get-DepartmentManagerInfo {
                 $managerSam = $managerObject.SamAccountName
 
                 Ensure-ADPrincipalGroupMembership `
-                    -GroupName "GGS_$($department.Value)_ALL" `
+                    -GroupName "${ggsPrefix}_$($department.Value)_ALL" `
                     -MemberName $managerSam
 
                 Ensure-ADPrincipalGroupMembership `
-                    -GroupName "GGS_$($department.Value)_Managers" `
+                    -GroupName "${ggsPrefix}_$($department.Value)_Managers" `
                     -MemberName $managerSam
 
                 Write-Host (
@@ -966,11 +1075,11 @@ if ($existingDepartmentManagers.Count -eq 0) {
         -Manager ""
 
     Ensure-ADPrincipalGroupMembership `
-        -GroupName "GGS_$($department.Value)_ALL" `
+        -GroupName "${ggsPrefix}_$($department.Value)_ALL" `
         -MemberName $managerSam
 
     Ensure-ADPrincipalGroupMembership `
-        -GroupName "GGS_$($department.Value)_Managers" `
+        -GroupName "${ggsPrefix}_$($department.Value)_Managers" `
         -MemberName $managerSam
 
     $existingDepartmentManagers = @($managerObject)
@@ -980,7 +1089,7 @@ if ($existingDepartmentManagers.Count -eq 0) {
         -Properties Department,Title,SamAccountName
     
     $managerGroupMember = Get-ADGroupMember `
-        -Identity "GGS_$($department.Value)_Managers" `
+        -Identity "${ggsPrefix}_$($department.Value)_Managers" `
         -ErrorAction SilentlyContinue |
     Where-Object {
         $_.SamAccountName -eq $validatedManager.SamAccountName
@@ -1167,8 +1276,11 @@ function Get-DepartmentUserTargets {
 
 function Invoke-Phase6UserRemediation {
     param(
-        [hashtable]$DepartmentInfo
+        [hashtable]$DepartmentInfo,
+        [object]$PopulationModel
     )
+
+    $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
 
     Write-Host "[i] Existing user remediation starting"
 
@@ -1218,8 +1330,8 @@ function Invoke-Phase6UserRemediation {
 
                 Get-ADPrincipalGroupMembership $user |
                 Where-Object {
-                    $_.Name -like 'GGS_*_Users' -and
-                    $_.Name -ne "GGS_$($department.Value)_Users"
+                    $_.Name -like "${ggsPrefix}_*_Users" -and
+                    $_.Name -ne "${ggsPrefix}_$($department.Value)_Users"
                 } |
                 ForEach-Object {
 
@@ -1235,7 +1347,7 @@ function Invoke-Phase6UserRemediation {
 
                 Get-ADPrincipalGroupMembership $user |
                 Where-Object {
-                    $_.Name -like 'GGS_*_Managers'
+                    $_.Name -like "${ggsPrefix}_*_Managers"
                 } |
                 ForEach-Object {
 
@@ -1251,8 +1363,8 @@ function Invoke-Phase6UserRemediation {
 
                 Get-ADPrincipalGroupMembership $user |
                 Where-Object {
-                    $_.Name -like 'GGS_*_ALL' -and
-                    $_.Name -ne "GGS_$($department.Value)_ALL"
+                    $_.Name -like "${ggsPrefix}_*_ALL" -and
+                    $_.Name -ne "${ggsPrefix}_$($department.Value)_ALL"
                 } |
                 ForEach-Object {
 
@@ -1267,11 +1379,11 @@ function Invoke-Phase6UserRemediation {
                 #
 
                 Ensure-ADPrincipalGroupMembership `
-                    -GroupName "GGS_$($department.Value)_ALL" `
+                    -GroupName "${ggsPrefix}_$($department.Value)_ALL" `
                     -MemberName $user.SamAccountName
 
                 Ensure-ADPrincipalGroupMembership `
-                    -GroupName "GGS_$($department.Value)_Users" `
+                    -GroupName "${ggsPrefix}_$($department.Value)_Users" `
                     -MemberName $user.SamAccountName
             }
         }
@@ -1301,8 +1413,11 @@ function Invoke-Phase7RoundRobinUserPopulation {
         [hashtable]$DepartmentTargets,
         [System.Collections.ArrayList]$CsvNames,
         [object]$ConnectedDomain,
-        [SecureString]$Password
+        [SecureString]$Password,
+        [object]$PopulationModel
     )
+
+    $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
 
     #
     # Build an in-memory lookup of existing
@@ -1458,7 +1573,7 @@ function Invoke-Phase7RoundRobinUserPopulation {
 
             $managerMembership = Get-ADPrincipalGroupMembership $userObject |
             Where-Object {
-                $_.Name -like 'GGS_*_Managers'
+                $_.Name -like "${ggsPrefix}_*_Managers"
             }
 
             if ($managerMembership) {
@@ -1473,17 +1588,17 @@ function Invoke-Phase7RoundRobinUserPopulation {
             }
 
             Ensure-ADPrincipalGroupMembership `
-                -GroupName "GGS_$($department.Value)_ALL" `
+                -GroupName "${ggsPrefix}_$($department.Value)_ALL" `
                 -MemberName $userSam
 
             Ensure-ADPrincipalGroupMembership `
-                -GroupName "GGS_$($department.Value)_Users" `
+                -GroupName "${ggsPrefix}_$($department.Value)_Users" `
                 -MemberName $userSam
 
             Get-ADPrincipalGroupMembership $userObject |
             Where-Object {
-                $_.Name -like 'GGS_*_Users' -and
-                $_.Name -ne "GGS_$($department.Value)_Users"
+                $_.Name -like "${ggsPrefix}_*_Users" -and
+                $_.Name -ne "${ggsPrefix}_$($department.Value)_Users"
             } |
             ForEach-Object {
 
@@ -1518,17 +1633,44 @@ function Invoke-Phase7RoundRobinUserPopulation {
 # 6. Populate missing users
 #
 
-try {
-    $currentDomain = Get-ADDomain -ErrorAction Stop
+Write-Host "[INFO] Waiting for Active Directory availability"
 
-    Write-Host "Connected to domain: $($currentDomain.DNSRoot)"
-}
-catch {
-    Write-Error "Unable to access Active Directory"
-    throw
+$currentDomain = $null
+
+for ($attempt = 1; $attempt -le 30; $attempt++) {
+
+    try {
+
+        $currentDomain = Get-ADDomain -ErrorAction Stop
+
+        Write-Host (
+            "[INFO] Connected to domain: " +
+            $currentDomain.DNSRoot
+        )
+
+        break
+    }
+    catch {
+
+        Write-Host (
+            "[INFO] Attempt $attempt of 30 - " +
+            "Active Directory not ready yet"
+        )
+
+        Start-Sleep -Seconds 20
+    }
 }
 
-$model = Get-DirectoryPopulationModel
+if ($null -eq $currentDomain) {
+
+    throw (
+        "Active Directory did not become available " +
+        "within the expected time."
+    )
+}
+
+$model = $DirectoryModel | ConvertFrom-Json
+
 $usersCsvPath = 'C:\Windows\Temp\names.csv'
 $CSVNames = Initialize-NamesCsvRecords `
     -InputNamesCsvContent $NamesCsvContent `
@@ -1544,8 +1686,10 @@ if ($CSVNames.Count -eq 0) {
 }
 
 $domainDN = (Get-ADRootDSE).rootDomainNamingContext
+
 $departments = Get-SelectedDepartments `
-    -InputDepartmentsJson $DepartmentsJson `
+    -SysAdminDepartmentJson $SysAdminDepartmentJson `
+    -AdditionalDepartmentsJson $AdditionalDepartmentsJson `
     -InputDepartmentCount $DepartmentCount
 
 $rootOUdn = Invoke-Phase1OuStructure `
@@ -1555,14 +1699,17 @@ $rootOUdn = Invoke-Phase1OuStructure `
 $usersOU = Invoke-Phase2DepartmentOus `
     -SelectedDepartments $departments `
     -RootOuDn $rootOUdn `
-    -PreventOuDeletion $model.PreventOUDeletion
+    -PreventOuDeletion $model.preventOuDeletion `
+    -PopulationModel $model
 
 Invoke-Phase3DepartmentSecurityGroups `
     -SelectedDepartments $departments `
-    -RootOuDn $rootOUdn
+    -RootOuDn $rootOUdn `
+    -PopulationModel $model
 
 Invoke-Phase4DepartmentGroupNesting `
-    -SelectedDepartments $departments
+    -SelectedDepartments $departments `
+    -PopulationModel $model
 
 Invoke-Phase5DepartmentShares `
     -SelectedDepartments $departments `
@@ -1571,8 +1718,9 @@ Invoke-Phase5DepartmentShares `
 Write-Host "[i] User generation starting"
 
 #
-# Password is supplied by Terraform / Run Command
-# as a string and must be converted here.
+# Password is supplied through Azure Run Command
+# protected parameters and arrives as plaintext.
+# Conversion to SecureString must occur locally.
 #
 
 $password = ConvertTo-SecureString `
@@ -1605,20 +1753,23 @@ $departmentInfo = Get-DepartmentManagerInfo `
     -UsersOu $usersOU `
     -CsvNames $CSVNames `
     -Password $password `
-    -DomainName $DomainName
+    -DomainName $DomainName `
+    -PopulationModel $model
 
 $departmentTargets = Get-DepartmentUserTargets `
     -DepartmentInfo $departmentInfo `
     -TargetUsersPerDepartment $UsersPerDepartment
 
 Invoke-Phase6UserRemediation `
-    -DepartmentInfo $departmentInfo
+    -DepartmentInfo $departmentInfo `
+    -PopulationModel $model
 
 Invoke-Phase7RoundRobinUserPopulation `
     -DepartmentTargets $departmentTargets `
     -CsvNames $CSVNames `
     -ConnectedDomain $currentDomain `
-    -Password $password
+    -Password $password `
+    -PopulationModel $model
 
 Write-Host "[i] Directory population completed"
 

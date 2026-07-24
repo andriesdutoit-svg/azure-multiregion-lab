@@ -45,6 +45,9 @@ resource rtServer 'Microsoft.Network/routeTables@2023-02-01' = {
       {
         name: 'route-all-to-hub'
         properties: {
+          // 10.0.0.0/8 is the global internal address space (environment-wide constant).
+          // All regions' VNets use /16 subnets within this range, so this single route
+          // covers inter-region and intra-region traffic. Hardcoded to match environment topology.
           addressPrefix: '10.0.0.0/8'
           nextHopType: 'VirtualAppliance'
           nextHopIpAddress: nextHopIp
@@ -63,6 +66,9 @@ resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
       {
         name: 'route-all-to-hub'
         properties: {
+          // 10.0.0.0/8 is the global internal address space (environment-wide constant).
+          // All regions' VNets use /16 subnets within this range, so this single route
+          // covers inter-region and intra-region traffic. Hardcoded to match environment topology.
           addressPrefix: '10.0.0.0/8'
           nextHopType: 'VirtualAppliance'
           nextHopIpAddress: nextHopIp

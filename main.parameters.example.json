@@ -1,7 +1,9 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
+
   "parameters": {
+
     "prefix": {
       "value": "AMRL"
     },
@@ -104,19 +106,24 @@
       "value": 10
     },
 
-    "departments": {
+    "sysAdminDepartment": {
       "value": {
-        "Consultants": "CON",
+        "Information Technology": "ICT"
+      }
+    },
+
+    "additionalDepartments": {
+      "value": {
         "Finance": "FIN",
-        "HR": "HR",
-        "ICT": "ICT",
+        "Human Resources": "HR",
         "Sales": "SAL",
         "Engineering": "ENG",
-        "Operation": "OPE",
+        "Operations": "OPS",
         "Marketing": "MAR",
         "Legal": "LEG",
         "Procurement": "PRO",
-        "Research": "RES"
+        "Research": "RES",
+        "Support": "SUP"
       }
     },
 
@@ -199,12 +206,28 @@
       }
     },
 
-    "adminPublicKey": {
-      "value": "ssh-ed25519 <public-key>"
+    "sshPublicKey": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
+        },
+        "secretName": "<sshPublicKey>"
+      }
     },
+
+    "sshPrivateKey": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
+        },
+        "secretName": "<sshPrivateKey>"
+      }
+    },
+
     "jumpboxAdminUsername": {
       "value": "azureadmin"
     },
+
     "jumpboxAdminPassword": {
       "reference": {
         "keyVault": {
@@ -213,9 +236,11 @@
         "secretName": "jumpboxAdminPassword"
       }
     },
+
     "serverAdminUsername": {
       "value": "azureadmin"
     },
+
     "serverAdminPassword": {
       "reference": {
         "keyVault": {
@@ -224,9 +249,11 @@
         "secretName": "serverAdminPassword"
       }
     },
+
     "clientAdminUsername": {
       "value": "azureadmin"
     },
+
     "clientAdminPassword": {
       "reference": {
         "keyVault": {
