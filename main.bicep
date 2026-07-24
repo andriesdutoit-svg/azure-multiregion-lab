@@ -900,8 +900,10 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
 
 var hasLinuxVMs = vmCounts.linuxServer > 0 || vmCounts.linuxClient > 0
 
+var jumpboxLinuxSshKeyVMs = hasLinuxVMs ? filter(controlWindowsVMs, item => item.type == 'jmp') : []
+
 module installJumpboxSshKey 'modules/identity/ssh-key.bicep' = [
-  for vm in (hasLinuxVMs ? activeJumpboxVMs : []): {
+  for vm in jumpboxLinuxSshKeyVMs: {
     name: '${prefix}-sshkey-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
@@ -917,6 +919,8 @@ module installJumpboxSshKey 'modules/identity/ssh-key.bicep' = [
       adminUsername: jumpboxAdminUsername
 
       sshPrivateKey: sshPrivateKey
+
+      reconciliationToken: reconciliationToken
     }
   }
 ]
