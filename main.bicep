@@ -407,12 +407,13 @@ var subnetPrefixesArray = [
   }
 ]
 
-// ----
-// DNS configuration: derived from actual DC placements
-// ----
-// DNS servers are dynamically derived from DC placement positions, not static configuration.
-// This ensures VNets point to DCs that actually exist in the deployment.
-//
+// ========================================
+// DNS CONFIGURATION: DYNAMIC FROM DC PLACEMENTS
+// DNS servers are dynamically derived from actual DC placement positions,
+// not from static region assumptions. This ensures VNets point to DCs that
+// actually exist in the deployment rather than theoretical placements.
+// ========================================
+
 // Collect the region key for each DC placement entry.
 // Non-DC VMs emit an empty marker that gets removed later.
 var dcPlacements = [

@@ -21,8 +21,6 @@ if (-not (Test-Path $sshFolder)) {
 }
 
 Write-Host "[INFO] Key length = $($SshPrivateKey.Length)"
-Write-Host "[INFO] First 50 chars:"
-Write-Host $SshPrivateKey.Substring(0,50)
 
 [System.IO.File]::WriteAllText(
     $keyPath,

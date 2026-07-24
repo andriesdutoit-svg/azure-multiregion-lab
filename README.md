@@ -24,22 +24,10 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
 <summary><strong>Overview</strong></summary>
 
 - [Overview](#overview)
-  - [Key Concepts](#key-concepts)
+  - [Foundational Concepts](#foundational-concepts)
+    - [Core Terminology](#core-terminology)
+    - [Design Principles](#design-principles)
   - [Project Evolution](#project-evolution)
-  - [Design Principles](#design-principles)
-
-</details>
-
-<details>
-<summary><strong>Design Decisions & Trade-offs</strong></summary>
-
-- [Design Decisions & Trade-offs](#design-decisions--trade-offs)
-  - [Deterministic `.4` DNS](#deterministic-4-dns)
-  - [Index-Based Placement](#index-based-placement)
-  - [Controlled Hub Placement for Control-Plane VMs](#controlled-hub-placement-for-control-plane-vms)
-  - [Hub Role Restriction](#hub-role-restriction)
-  - [Parallel Deployment Reality](#parallel-deployment-reality)
-  - [Global DNS](#global-dns)
 
 </details>
 
@@ -47,21 +35,26 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
 <summary><strong>Architecture Overview</strong></summary>
 
 - [Architecture Overview](#architecture-overview)
-  - [Regional Architecture](#regional-architecture)
   - [Network Architecture](#network-architecture)
     - [Network Architecture Diagram](#network-architecture-diagram)
     - [Traffic Flow](#traffic-flow)
+    - [Subnet Roles and Network Segmentation](#subnet-roles-and-network-segmentation)
     - [IP Addressing Strategy](#ip-addressing-strategy)
-    - [DNS Configuration](#dns-configuration)
-    - [DNS Design Approach](#dns-design-approach)
-    - [DNS Behaviour](#dns-behaviour)
-  - [Identity Architecture](#identity-architecture)
+    - [DNS Configuration and Strategy](#dns-configuration-and-strategy)
+  - [Identity Architecture & Reconciliation Model](#identity-architecture--reconciliation-model)
+    - [Identity Deployment Flow](#identity-deployment-flow)
     - [AD Integration](#ad-integration)
     - [Identity Automation Design](#identity-automation-design)
     - [Directory Model Configuration](#directory-model-configuration)
+    - [Directory Population](#directory-population)
+    - [How Reconciliation Works](#how-reconciliation-works)
+      - [Reconciliation Token (Force-Rerun Mechanism)](#reconciliation-token-force-rerun-mechanism)
     - [AD Domain Automation](#ad-domain-automation)
   - [Security Model](#security-model)
-  - [Workload Distribution](#workload-distribution)
+    - [VM Security Features](#vm-security-features)
+    - [NSG Rules by Subnet Role](#nsg-rules-by-subnet-role)
+  - [Placement Rules](#placement-rules)
+    - [Placement Recalculation Warning](#placement-recalculation-warning)
 
 </details>
 
@@ -103,17 +96,38 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
   - [Step 6: Role-Based VM Sizing and Storage](#step-6-role-based-vm-sizing-and-storage)
   - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
   - [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required)
-    - [Why Key Vault is needed](#why-key-vault-is-needed)
-    - [Create Foundation RG](#create-foundation-rg)
-    - [Create Key Vault](#create-key-vault)
-    - [Add Secrets](#add-secrets)
-    - [Link Key Vault in Parameters](#link-key-vault-in-parameters)
   - [Step 8a: Identity Foundation Stage (Optional)](#step-8a-identity-foundation-stage-optional)
   - [Step 9: Deploy](#step-9-deploy)
-    - [Full Deployment](#full-deployment)
-    - [Stages](#stages)
-    - [Recommended Deployment Order](#recommended-deployment-order)
   - [Step 10: Validate Results](#step-10-validate-results)
+
+</details>
+
+<details>
+<summary><strong>Configuration Parameters Reference</strong></summary>
+
+- [Configuration Parameters Reference](#configuration-parameters-reference)
+  - [Core Deployment Settings](#core-deployment-settings)
+  - [Region and Network Configuration](#region-and-network-configuration)
+  - [Virtual Machine Configuration](#virtual-machine-configuration)
+  - [Security and Access](#security-and-access)
+  - [Credentials and Secrets](#credentials-and-secrets)
+  - [Identity Configuration (Optional)](#identity-configuration-optional)
+
+</details>
+
+<details>
+<summary><strong>Access, Authentication and Administration</strong></summary>
+
+- [Access, Authentication and Administration](#access-authentication-and-administration)
+  - [Windows Administration](#windows-administration)
+  - [Linux Administration](#linux-administration)
+    - [How to Connect to Linux VMs](#how-to-connect-to-linux-vms)
+  - [Active Directory User Access](#active-directory-user-access)
+  - [Linux Domain Authentication](#linux-domain-authentication)
+  - [Linux Administrator Delegation](#linux-administrator-delegation)
+  - [Current V2.2 Access Model](#current-v22-access-model)
+  - [SSH Key Deployment](#ssh-key-deployment)
+  - [Future Enhancement Consideration](#future-enhancement-consideration)
 
 </details>
 
@@ -131,6 +145,8 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
 <summary><strong>Validation</strong></summary>
 
 - [Validation](#validation)
+  - [Important: Pre-Deployment Azure Resource Validation](#important-pre-deployment-azure-resource-validation)
+  - [Validation Pipeline Diagram](#validation-pipeline-diagram)
   - [CI Workflow Validation (`validate.yml`)](#ci-workflow-validation-validateyml)
   - [Release Workflow (`release.yml`)](#release-workflow-releaseyml)
   - [Bicep Template Validation Rules](#bicep-template-validation-rules)
@@ -139,12 +155,10 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
 </details>
 
 <details>
-<summary><strong>Outputs</strong></summary>
+<summary><strong>Outputs and Limitations</strong></summary>
 
 - [Outputs](#outputs)
-  - [Core Outputs](#core-outputs)
-  - [Purpose](#purpose)
-  - [Best Practice](#best-practice)
+- [Known Limitations](#known-limitations)
 
 </details>
 
@@ -199,30 +213,46 @@ az deployment sub create \
 
 For full parameter-by-parameter guidance, continue with [Start Guide (Detailed)](#start-guide-detailed).
 
+> **Note on Linux VMs**
+>
+> If deploying Linux virtual machines (`linuxServer` or `linuxClient`), you must also add the SSH public key to Key Vault:
+> ```bash
+> az keyvault secret set --vault-name <key-vault-name> --name sshPublicKey --value "$(cat ~/.ssh/id_rsa.pub)"
+> ```
+>
+> Linux administration uses SSH key authentication from jumpbox hosts. For details, see [Linux Administration](#linux-administration).
+
 > **Note on Subscription Types**
 >
 > Available regions, VM sizes, VM images, and regional vCPU quotas vary significantly by subscription type:
-> - **Trial/Free subscriptions**: Often have restricted regions and may not support all VM sizes or images
-> - **Student subscriptions**: Typically limited to a small set of regions with reduced quota
+> - **Trial/Free subscriptions**: Often have restricted regions and may not support all VM sizes or images (particularly large and premium SKUs); may lack Generation 2 (Gen2) image availability in all regions
+> - **Student subscriptions**: Typically limited to a small set of regions with reduced quota; may not support premium VM sizes or all regions
 > - **Standard/Pay-as-you-go subscriptions**: Generally have broader availability
 >
 > Before deploying, verify that your subscription supports:
 > - The regions specified in `regionIndexMap`
 > - The VM sizes specified in `vmSizes`
-> - The OS images (Windows, Ubuntu) in your target regions
+> - **Generation 2 (Gen2) OS images** in your target regions (all images must have `-g2` in the SKU)
 > - Sufficient vCPU quota for your `maxVmsPerRegion` and `regionCount` settings
 >
-> Use `az vm image list-publishers --location <region>` and `az vm list-sizes --location <region>` to check availability in your subscription.
+> **Important**: Before deploying, verify that your target regions support the required VM sizes and images. Use the commands below to check availability in your subscription:
+> ```bash
+> az vm list-sizes --location <region> -o table
+> az vm image list-publishers --location <region> -o table
+> ```
+> Deployments may fail if required SKUs are unavailable in your regions (common in Trial and Student subscriptions).
 
 #### Identity Setup Notes
 
 - `main.parameters.demo.json` keeps `enableIdentity` disabled by default for fast baseline demos.
 - `stage=identity` is not a standalone first-run path; control-plane DC VMs must already exist (or use `stage=all`).
-- Identity scope includes forest bootstrap, replica promotion, directory population for OU, group, and user seeding, and automated domain join for Windows servers and clients and Linux systems.
+- Identity scope includes forest bootstrap, replica promotion, directory population for OU, group, and user seeding, and automated domain join for Windows and Linux systems.
 
 ---
 
-## Key Concepts
+## Foundational Concepts
+
+### Core Terminology
 
 **Greenfield Deployment**: Creating entirely new infrastructure from scratch. All networking, compute, and identity resources are created fresh.
 
@@ -237,6 +267,17 @@ For full parameter-by-parameter guidance, continue with [Start Guide (Detailed)]
 **DC (Domain Controller)**: Primary (`dc01`) or replica (`dc02`, `dc03`, etc.) domain controllers. The primary DC creates the forest; replicas sync from it.
 
 **Idempotent**: Deployments can be run multiple times safely. Re-running produces the same end state without errors or unwanted recreation.
+
+### Design Principles
+
+The solution is built on these foundational principles:
+
+- **Deterministic deployment** — The same inputs always produce the same infrastructure layout
+- **Separation of concerns** — Networking, compute, security, and placement logic are clearly separated
+- **Data-driven design** — Deployment behaviour is controlled through parameter configuration
+- **Validation before deployment** — Invalid configurations are detected and blocked early
+- **Balanced multi-region distribution** — Workloads are evenly distributed while respecting regional constraints
+- **Security-first approach** — Minimal exposure, controlled access paths, and secure credential handling
 
 ---
 
@@ -287,97 +328,14 @@ The solution was developed iteratively, with each phase introducing additional a
   Region-aware networking reuse using `existingRegions` for brownfield deployments.
 
 - **v2.2 – Domain Join Automation, Reconciliation & Department Parameter Refactoring**
-  Automated domain join for Windows servers and clients and Linux systems with customisable OU placement. Introduced identity reconciliation through re-executable Azure VM Run Commands, allowing identity deployments to safely self-heal and recreate missing required objects. Refactored department parameters into sysAdminDepartment and additionalDepartments.
-
-### Design Principles
-
-The design is based on the following principles:
-
-- **Deterministic deployment**  
-  The same inputs always produce the same infrastructure layout.
-
-- **Separation of concerns**  
-  Networking, compute, security, and placement logic are clearly separated.
-
-- **Data-driven design**  
-  Deployment behaviour is controlled through parameter configuration.
-
-- **Validation before deployment**  
-  Invalid configurations are detected and blocked early.
-
-- **Balanced multi-region distribution**  
-  Workloads are evenly distributed while respecting regional constraints.
-
-- **Security-first approach**  
-  Minimal exposure, controlled access paths, and secure credential handling.
-
-[Back to top](#table-of-contents)
----
-
-## Design Decisions & Trade-offs
-
-### Deterministic `.4` DNS
-Use `.4` from each DC subnet for DNS.
-
-- Benefit: Predictable and valid.  
-- Limitation: Not all DC IPs are listed.  
-
-### Index-Based Placement
-Placement uses deterministic indexing and derived remaining spoke capacity instead of runtime capacity tracking.
-
-- Benefit: Repeatable.  
-- Benefit: Prevents workloads from being assigned to spokes already filled by control-plane VMs.  
-- Limitation: Deterministic, not runtime-aware.  
-
-### Controlled Hub Placement for Control-Plane VMs
-The first DC and jumpbox are pinned to the hub region.  
-Additional DCs and jumpboxes are placed in spokes first, with the hub used as a fallback.
-
-- Benefit: Guarantees control-plane presence in the hub.  
-- Benefit: Distributes additional instances for resilience.  
-- Benefit: Protects limited hub capacity.  
-- Benefit: Allows additional hub placement when capacity permits.  
-- Limitation: Based on index ordering, not real-time capacity.  
-
-### Hub Role Restriction
-Only DCs and jumpboxes are allowed in the hub.
-
-- Benefit: Clear control-plane separation.  
-- Benefit: Improved security posture.  
-- Limitation: Reduces general capacity in the hub.  
-
-### Parallel Deployment Reality
-Placement does not rely on deployment order.
-
-- Benefit: Deterministic behaviour.  
-- Limitation: Must account for concurrent deployments.  
-
-### Global DNS
-Newly deployed VNets share the same DNS list derived from DC placement. Existing VNets reused during brownfield deployments retain their previously configured DNS settings.
-
-- Benefit: Simple and consistent for new deployments.  
-- Limitation: Not latency-optimised per region. DNS normalisation across brownfield-reused VNets is not automatically performed.  
+  Automated domain join for Windows and Linux systems with customisable OU placement. Introduced identity reconciliation through re-executable Azure VM Run Commands, allowing identity deployments to safely self-heal and recreate missing required objects. Refactored department parameters into sysAdminDepartment and additionalDepartments.
 
 [Back to top](#table-of-contents)
 ---
 
 ## Architecture Overview
 
-The deployment creates a consistent infrastructure footprint across multiple Azure regions.
-
-### Regional Architecture
-
-Each selected region contains:
-
-- A dedicated Resource Group (RG)  
-- A VNet  
-- Segmented subnets:
-  - DC (dc)
-  - Server
-  - Client
-  - Jumpbox  
-- NSGs applied per subnet  
-- VMs based on configured roles  
+The deployment creates a consistent infrastructure footprint across multiple Azure regions using a hub-spoke topology with deterministic placement and identity automation.
 
 ### Network Architecture
 
@@ -440,6 +398,18 @@ Spoke workloads do not talk directly to each other by default. Instead:
 - Jumpboxes remain the entry point for administration
 - NSGs still enforce subnet-level access rules
 
+#### Subnet Roles and Network Segmentation
+
+Each region contains five subnets with distinct security functions:
+
+- **DC Subnet**: Hosts domain controllers; restricted to AD-related traffic (DNS, Kerberos, LDAP, LDAPS, RPC, SMB, Global Catalog, NTP) plus RDP from jumpbox only
+- **Jumpbox Subnet**: Hosts regional jumpbox; RDP access only from `jumpboxAllowedSources` IPs
+- **Server Subnet**: Hosts Windows and Linux servers; RDP/SSH from jumpbox only; AD protocol access from internal 10.0.0.0/8
+- **Client Subnet**: Hosts Windows and Linux clients; RDP/SSH from jumpbox only (SSH conditional on `enableClientSsh`); AD protocol access from internal 10.0.0.0/8
+- **Firewall Subnet** (hub only): Hosts Azure Firewall with baseline rule allowing all internal (10.0.0.0/8) traffic
+
+Traffic between subnets is enforced through NSGs and the hub firewall, ensuring segmentation and controlled inter-region communication.
+
 #### IP Addressing Strategy
 
 All VMs use **Dynamic private IP allocation**.
@@ -453,38 +423,33 @@ Because DCs are deployed first into their subnets, each region’s primary DC co
 
 This removes the need for complex static IP calculations while maintaining predictable addressing.
 
-#### DNS Configuration
+#### DNS Configuration and Strategy
 
 Each VNet is configured with up to three DNS servers, using deterministic `.4` addresses from DC subnets.
 
-The DNS server list is derived dynamically from DC placements and ordered as follows:
-
+**DNS Server Selection**:
 1. The hub region DC (`.4`) is prioritised when present
 2. Remaining regions containing DCs are included in deterministic order
 3. The list is truncated to a maximum of three DNS servers
 
-Newly created VNets receive the current DNS server list derived from DC placement.
-
-During brownfield deployments, existing VNets are reused and retain their existing DNS configuration. DNS normalisation across previously deployed VNets is not currently performed automatically.
-
-#### DNS Design Approach
-
-DNS configuration is based on deterministic infrastructure behaviour rather than dynamic discovery:
-
+**Why Deterministic `.4` Addresses**:
 - Bicep does not support runtime lookup of assigned IP addresses
 - Each DC subnet is isolated and contains only DCs
 - The first deployed VM in each subnet always receives `.4`
 - DCs are deployed first, ensuring correct assignment
 
-#### DNS Behaviour
+**Greenfield vs Brownfield DNS Handling**:
+- **Greenfield**: Newly created VNets receive the current DNS server list derived from DC placement
+- **Brownfield**: Existing VNets are reused and retain their existing DNS configuration. DNS normalisation across previously deployed VNets is not currently performed automatically.
 
+**DNS Redundancy**:
 - DNS order is hub-first, then remaining DC regions
 - Each VNet may have between one and three DNS entries depending on DC placement and region count
-- DNS redundancy is maintained by including multiple regional DCs when available
+- Multiple regional DCs provide DNS redundancy when available
 
-### Identity Architecture
+### Identity Architecture & Reconciliation Model
 
-When `enableIdentity=true`, the solution deploys a multi-DC AD environment.
+When `enableIdentity=true`, the solution deploys a multi-DC AD environment using a **reconciliation model** rather than one-time provisioning.
 
 Identity deployment currently supports:
 
@@ -493,17 +458,19 @@ Identity deployment currently supports:
 - Multi-region AD DC replication
 - Idempotent identity deployments
 
-Identity deployment behaviour:
+**Identity deployment behaviour**:
 
-- `dc01` creates the AD forest and DNS infrastructure.
-- Additional DCs are promoted as replica DCs.
-- Directory population runs on the primary DC after forest bootstrap and replica promotion complete.
-- Identity deployments are idempotent and can be safely re-executed.
-- Identity deployment is automatically included in `stage=all` when `enableIdentity=true`.
+- `dc01` creates the AD forest and DNS infrastructure
+- Additional DCs are promoted as replica DCs
+- Directory population runs on the primary DC after forest bootstrap and replica promotion complete
+- Identity deployments are idempotent and can be safely re-executed
+- Identity deployment is automatically included in `stage=all` when `enableIdentity=true`
 
-- Identity automation follows a reconciliation model: operational scripts are re-executed during identity deployments and determine whether remediation is required.
-- Existing compliant resources are not recreated.
-- Missing required objects are restored automatically.
+**Identity automation principles**:
+
+- Follows a reconciliation model: operational scripts are re-executed during identity deployments and determine whether remediation is required
+- Existing compliant resources are not recreated
+- Missing required objects are restored automatically
 
 #### Identity Deployment Flow
 
@@ -652,18 +619,34 @@ When redeploying or modifying an existing identity environment:
 
 </details>
 
-#### Identity Reconciliation Model
-
-Identity automation uses a reconciliation model rather than a one-time provisioning model.
+#### How Reconciliation Works
 
 Azure VM Run Commands are re-executed during identity deployments. Each script determines whether remediation is required and exits successfully when the target state is already achieved.
 
-Examples:
+**Examples of reconciliation**:
+- Existing forests are detected and skipped
+- Existing domain membership is detected and skipped
+- Missing users are recreated
+- Missing required groups are recreated
 
-- Existing forests are detected and skipped.
-- Existing domain membership is detected and skipped.
-- Missing users are recreated.
-- Missing required groups are recreated.
+**Key principle**: Identity automation is intentionally non-destructive. Existing compliant objects are preserved; only missing required objects are restored.
+
+##### Reconciliation Token (Force-Rerun Mechanism)
+
+The solution uses a reconciliation token derived from the deployment name (`deployment().name`) to trigger re-execution of identity automation scripts. This mechanism ensures safe re-runs and allows users to force remediation when needed.
+
+**How it works**:
+- Each Azure VM Run Command receives the reconciliation token as a parameter
+- Scripts use the token to track whether they have already processed the current deployment
+- Changing the deployment name forces all scripts to re-execute
+- This is used by SSH key deployment to detect when the private key should be redeployed
+
+**To force a re-run of identity automation**:
+1. Change the deployment name when redeploying (for example, from `demo-deployment-v1` to `demo-deployment-v2`)
+2. Rerun the identity stage: `az deployment sub create --name <new-name> ... --parameters stage=identity`
+3. All identity scripts will re-execute and reconcile any missing or inconsistent state
+
+This approach keeps the deployment idempotent while allowing controlled remediation without destructive operations.
 
 #### AD Domain Automation
 
@@ -686,17 +669,55 @@ The deployment intentionally avoids destructive remediation. Existing custom obj
 
 ### Security Model
 
-- Public access is restricted to jumpboxes only  
-- All other VMs are private  
-- Role-based NSG rules control traffic flow  
-- Credentials are securely stored in Key Vault  
+- **Public Access**: Restricted to jumpbox VMs only via RDP (`jumpboxAllowedSources`); all other VMs are private
+- **VM Security**: All VMs deployed with Trusted Launch enabled (SecureBoot + vTPM), system-assigned managed identities, and boot diagnostics
+- **Network Segmentation**: Role-based NSGs per subnet enforce protocol and port restrictions
+- **East-West Routing**: Hub firewall applies stateful filtering to inter-region traffic; baseline rule permits all internal (10.0.0.0/8) traffic
+- **Credentials**: Securely stored in Azure Key Vault; never embedded in templates or parameter files
+- **Identity Automation**: Uses system-assigned managed identities on VMs to execute Azure VM Run Commands without external authentication
 
-### Workload Distribution
+#### VM Security Features
 
-- DCs are placed first using deterministic rules  
-- Server and client VMs (workloads) are always placed on spoke regions  
-- Additional control-plane VMs (DCs and jumpboxes) use spoke-first placement, then may use the hub after the first spoke pass  
-- Each region is constrained by a maximum VM limit to prevent over-allocation  
+All VMs are deployed with identical security profiles to ensure consistent hardening across the environment:
+
+- **Trusted Launch**: SecureBoot and vTPM (Virtual Trusted Platform Module) enabled to protect against boot-level attacks and rootkits
+- **System-Assigned Managed Identity**: Enables Azure VM Run Commands to execute without external authentication or credential management
+- **Boot Diagnostics**: Enabled on all VMs for troubleshooting startup issues and understanding VM state
+- **Public IP Assignment**: Jumpbox VMs only; all other roles remain private with access controlled through jumpbox tunnelling
+
+#### NSG Rules by Subnet Role
+
+Network Security Groups enforce protocol-level segmentation per subnet:
+
+- **DC Subnet**: Inbound rules for DNS (53), Kerberos (88), LDAP (389), LDAPS (636), NTP (123), Kerberos Password Change (464), SMB (445), Global Catalog (3268, 3269), RPC (135, 49152–65535), and RDP from jumpbox only. All other inbound traffic denied.
+- **Jumpbox Subnet**: RDP from `jumpboxAllowedSources` IPs only. All other inbound traffic denied.
+- **Server Subnet**: RDP and SSH from jumpbox only; AD services (DNS, Kerberos, LDAP, LDAPS, NTP, Kerberos Password Change, SMB, Global Catalog, RPC) from internal 10.0.0.0/8. All other inbound traffic denied.
+- **Client Subnet**: RDP from jumpbox; SSH from jumpbox only if `enableClientSsh=true`; AD services from internal 10.0.0.0/8. All other inbound traffic denied.
+
+All rules use inbound direction with `protocol=Any` and `sourcePortRange=*` to allow all return traffic through stateful filtering.  
+
+### Placement Rules
+
+The placement engine assigns VMs to regions using these deterministic rules:
+
+1. **`dc01` pinned to primary region** — Guarantees control-plane presence in hub
+2. **`jmp01` pinned to primary region** — Ensures management jumpbox availability
+3. **Non-control VMs on spokes only** — Workloads (servers/clients) never placed in hub
+4. **Additional control-plane VMs** — Prefer spokes first, then hub as fallback after first spoke pass
+5. **Workload capacity protection** — Workloads consume only remaining spoke capacity after control-plane placement
+
+For detailed placement logic and visualisation, see [Placement Engine → Rules](#rules).
+
+#### Placement Recalculation Warning
+
+The placement engine recalculates workload placement from current inputs during each deployment. Changes to:
+
+- `regionCount`
+- `regionIndexMap`
+- `maxVmsPerRegion`
+- VM counts
+
+may result in workload virtual machines being assigned to different regions during subsequent deployments. The platform performs deterministic placement recalculation rather than placement preservation, meaning the same input parameters always produce the same region assignments, but changing parameters will trigger re-assignment.
 
 [Back to top](#table-of-contents)
 ---
@@ -727,10 +748,10 @@ The project is structured to separate concerns and promote modular reuse.
   Defines individual subnet resources.
 
 - **modules/networking/nsg.bicep**  
-  Deploys NSGs with role-based rules.
+  Deploys NSGs with role-based security rules per subnet. See [Security Model → NSG Rules by Subnet Role](#nsg-rules-by-subnet-role) for detailed rule specifications.
 
 - **modules/networking/firewall.bicep**  
-  Deploys the hub firewall and policy-based rule collections.
+  Deploys the hub firewall with baseline rule collection allowing all internal (10.0.0.0/8) traffic. Firewall applies stateful filtering; established return traffic is automatically allowed.
 
 - **modules/networking/routeTable.bicep**  
   Attaches UDRs to spoke subnets so traffic reaches the hub firewall.
@@ -740,10 +761,10 @@ The project is structured to separate concerns and promote modular reuse.
 #### Compute
 
 - **modules/compute/vm-windows.bicep**  
-  Deploys Windows VMs, including DCs, servers, clients, and jumpboxes.
+  Deploys Windows VMs with Trusted Launch, system-assigned managed identity, boot diagnostics, and role-based public IP exposure (jumpbox only). See [Security Model → VM Security Features](#vm-security-features) for details.
 
 - **modules/compute/vm-linux.bicep**  
-  Deploys Linux VMs with SSH-based authentication.
+  Deploys Linux VMs with Trusted Launch, system-assigned managed identity, SSH-only authentication, and boot diagnostics. See [Security Model → VM Security Features](#vm-security-features) for details.
 
 ---
 
@@ -764,8 +785,14 @@ The project is structured to separate concerns and promote modular reuse.
 - **modules/identity/domain-join-linux.bicep**
   Deploys Linux domain join automation using realmd/SSSD integration.
 
+- **modules/identity/ssh-key.bicep**
+  Deploys SSH private key to jumpbox hosts for Linux administration.
+
 - **modules/identity/scripts/Install-Forest.ps1**
   Creates the AD forest and DNS infrastructure.
+
+- **modules/identity/scripts/Install-SshKey.ps1**
+  Installs SSH private key on jumpbox hosts with proper permissions for azureadmin access to Linux VMs.
 
 - **modules/identity/scripts/Promote-ReplicaDC.ps1**
   Promotes additional DCs into the existing forest.
@@ -808,7 +835,7 @@ The project is structured to separate concerns and promote modular reuse.
   Invokes `modules/logic/validation.bicep` and surfaces validation outputs at the top level
 
 - **Identity Foundation**  
-  Enables identity bootstrap using `enableIdentity` and `domainName`, deploys forest creation to the primary DC, orchestrates replica promotion modules, and runs directory population.
+  Enables identity bootstrap using `enableIdentity` and `domainName`. Orchestrates forest creation on the primary DC, replica DC promotion, directory population (OUs, groups, users, shares), domain join for Windows and Linux systems, and SSH key deployment to jumpbox hosts.
 
 ### Foundation Layer (External)
 
@@ -842,24 +869,17 @@ Start by copying `main.parameters.demo.json` to a local parameters file, then ed
 
 ### Step 2: Core Deployment Settings
 
+The following parameters control basic deployment scope and resource naming:
+
 ```json
 "prefix": { "value": "AMRL" },
 "regionCount": { "value": 3 },
 "maxVmsPerRegion": { "value": 2 }
 ```
 
-#### prefix
-- Used to name all resources (e.g. `yourprefix-rg-<azure-region>`)
-- Change this to something meaningful for your lab or project
+For full parameter descriptions and examples, see [Configuration Parameters Reference → Core Deployment Settings](#core-deployment-settings).
 
-#### regionCount
-- How many regions will be used
-- MUST be less than or equal to the number of regions in `regionIndexMap`
-
-#### maxVmsPerRegion
-- The **maximum number of VMs allowed in each region**
-
-> **⚠️ Important**: Manual pre-check guidance. The template enforces VM count limits, not vCPU quota checks.
+> **Important**: Manual pre-check guidance. The template enforces VM count limits, not vCPU quota checks.
 > 
 > Regional vCPU quotas vary significantly by subscription type:
 > - **Trial/Free subscriptions**: Typically 4–8 vCPU per region
@@ -870,29 +890,12 @@ Start by copying `main.parameters.demo.json` to a local parameters file, then ed
 > 
 > Check your quota with: `az compute vm list-usage --location <region> -o table`
 
-
 [Back to top](#table-of-contents)
 ---
 
 ### Step 3: Region Mapping
 
-For example:
-
-```json
-"regionIndexMap": {
-  "value": {
-    "southafricanorth": 1,
-    "australiaeast": 2,
-    "australiasoutheast": 3,
-    "austriaeast": 4,
-    "belgiumcentral": 5
-  }
-}
-```
-
-#### regionIndexMap
-
-Example with common regions:
+Define which Azure regions are used and their priority order:
 
 ```json
 "regionIndexMap": {
@@ -904,23 +907,20 @@ Example with common regions:
 }
 ```
 
-> **⚠️ Important**: Verify regions are available in your subscription type before deployment.
-> 
-> Trial and student subscriptions often have restricted region access. Check availability with:
-> ```bash
-> az account list-locations -o table
-> ```
-
-#### Step 3: Rules
-
+**Rules**:
 - Must start at `1`
 - Must increase by `1` each time
 - No gaps allowed
+- Verify regions are available in your subscription type: `az account list-locations -o table`
+
+For full parameter details, see [Configuration Parameters Reference → Region and Network Configuration](#region-and-network-configuration).
 
 [Back to top](#table-of-contents)
 ---
 
 ### Step 4a: Subnet Mapping
+
+Define how subnets are ordered within each region:
 
 ```json
 "subnetIndexMap": {
@@ -934,67 +934,26 @@ Example with common regions:
 }
 ```
 
-#### Step 4a: What this does
+These values control subnet creation order and IP address range calculation. **Recommendation**: Leave as-is unless redesigning networking.
 
-Defines how subnets are created and ordered within each region.
-
-The numbering determines:
-- The firewall subnet index used for AzureFirewallSubnet in the hub VNet
-- The logical order of subnets
-- The subnet index used when calculating IP address ranges
-
-#### Step 4a: Recommendation
-
-Leave these values as-is unless redesigning networking.
+For full parameter details, see [Configuration Parameters Reference → Region and Network Configuration](#region-and-network-configuration).
 
 [Back to top](#table-of-contents)
 ---
 
 ### Step 4b: Greenfield and Brownfield Deployments
 
-Networking create/reuse behaviour is controlled by `existingRegions`:
-- Regions listed in `existingRegions` have existing VNets, NSGs, and subnets that are **reused**
-- Regions not listed are **created new** (greenfield)
-- Route tables, peerings, and other dependent resources continue to be managed as needed
+Networking create/reuse behaviour is controlled by the `existingRegions` parameter:
 
-<details>
-<summary><strong>Greenfield Deployments</strong></summary>
-
-A greenfield deployment creates all networking components required by the solution:
-
-- VNets
-- Subnets
-- NSGs
-- Azure Firewall subnet
-- Route tables
-- VMs
+- **Greenfield**: Regions not listed in `existingRegions` have all networking components created fresh (VNets, subnets, NSGs, route tables)
+- **Brownfield**: Regions listed in `existingRegions` reuse existing VNets, NSGs, and subnets; route tables, peerings, and dependent resources continue to be managed
 
 For new lab environments, set `existingRegions` to an empty array:
 ```json
 "existingRegions": { "value": [] }
 ```
 
-</details>
-
-<details>
-<summary><strong>Brownfield Deployments</strong></summary>
-
-A brownfield deployment reuses existing networking resources rather than creating new ones.
-
-Supported scenarios:
-
-- Redeployment of an existing environment
-- Recovery or rebuild of VMs
-- Incremental deployment of additional workloads
-- Separate execution of `network`, `control`, `identity`, and `workload` stages
-
-**Requirements**: Existing networking resources must either:
-- Have been created by a previous deployment of this solution, or
-- Follow the same naming conventions, subnet structure, and resource relationships expected by the modules
-
-> **Note**: Validation prevents regions from being marked as existing when they are not part of the current deployment.
-
-</details>
+For detailed terminology and deployment model examples, see [Foundational Concepts → Greenfield/Brownfield](#foundational-concepts) and [Supported Deployment Models](#supported-deployment-models).
 
 **Example: Invalid existingRegions**
 
@@ -1095,15 +1054,9 @@ The following parameters may significantly affect topology or addressing:
 - `regionCount`
 - `regionIndexMap`
 - `subnetIndexMap` (including the `firewall` index)
-- `enableClientSsh`
+- `enableClientSsh` — Controls whether SSH access from jumpbox subnets to Linux client VMs is permitted
 
-enableClientSsh
-
-Controls whether SSH access from jumpbox subnets to Linux client VMs is permitted.
-
-Current AMRL releases use SSH as the primary administration method for Linux clients.
-
-Disabling this setting is not recommended unless an alternative Linux management mechanism has been deployed (for example Azure Bastion, Azure Serial Console, Azure Automation, Azure Machine Configuration, DSC, or another configuration management platform).
+**Important**: Current AMRL releases use SSH as the primary administration method for Linux clients. Disabling this setting is not recommended unless an alternative Linux management mechanism has been deployed (for example, Azure Bastion, Azure Serial Console, Azure Automation, Azure Machine Configuration, DSC, or another configuration management platform).
 
 Changing these values after deployment may require resource recreation or migration planning.
 
@@ -1156,6 +1109,8 @@ For implementation details, see [Networking](#networking) and [Supporting Logic 
 
 ### Step 5: VM Counts (Controls Scale)
 
+Define how many VMs of each type to create:
+
 ```json
 "vmCounts": {
   "value": {
@@ -1169,95 +1124,42 @@ For implementation details, see [Networking](#networking) and [Supporting Logic 
 }
 ```
 
-#### What This Does
+**Important**: Ensure `total VMs ≤ regionCount × maxVmsPerRegion`
 
-Defines HOW MANY VMs of each type to create.
+Placement follows deterministic rules:
+- DCs and jumpboxes are placed first (control-plane)
+- `dc01` and `jmp01` are pinned to the primary region
+- Server and client VMs are always placed on spoke regions
 
-#### Important Behaviour
-
-- DCs and jumpboxes are control-plane VMs and are placed before server and client VMs (workloads)
-- The first DC (`dc01`) and first jumpbox (`jmp01`) are pinned to the hub (primary region)
-- Additional control-plane VMs follow spoke-first placement, with the hub used as a fallback
-- Server and client VMs (workloads) are always placed on spokes, never in the hub
-
-### How to change safely
-
-If you increase VM counts:
-
-Ensure:
-```
-totalVMs ≤ regionCount × maxVmsPerRegion
-```
+For full parameter details, see [Configuration Parameters Reference → Virtual Machine Configuration](#virtual-machine-configuration).
 
 [Back to top](#table-of-contents)
 ---
 
 ### Step 6: Role-Based VM Sizing and Storage
 
-Example configuration:
+Configure VM sizes, disk types, and operating system images per VM role.
 
-```json
-"vmSizes": {
-  "value": {
-    "dc": "Standard_B2ms",
-    "jumpbox": "Standard_B2s_v2",
-    "windowsServer": "Standard_B2s_v2",
-    "windowsClient": "Standard_B2ls_v2",
-    "linuxServer": "Standard_B2s_v2",
-    "linuxClient": "Standard_B1ms"
-  }
-},
-"osDisks": {
-  "value": {
-    "dc": { "storageAccountType": "Premium_LRS", "diskSizeGB": 128 },
-    "jumpbox": { "storageAccountType": "StandardSSD_LRS", "diskSizeGB": 64 },
-    "windowsServer": { "storageAccountType": "Premium_LRS", "diskSizeGB": 128 },
-    "windowsClient": { "storageAccountType": "StandardSSD_LRS", "diskSizeGB": 64 },
-    "linuxServer": { "storageAccountType": "Premium_LRS", "diskSizeGB": 128 },
-    "linuxClient": { "storageAccountType": "StandardSSD_LRS", "diskSizeGB": 64 }
-  }
-}
+**Important**: All VM images must be **Generation 2 (Gen2)** to support Trusted Launch security features (SecureBoot and vTPM). Generation 1 images are not compatible and will cause deployment failures.
+
+**VM Sizing and Storage**:
+
+**Verify availability before deploying**:
+```bash
+az vm list-sizes --location <region> -o table
+az vm image list-publishers --location <region> -o table
 ```
 
-**What This Does**:
-- `vmSizes`: CPU and memory allocation per role
-- `osDisks.storageAccountType`: Disk performance tier per role (Premium vs StandardSSD)
-- `osDisks.diskSizeGB`: OS disk capacity per role
+Trial/free and student subscriptions often have restricted access to premium sizes and regional variants.
 
-> **Availability Note**: Not all VM sizes or images are available in all regions or subscription types.
-> 
-> **Verify availability before deploying**:
-> ```bash
-> az vm list-sizes --location <region> -o table
-> az vm image list-publishers --location <region> -o table
-> ```
-> 
-> Trial/free and student subscriptions often have restricted access to premium sizes and regional variants.
-
-#### VM Lifecycle Behaviour
-
-The `vmAutoDeleteOptions` parameter controls whether dependent resources are automatically deleted when a VM is deleted.
-
-```json
-"vmAutoDeleteOptions": {
-  "value": {
-    "nic": true,
-    "publicIp": true,
-    "osDisk": true
-  }
-}
-```
-
-With the default values above:
-
-- NICs are automatically deleted when VMs are deleted.
-- Public IPs are automatically deleted when VMs are deleted.
-- OS disks are automatically deleted when VMs are deleted.
+For complete parameter examples and disk lifecycle options, see [Configuration Parameters Reference → Virtual Machine Configuration](#virtual-machine-configuration).
 
 [Back to top](#table-of-contents)
 ---
 
 ### Step 7: Jumpbox Allowed Sources
+
+Define which IP addresses can access the jumpboxes via RDP:
 
 ```json
 "jumpboxAllowedSources": {
@@ -1267,17 +1169,9 @@ With the default values above:
 }
 ```
 
-#### What This Does
+**Critical**: If not configured correctly, you will not be able to access the jumpboxes. Jumpboxes are the only entry point to the rest of the environment.
 
-Defines the list of public IP addresses or ranges that are allowed to access the jumpboxes via RDP. These values are used to configure inbound NSG rules, restricting administrative access to only the specified sources.
-
-In `main.parameters.demo.json`, this value is a placeholder. Replace it in your local parameters file with your own public IP address.
-
-#### Access Notes
-
-- Replace this example value with your own public IP address
-- If not configured correctly, you will not be able to access the jumpboxes
-- Jumpboxes are the only entry point to access the rest of the VMs in the environment
+For full parameter details, see [Configuration Parameters Reference → Security and Access](#security-and-access).
 
 [Back to top](#table-of-contents)
 ---
@@ -1291,112 +1185,222 @@ Key Vault provides:
 - No secrets in parameter files
 - Role-based access control (RBAC) over who can retrieve secrets
 
-### Create Foundation RG
+**Quick setup**:
 
-```bash
-az group create --name <foundation-rg> --location <azure-region>
-```
+1. Create foundation resource group:
+   ```bash
+   az group create --name <foundation-rg> --location <azure-region>
+   ```
 
-Ensure that the name of this RG does not start with the prefix selected earlier, as it will also be deleted if a bulk RG deletion command is used to clean up the lab.
+2. Create Key Vault:
+   ```bash
+   az keyvault create --name <key-vault-name> --resource-group <foundation-rg> \
+     --location <azure-region> --bypass AzureServices --enabled-for-template-deployment true
+   ```
 
-### Create Key Vault
+3. Add secrets (reference names from [Configuration Parameters Reference](#credentials-and-secrets)):
+   ```bash
+   az keyvault secret set --vault-name <key-vault-name> --name jumpboxAdminPassword --value <password>
+   az keyvault secret set --vault-name <key-vault-name> --name serverAdminPassword --value <password>
+   az keyvault secret set --vault-name <key-vault-name> --name clientAdminPassword --value <password>
+   ```
 
-Ensure that the correct Azure Role-Based Access Control (RBAC) role is assigned. For example, to assign the [Key Vault Secrets Officer](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/security#key-vault-secrets-officer) role to the current user:
+4. Use your Key Vault ID in parameter file credential references.
 
-```bash
-CURRENT_USER=$(az ad signed-in-user show --query id -o tsv)
-az role assignment create \
-  --assignee $CURRENT_USER \
-  --role "Key Vault Secrets Officer" \
-  --scope /subscriptions/<subscription-id>/resourceGroups/<foundation-rg>
-```
-
-Create the Key Vault with Azure Service bypass enabled (allowing Azure services to access it) and template deployment access enabled (allowing Azure Resource Manager to retrieve secrets during template deployment):
-
-```bash
-az keyvault create \
-  --name <key-vault-name> \
-  --resource-group <foundation-rg> \
-  --location <azure-region> \
-  --bypass AzureServices \
-  --enabled-for-template-deployment true
-```
-
-Verify the Key Vault configuration:
-
-```bash
-az keyvault show \
-  --name <key-vault-name> \
-  --query "{TemplateDeployment:properties.enabledForTemplateDeployment,Bypass:properties.networkAcls.bypass}"
-```
-
-Expected result:
-
-```json
-{
-  "TemplateDeployment": true,
-  "Bypass": "AzureServices"
-}
-```
-
-### Add Secrets
-
-```bash
-az keyvault secret set --vault-name <key-vault-name> --name jumpboxAdminPassword --value <password>
-az keyvault secret set --vault-name <key-vault-name> --name serverAdminPassword --value <password>
-az keyvault secret set --vault-name <key-vault-name> --name clientAdminPassword --value <password>
-```
-
-### Link Key Vault in Parameters
-
-```json
-"jumpboxAdminPassword": {
-  "reference": {
-    "keyVault": {
-      "id": "<KEYVAULT_ID>"
-    },
-    "secretName": "jumpboxAdminPassword"
-  }
-}
-```
-
-Repeat for other passwords.
-
-Reference: [Use Azure Key Vault to pass secure parameter values during deployment](https://aka.ms/arm-keyvault)
-
-Related: [CI Workflow Validation (`validate.yml`)](#ci-workflow-validation-validateyml)
+For credential parameters and parameter file examples, see [Configuration Parameters Reference → Credentials and Secrets](#credentials-and-secrets).
 
 [Back to top](#table-of-contents)
 ---
 
 ### Step 8a: Identity Foundation Stage (Optional)
 
-Use this stage when you want to bootstrap AD forest creation, replica promotion, directory population, and domain join automation for servers and clients.
+Use this stage when you want to bootstrap Active Directory forest creation, replica promotion, directory population, and domain join automation.
 
-Required parameters:
+For parameter definitions and examples, see [Configuration Parameters Reference → Identity Configuration](#identity-configuration-optional).
+
+**Important behaviour**:
+- `enableIdentity=true` enables all identity modules
+- `stage=identity` runs identity modules only (requires existing control-plane DC VMs)
+- Identity deployments are idempotent and can be safely re-executed
+- `stage=all` automatically includes identity deployment when `enableIdentity=true`
+
+For detailed information on department behaviour and reconciliation, see [Directory Population](#directory-population).
+
+[Back to top](#table-of-contents)
+---
+
+## Configuration Parameters Reference
+
+All parameters are defined in parameter files (`main.parameters.demo.json`, `main.parameters.example.json`, or your local parameter file). This section provides a centralised reference for all tunable parameters used across deployment stages.
+
+### Core Deployment Settings
+
+| Parameter | Type | Purpose | Example |
+|-----------|------|---------|---------|
+| `prefix` | string | Resource naming prefix | `"AMRL"` |
+| `stage` | string | Deployment stage: `network`, `control`, `identity`, `workload`, or `all` | `"all"` |
+| `tags` | object | Resource tags for organisation and billing | `{"environment": "lab"}` |
+| `regionCount` | integer | Number of regions to deploy across (1–3 recommended) | `3` |
+| `maxVmsPerRegion` | integer | Maximum VMs allowed per region | `2` |
+
+### Region and Network Configuration
+
+| Parameter | Type | Purpose | Example |
+|-----------|------|---------|---------|
+| `regionIndexMap` | object | Maps region names to index numbers (must start at 1, no gaps) | `{"westeurope": 1, "northeurope": 2}` |
+| `subnetIndexMap` | object | Defines subnet ordering within each region | `{"firewall": 0, "jumpbox": 1, "dc": 2, "server": 3, "client": 4}` |
+| `existingRegions` | array | Regions with existing networking (brownfield reuse) | `["westeurope"]` |
+
+**Examples**:
+- **Greenfield (all new)**: `"existingRegions": []`
+- **Brownfield (mixed)**: `"existingRegions": ["westeurope"]` (reuses westeurope, creates northeurope)
+
+### Virtual Machine Configuration
+
+**VM Scale**:
+
+| Parameter | Type | Purpose | Example |
+|-----------|------|---------|---------|
+| `vmCounts` | object | Number of each VM type to deploy | `{"dc": 1, "jumpbox": 1, "windowsServer": 1, "linuxServer": 1}` |
+
+**VM Sizing** (all role keys must be present):
+
+```json
+"vmSizes": {
+  "value": {
+    "dc": "Standard_B2ls_v2",
+    "jumpbox": "Standard_B2ls_v2",
+    "windowsServer": "Standard_E2s_v3",
+    "windowsClient": "Standard_B2ls_v2",
+    "linuxServer": "Standard_B2ls_v2",
+    "linuxClient": "Standard_B2ls_v2"
+  }
+}
+```
+
+> **Tip**: Verify region availability with `az vm list-sizes --location <region> -o table`
+
+**OS Disk Configuration** (all role keys must be present):
+
+```json
+"osDisks": {
+  "value": {
+    "dc": { "storageAccountType": "Standard_LRS", "diskSizeGB": 128 },
+    "jumpbox": { "storageAccountType": "Standard_LRS", "diskSizeGB": 64 },
+    "windowsServer": { "storageAccountType": "Standard_LRS", "diskSizeGB": 128 },
+    "windowsClient": { "storageAccountType": "Standard_LRS", "diskSizeGB": 64 },
+    "linuxServer": { "storageAccountType": "Standard_LRS", "diskSizeGB": 128 },
+    "linuxClient": { "storageAccountType": "Standard_LRS", "diskSizeGB": 64 }
+  }
+}
+```
+
+**Operating System Images**:
+
+```json
+"windowsServerImage": {
+  "value": { "publisher": "MicrosoftWindowsServer", "offer": "WindowsServer", "sku": "2022-datacenter-g2", "version": "latest" }
+},
+"windowsClientImage": {
+  "value": { "publisher": "MicrosoftWindowsDesktop", "offer": "windows-10", "sku": "win10-22h2-ent-g2", "version": "latest" }
+},
+"ubuntuImage": {
+  "value": { "publisher": "Canonical", "offer": "0001-com-ubuntu-server-jammy", "sku": "22_04-lts-gen2", "version": "latest" }
+}
+```
+
+**VM Lifecycle Options**:
+
+```json
+"vmAutoDeleteOptions": {
+  "value": {
+    "nic": true,
+    "publicIp": true,
+    "osDisk": true
+  }
+}
+```
+
+When set to `true`, dependent resources (NICs, public IPs, OS disks) are automatically deleted when their associated VMs are deleted.
+
+### Security and Access
+
+| Parameter | Type | Purpose | Example |
+|-----------|------|---------|---------|
+| `jumpboxAllowedSources` | array | IP addresses/ranges allowed to connect to jumpboxes via RDP | `["203.0.113.0/32", "198.51.100.0/16"]` |
+| `enableClientSsh` | boolean | Enable SSH access from jumpbox to Linux client VMs | `true` |
+
+**Important**: Jumpboxes are the only entry point to the lab. Ensure `jumpboxAllowedSources` includes your IP address.
+
+### Credentials and Secrets
+
+All credentials are stored in Azure Key Vault and referenced by name, not embedded in parameter files.
+
+| Parameter | Type | Key Vault Secret | Purpose |
+|-----------|------|-------------------|---------|
+| `jumpboxAdminUsername` | string | N/A (local username) | Local admin account on jumpbox VMs |
+| `jumpboxAdminPassword` | reference | `jumpboxAdminPassword` | Password for jumpbox local admin |
+| `serverAdminUsername` | string | N/A (local username) | Local admin account on server VMs |
+| `serverAdminPassword` | reference | `serverAdminPassword` | Password for server local admin |
+| `clientAdminUsername` | string | N/A (local username) | Local admin account on client VMs |
+| `clientAdminPassword` | reference | `clientAdminPassword` | Password for client local admin |
+| `sshPublicKey` | reference | `sshPublicKey` | SSH public key for Linux VMs |
+| `sshPrivateKey` | reference | `sshPrivateKey` | SSH private key (deployed to jumpbox) |
+
+**Example Parameter File Reference**:
+
+```json
+"jumpboxAdminPassword": {
+  "reference": {
+    "keyVault": {
+      "id": "/subscriptions/<subscription-id>/resourceGroups/<rg>/providers/Microsoft.KeyVault/vaults/<vault-name>"
+    },
+    "secretName": "jumpboxAdminPassword"
+  }
+}
+```
+
+### Identity Configuration (Optional)
+
+**Enable/Disable Identity**:
+
+| Parameter | Type | Purpose | Example |
+|-----------|------|---------|---------|
+| `enableIdentity` | boolean | Enable Active Directory forest creation and domain join | `true` |
+| `domainName` | string | AD domain name (e.g., FQDN) | `"amrl.lab"` |
+
+**Department Configuration** (only when `enableIdentity=true`):
+
+| Parameter | Type | Purpose | Example |
+|-----------|------|---------|---------|
+| `sysAdminDepartment` | object | System administration department (must be exactly 1 entry) | `{"Information Technology": "ICT"}` |
+| `additionalDepartments` | object | Optional additional departments | `{"Finance": "FIN", "Sales": "SAL"}` |
+| `departmentCount` | integer | Total departments to activate (min 1, max 1+length of `additionalDepartments`) | `2` |
+| `usersPerDepartment` | integer | Users per department (minimum value, over-population preserved) | `50` |
+
+**Department Rules**:
+- `sysAdminDepartment` is always created
+- `departmentCount` must be ≥ 1 (minimum is `sysAdminDepartment` alone)
+- Additional departments are selected sequentially from `additionalDepartments` (first N items) up to `departmentCount - 1`
+- Each department receives `1 manager + usersPerDepartment standard users`
+
+**Example**:
 
 ```json
 "enableIdentity": { "value": true },
 "domainName": { "value": "amrl.lab" },
-"usersPerDepartment": { "value": 50 },
+"usersPerDepartment": { "value": 10 },
 "sysAdminDepartment": { "value": { "Information Technology": "ICT" } },
-"additionalDepartments": { "value": { "Finance": "FIN", "Human Resources": "HR" } },
-"departmentCount": { "value": 2 }
+"additionalDepartments": { "value": { "Finance": "FIN", "Sales": "SAL", "Operations": "OPS" } },
+"departmentCount": { "value": 3 }
 ```
 
-Important behaviour:
+Result:
+- ICT department created (mandatory)
+- Finance and Sales departments created (departmentCount-1 additional departments)
+- Each department receives 1 manager + 10 standard users
 
-- `enableIdentity=true` enables identity modules.
-- `stage=identity` runs identity modules only.
-- Identity resources deploy after control-plane DC VMs exist.
-- Forest creation runs only on the primary DC.
-- Replica promotion runs only on additional DCs.
-- Directory population runs on the primary DC after forest and replica steps.
-- Domain join automation runs on servers and clients after directory population completes.
-- Identity deployments are idempotent and can be safely re-executed.
-- `stage=all` automatically executes identity deployment when `enableIdentity=true`.
-
-For detailed information on department parameter behaviour, greenfield expectations, and brownfield reconciliation model, see [Directory Population](#directory-population).
+For detailed information on department behaviour, greenfield expectations, and brownfield reconciliation, see [Directory Population](#directory-population).
 
 [Back to top](#table-of-contents)
 ---
@@ -1473,7 +1477,13 @@ For tag-based GitHub release creation, see [Release Workflow (`release.yml`)](#r
 
 ### Step 10: Validate Results
 
-After deployment (or during development validation), review the outputs to confirm correctness and troubleshoot issues.
+After deployment (or during development validation), review the outputs to confirm correctness and identify any configuration issues.
+
+> **Note on Validation Modes**
+>
+> During development and testing, validation errors are exposed via outputs (shown in deployment results) rather than blocking the deployment. This allows iterative debugging.
+>
+> In production scenarios, you can add assertions to the Bicep template to enforce strict validation and prevent invalid deployments from proceeding.
 
 ### Key Outputs
 
@@ -1512,12 +1522,329 @@ After deployment (or during development validation), review the outputs to confi
 4. Use `validationCapacityDebug` to confirm that non-control demand fits within remaining spoke workload capacity  
 5. Use `validationWorkloadCapacityDebug` to inspect how control-plane (DC and jumpbox) placement consumed spoke slots  
 6. Review `vmPlacement` and `vmCountPerRegion` to validate distribution logic  
-7. Verify core configuration inputs if results are unexpected: VM sizes vs regional quota, `regionCount` vs available regions, and `vmCounts` vs total capacity.  
+7. Verify core configuration inputs if results are unexpected: VM sizes vs regional quota, `regionCount` vs available regions, and `vmCounts` vs total capacity.
 
-### Validation Mode Note
+> **Note on Validation Modes**
+>
+> During development and testing, validation errors are exposed via outputs (shown in deployment results) rather than blocking the deployment. This allows iterative debugging.
+>
+> In production scenarios, you can add assertions to the Bicep template to enforce strict validation and prevent invalid deployments from proceeding.
 
-During development, validation errors are exposed via outputs instead of blocking deployment.  
-In production scenarios, assertions can be enabled to prevent invalid deployments.
+[Back to top](#table-of-contents)
+---
+
+## Access, Authentication and Administration
+
+### Windows Administration
+
+Windows virtual machines are administered from jumpbox hosts.
+
+```text
+Internet
+    ↓
+Jumpbox
+    ↓
+RDP
+    ↓
+Windows servers and clients
+```
+
+Direct RDP access from the Internet to workload virtual machines is blocked by Network Security Group (NSG) rules.
+
+Only jumpbox subnets are permitted to initiate RDP sessions to workload subnets.
+
+Administrative access is performed using the local deployment administrator account specified by:
+
+```text
+jumpboxAdminUsername
+serverAdminUsername
+clientAdminUsername
+```
+
+### Linux Administration
+
+Linux virtual machines are administered from jumpbox hosts using SSH key authentication.
+
+```text
+Internet
+    ↓
+Jumpbox
+    ↓
+SSH Key Authentication
+    ↓
+Linux servers and clients
+```
+
+The Linux administration account is:
+
+```text
+azureadmin
+```
+
+SSH private keys are stored in Azure Key Vault and automatically deployed to jumpbox hosts during the Identity stage.
+
+SSH private key location:
+
+```text
+C:\ProgramData\ssh\ssh-key
+```
+
+Example:
+
+```powershell
+ssh -i C:\ProgramData\ssh\ssh-key azureadmin@10.2.3.4
+```
+
+The `azureadmin` account is intended for infrastructure administration and operating system management.
+
+Identity-stage reconciliation automatically redeploys the SSH private key when the [reconciliation token](#reconciliation-token-force-rerun-mechanism) changes, ensuring idempotent secret management across redeployments.
+
+#### How to Connect to Linux VMs
+
+The SSH private key is deployed to jumpbox hosts by the Identity stage. Connect via the jumpbox:
+
+1. Connect to jumpbox via RDP from your IP (in `jumpboxAllowedSources`):
+   ```powershell
+   mstsc /v:jumpbox-public-ip
+   ```
+
+2. From the jumpbox, SSH to Linux VMs using the deployed private key:
+   ```powershell
+   ssh -i C:\ProgramData\ssh\ssh-key azureadmin@<linux-vm-private-ip>
+   ```
+
+3. Once authenticated, domain users can escalate to Active Directory credentials:
+   ```bash
+   su - "username@amrl.lab"
+   ```
+
+**Important Notes**:
+
+- The SSH private key is stored on the jumpbox at `C:\ProgramData\ssh\ssh-key`
+- Linux VMs are not directly accessible from the Internet; all SSH traffic must originate from jumpbox subnets
+- The `azureadmin` account uses SSH key authentication; domain users then authenticate via Active Directory
+- SSH to Linux client VMs is controlled by the `enableClientSsh` parameter (defaults to `true`)
+
+### Active Directory User Access
+
+Domain users are intended to authenticate using their Active Directory credentials.
+
+Example:
+
+```text
+username@amrl.lab
+```
+
+Authentication path:
+
+```text
+User
+    ↓
+Active Directory
+    ↓
+Kerberos
+    ↓
+Operating System Sign-In
+```
+
+The generated Active Directory environment supports:
+
+- User authentication
+- Group-based authorisation
+- Departmental security groups
+- Manager and reporting-line relationships
+- Role-based administration
+
+### Linux Domain Authentication
+
+Linux virtual machines are joined to Active Directory using:
+
+```text
+realmd
+SSSD
+Kerberos
+```
+
+**Prerequisites**: Access via SSH key authentication (see [Linux Administration](#linux-administration)). Once connected, domain users can authenticate using their Active Directory credentials.
+
+**Example workflow**:
+
+1. Connect as infrastructure administrator:
+
+```powershell
+ssh -i C:\ProgramData\ssh\ssh-key azureadmin@10.0.3.5
+```
+
+2. Authenticate as a domain user:
+
+```bash
+su - "user@amrl.lab"
+```
+
+3. Verify identity:
+
+```bash
+id
+```
+
+Authentication path:
+
+```text
+SSH Access (azureadmin via SSH key)
+    ↓
+AD User Logon (password or GSSAPI)
+    ↓
+Active Directory
+    ↓
+Kerberos
+    ↓
+SSSD
+    ↓
+Linux Session
+```
+
+Automatic home directory creation is enabled through:
+
+```text
+oddjob
+oddjob-mkhomedir
+```
+
+A user's home directory is created automatically during their first successful logon.
+
+### Linux Administrator Delegation
+
+Linux administrative privileges are delegated through Active Directory group membership.
+
+The directory population process creates a dedicated Linux administrator group:
+
+```text
+GGS_Linux_Admins
+```
+
+The Linux domain join automation configures:
+
+```text
+/etc/sudoers.d/linux-admins
+```
+
+Example (within a Linux session after domain logon):
+
+```text
+%GGS_Linux_Admins@amrl.lab ALL=(ALL:ALL) ALL
+```
+
+**Access flow**: SSH key logon → Domain user logon → sudo command
+
+Administrative path:
+
+```text
+SSH Access (azureadmin via SSH key)
+    ↓
+AD User Logon (user@amrl.lab)
+    ↓
+GGS_Linux_Admins
+    ↓
+SSSD
+    ↓
+sudo
+    ↓
+root
+```
+
+Validation example:
+
+```bash
+sudo whoami
+```
+
+Expected result:
+
+```text
+root
+```
+
+This allows Linux administrative rights to be managed entirely through Active Directory group membership.
+
+### Current V2.2 Access Model
+
+The following access methods are supported in V2.2:
+
+| Access Method | Supported |
+|---|---|
+| Jumpbox → Windows VM (RDP) | Yes |
+| Jumpbox → Linux VM (SSH key authentication) | Yes |
+| Active Directory user logon on Linux (via SSSD, after SSH access) | Yes |
+| Active Directory user logon on Windows | Yes |
+| Linux sudo via GGS_Linux_Admins group membership | Yes |
+| Direct Internet → Windows workload VM (RDP) | No |
+| Direct Internet → Linux workload VM (SSH) | No |
+| Direct SSH logon using Active Directory password | No |
+
+The environment is intentionally designed around a management-jumpbox model.
+
+All infrastructure administration is performed from jumpbox virtual machines.
+
+Workload virtual machines are not directly exposed to the Internet.
+
+### SSH Key Deployment
+
+SSH key deployment is performed during the Identity stage.
+
+Workflow:
+
+```text
+Azure Key Vault
+    ↓
+Identity Deployment
+    ↓
+Install-SshKey.ps1
+    ↓
+Jumpbox
+    ↓
+C:\ProgramData\ssh\ssh-key
+```
+
+The deployment process:
+
+1. Retrieves the SSH private key from Azure Key Vault.
+2. Deploys the key to each jumpbox host.
+3. Applies OpenSSH-compatible permissions.
+4. Supports reconciliation-based redeployment.
+
+Example validation:
+
+```powershell
+ssh-keygen -y -f C:\ProgramData\ssh\ssh-key
+```
+
+Successful output confirms that the deployed private key is valid.
+
+Administrative access to Linux virtual machines uses SSH key authentication:
+
+```powershell
+ssh -i C:\ProgramData\ssh\ssh-key azureadmin@<linux-vm-ip>
+```
+
+### Future Enhancement Consideration
+
+A future release may optionally support direct SSH authentication using Active Directory credentials (e.g., `ssh user@amrl.lab@10.2.3.4`). This capability is intentionally disabled in V2.2 because Linux VMs are deployed with `disablePasswordAuthentication: true`, keeping infrastructure administration (SSH keys via `azureadmin`) and user authentication (Active Directory credentials) as separate security models.
+
+See [Known Limitations](#known-limitations) for the full list of limitations that may be addressed in future versions.
+
+[Back to top](#table-of-contents)
+---
+
+## Known Limitations
+
+The following limitations exist in the current V2.2 release and may be addressed in future versions:
+
+- Direct Active Directory password-based SSH logons are not enabled
+- Placement preservation across topology changes is not implemented (placement is recalculated deterministically from current inputs)
+- Azure regional quota validation is not implemented (manual pre-check required; see [Step 2](#step-2-core-deployment-settings))
+- Azure regional SKU availability validation is not implemented (manual verification required; use `az vm list-sizes --location <region>`)
+
+[Back to top](#table-of-contents)
 ---
 
 ## Placement Engine
@@ -1529,8 +1856,6 @@ In production scenarios, assertions can be enabled to prevent invalid deployment
 3. non-control VMs (not dc/jmp) → always placed on spoke regions (never hub)
 4. additional control-plane VMs (DCs and jumpboxes) → prefer spokes first, then may use hub after the first spoke pass
 5. workloads consume only remaining spoke capacity after control-plane placement
-
-For architecture-level context, see [Workload Distribution](#workload-distribution).
 
 Note: Bicep does not track real-time regional capacity during deployment. The template uses deterministic placement plus a derived remaining-capacity model built from planned control-plane placements, not live Azure runtime state.
 
@@ -1572,6 +1897,27 @@ This solution has two distinct validation layers:
 
 - CI workflow validation (GitHub Actions) in `validate.yml`
 - Bicep template validation logic in `modules/logic/validation.bicep` and top-level outputs
+
+### Important: Pre-Deployment Azure Resource Validation
+
+While the Bicep template validates configuration consistency, it does not validate Azure resource availability. **You must manually verify** before deploying:
+
+1. **VM SKU Availability**: Check if your chosen VM sizes exist in target regions
+   ```bash
+   az vm list-sizes --location <region> -o table | grep <sku-name>
+   ```
+
+2. **Image Availability**: Verify Gen2 images are available (required for Trusted Launch)
+   ```bash
+   az vm image list --publisher Canonical --offer 0001-com-ubuntu-server-jammy --sku 22_04-lts-gen2 --location <region>
+   ```
+
+3. **Regional Quota**: Confirm vCPU quota is sufficient for your deployment
+   ```bash
+   az vm list-usage --location <region> -o table | grep "Total Regional vCPUs"
+   ```
+
+For details, see [Step 2: Core Deployment Settings → Placement Recalculation Warning](#placement-recalculation-warning) and [Known Limitations](#known-limitations).
 
 ### Validation Pipeline Diagram
 
@@ -1751,13 +2097,15 @@ The deployment provides several outputs to assist with validation, debugging, an
 These outputs are designed to:
 
 - Validate deployment logic  
-- Troubleshoot configuration issues  
+- Identify configuration issues  
 - Confirm workload distribution  
 - Provide insight into capacity usage  
 
 ### Best Practice
 
 Always review validation outputs before proceeding with further configuration steps.
+
+[Back to top](#table-of-contents)
 ---
 
 ## Third-Party Components
@@ -1815,15 +2163,19 @@ The following files contain logic derived from or inspired by Set-DummyAD:
 AMRL follows a non-destructive deployment model. Re-execution of the identity stage is intended to create missing objects, repair selected attributes, and ensure required memberships exist, rather than enforce an exact directory state.
 
 Future identity automation may continue to incorporate adapted portions of Set-DummyAD where appropriate.
+
+[Back to top](#table-of-contents)
 ---
 
 ## Future Plans
 
 - Additional directory population scenarios and data customisation guidance.
 - Group Policy deployment and management.
-- Further reconciliation and compliance-driven identity automation.
+- Further reconciliation, compliance-driven identity automation, and deployment-state preservation.
+- Network and routing hardening, including Azure Firewall Internet egress.
+- Expanded Linux authentication and access-management scenarios.
 - Azure Bastion integration.
-- Enhanced monitoring and operational visibility.
+- Enhanced monitoring, reporting, and operational visibility.
 
 [Back to top](#table-of-contents)
 

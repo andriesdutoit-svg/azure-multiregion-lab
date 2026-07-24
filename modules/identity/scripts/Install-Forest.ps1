@@ -44,7 +44,10 @@ Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 
 Write-Host "Preparing Active Directory installation for: $DomainName"
 
-# Idempotency guard: if a domain already exists, exit without making changes.
+# ============================================================================
+# IDEMPOTENCY CHECK: VERIFY FOREST DOES NOT ALREADY EXIST
+# ============================================================================
+
 try {
     $CurrentDomain = Get-ADDomain -ErrorAction Stop
 
@@ -56,6 +59,12 @@ catch {
     Write-Host "No Active Directory forest detected"
 }
 
+# ============================================================================
+# CREATE ACTIVE DIRECTORY FOREST
+# Forest creation triggers automatic VM reboot.
+# Azure VM Run Command handles reconnection and completion detection.
+# ============================================================================
+
 Write-Host "Creating Active Directory forest: $DomainName"
 
 Install-ADDSForest `
@@ -64,5 +73,4 @@ Install-ADDSForest `
     -SafeModeAdministratorPassword $DsrmPassword `
     -Force
 
-# AD DS promotion triggers a reboot; the Run Command operation can appear interrupted while the VM restarts.
-Write-Host "Active Directory forest creation initiated. The server will automatically reboot to complete the installation."
+Write-Host "Active Directory forest creation initiated. The server will automatically reboot to complete installation."

@@ -7,6 +7,10 @@ param(
     [string]$ReconciliationToken
 )
 
+# ============================================================================
+# INITIALIZATION
+# ============================================================================
+
 $model = $DirectoryModel | ConvertFrom-Json
 
 $windowsAdminsGroup = (
@@ -18,14 +22,16 @@ Write-Host "Starting AMRL Domain Join"
 Write-Host "DomainName = $DomainName"
 Write-Host "VMType = $VMType"
 
-# Validate the OU mapping for the given VM type
+# ============================================================================
+# PHASE 1: VALIDATE OU MAPPING FOR VM TYPE
+# ============================================================================
 
-$computerOu = $model.computerOuMapping.$VmType
+$computerOu = $model.computerOuMapping.$VMType
 
 Write-Host "ComputerOu = $computerOu"
 
 if ([string]::IsNullOrWhiteSpace($computerOu)) {
-    throw "No OU mapping defined for VM type: $VmType"
+    throw "No OU mapping defined for VM type: $VMType"
 }
 
 $ouSegments = $computerOu -split '/'
@@ -64,6 +70,10 @@ if ($computerSystem.PartOfDomain) {
 
 # Domain credential to join the computer to the domain
 
+# ============================================================================
+# PHASE 2: PREPARE CREDENTIALS
+# ============================================================================
+
 $securePassword = ConvertTo-SecureString `
     $ServerAdminPassword `
     -AsPlainText `
@@ -76,7 +86,9 @@ $credential = New-Object System.Management.Automation.PSCredential(
     $securePassword
 )
 
-# Wait for the domain DNS name to be resolvable
+# ============================================================================
+# PHASE 3: WAIT FOR DOMAIN DNS RESOLUTION
+# ============================================================================
 
 $dnsResolved = $false
 
@@ -100,7 +112,9 @@ if (-not $dnsResolved) {
     throw "Unable to resolve domain DNS name: $DomainName"
 }
 
-# Domain join operation
+# ============================================================================
+# PHASE 4: EXECUTE DOMAIN JOIN
+# ============================================================================
 
 Write-Host "Joining computer to domain $DomainName"
 
@@ -129,6 +143,10 @@ if (-not $computerSystem.PartOfDomain) {
 }
 
 Write-Host "Domain membership verified."
+
+# ============================================================================
+# PHASE 5: CONFIGURE LOCAL ADMINISTRATOR ACCESS
+# ============================================================================
 
 Write-Host "Configuring local administrator access"
 
