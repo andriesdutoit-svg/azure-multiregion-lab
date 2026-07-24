@@ -17,25 +17,6 @@ DIRECTORY_MODEL="${DirectoryModel}"
 LINUX_ADMINS_GROUP=""
 VM_TYPE="${VmType}"
 
-COMPUTER_OU=$(echo "${DIRECTORY_MODEL}" | jq -r \
-    ".computerOuMapping.${VM_TYPE}")
-
-COMPUTER_OU_DN=$(echo "${COMPUTER_OU}" | awk -F'/' '
-{
-    for (i=NF; i>=1; i--) {
-        printf "OU=%s", $i
-
-        if (i > 1) {
-            printf ","
-        }
-    }
-}')
-
-ROOT_OU_NAME=$(echo "${DIRECTORY_MODEL}" | jq -r \
-    '.rootOuName')
-
-FULL_COMPUTER_OU_DN="${COMPUTER_OU_DN},OU=${ROOT_OU_NAME}"
-
 SERVER_ADMIN_USERNAME="${ServerAdminUsername}"
 SERVER_ADMIN_PASSWORD="${ServerAdminPassword}"
 RECONCILIATION_TOKEN="${ReconciliationToken}"
@@ -53,15 +34,6 @@ log_error() {
 }
 
 log_info "Starting AMRL Linux Domain Join"
-
-log_info "Computer OU = ${COMPUTER_OU}"
-log_info "Computer OU DN = ${COMPUTER_OU_DN}"
-log_info "Full Computer OU DN = ${FULL_COMPUTER_OU_DN}"
-
-if [[ -z "${COMPUTER_OU}" || "${COMPUTER_OU}" == "null" ]]; then
-    log_error "No OU mapping defined for VM type: ${VM_TYPE}"
-    exit 1
-fi
 
 #
 # Phase 1 - Validation
@@ -120,6 +92,45 @@ apt-get install -y \
     jq
 
 log_info "Prerequisite installation completed"
+
+COMPUTER_OU=$(echo "${DIRECTORY_MODEL}" | jq -r \
+    ".computerOuMapping.${VM_TYPE}")
+
+if [[ -z "${COMPUTER_OU}" || "${COMPUTER_OU}" == "null" ]]; then
+    log_error "No OU mapping defined for VM type: ${VM_TYPE}"
+    exit 1
+fi
+
+COMPUTER_OU_DN=$(echo "${COMPUTER_OU}" | awk -F'/' '
+{
+    for (i=NF; i>=1; i--) {
+        printf "OU=%s", $i
+
+        if (i > 1) {
+            printf ","
+        }
+    }
+}')
+
+ROOT_OU_NAME=$(echo "${DIRECTORY_MODEL}" | jq -r \
+    '.rootOuName')
+
+DOMAIN_DN=$(echo "${DOMAIN_NAME}" | awk -F'.' '
+{
+    for (i=1; i<=NF; i++) {
+        printf "DC=%s", $i
+
+        if (i < NF) {
+            printf ","
+        }
+    }
+}')
+
+FULL_COMPUTER_OU_DN="${COMPUTER_OU_DN},OU=${ROOT_OU_NAME},${DOMAIN_DN}"
+
+log_info "Computer OU = ${COMPUTER_OU}"
+log_info "Computer OU DN = ${COMPUTER_OU_DN}"
+log_info "Full Computer OU DN = ${FULL_COMPUTER_OU_DN}"
 
 LINUX_ADMINS_GROUP=$(echo "${DIRECTORY_MODEL}" | jq -r '
   .groupNaming.globalSecurityPrefix +

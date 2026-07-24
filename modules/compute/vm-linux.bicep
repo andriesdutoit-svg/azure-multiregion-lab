@@ -12,7 +12,7 @@ param vmName string
 param subnetId string
 param vmSize string
 param adminUsername string
-param adminPublicKey string
+param sshPublicKey string
 param tags object = {}
 param image object
 param osDisk object
@@ -87,7 +87,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
           publicKeys: [
             {
               path: '/home/${adminUsername}/.ssh/authorized_keys'
-              keyData: adminPublicKey
+              keyData: sshPublicKey
             }
           ]
         }

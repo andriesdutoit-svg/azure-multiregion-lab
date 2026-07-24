@@ -203,8 +203,22 @@
       }
     },
 
-    "adminPublicKey": {
-      "value": "<SSH_PUBLIC_KEY>"
+    "sshPublicKey": {
+      "reference": {
+        "keyVault": {
+          "id": "<KEYVAULT_ID>"
+        },
+        "secretName": "sshPublicKey"
+      }
+    },
+
+    "sshPrivateKey": {
+      "reference": {
+        "keyVault": {
+          "id": "<KEYVAULT_ID>"
+        },
+        "secretName": "sshPrivateKey"
+      }
     },
 
     "jumpboxAdminUsername": {

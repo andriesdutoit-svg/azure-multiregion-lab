@@ -1077,7 +1077,6 @@ The following changes are generally supported:
 - SSH public keys
 - Tags
 - Jumpbox access restrictions (`jumpboxAllowedSources`)
-- Client SSH settings (`enableClientSsh`)
 - VM auto-delete settings (`vmAutoDeleteOptions`)
 - Deployment stage (`stage`)
 
@@ -1096,6 +1095,15 @@ The following parameters may significantly affect topology or addressing:
 - `regionCount`
 - `regionIndexMap`
 - `subnetIndexMap` (including the `firewall` index)
+- `enableClientSsh`
+
+enableClientSsh
+
+Controls whether SSH access from jumpbox subnets to Linux client VMs is permitted.
+
+Current AMRL releases use SSH as the primary administration method for Linux clients.
+
+Disabling this setting is not recommended unless an alternative Linux management mechanism has been deployed (for example Azure Bastion, Azure Serial Console, Azure Automation, Azure Machine Configuration, DSC, or another configuration management platform).
 
 Changing these values after deployment may require resource recreation or migration planning.
 
@@ -1216,7 +1224,7 @@ Example configuration:
 - `osDisks.storageAccountType`: Disk performance tier per role (Premium vs StandardSSD)
 - `osDisks.diskSizeGB`: OS disk capacity per role
 
-> **⚠️ Availability Note**: Not all VM sizes or images are available in all regions or subscription types.
+> **Availability Note**: Not all VM sizes or images are available in all regions or subscription types.
 > 
 > **Verify availability before deploying**:
 > ```bash

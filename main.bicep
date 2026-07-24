@@ -60,7 +60,9 @@ param serverAdminPassword string
 param clientAdminUsername string
 @secure()
 param clientAdminPassword string
-param adminPublicKey string
+param sshPublicKey string
+@secure()
+param sshPrivateKey string
 
 // ----
 // Identity & Directory Management
@@ -622,6 +624,10 @@ var activeWindowsVMs = concat(
   deployIdentityTargets ? workloadWindowsVMs : []
 )
 
+var activeJumpboxVMs = filter(activeWindowsVMs, vm =>
+  vm.type == 'jmp'
+)
+
 // ------------------------------
 // Windows VM Module Deployment
 // ------------------------------
@@ -865,7 +871,7 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
       vmSize: roleSizingMap[vm.type].vmSize
 
       adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
-      adminPublicKey: adminPublicKey
+      sshPublicKey: sshPublicKey
 
       // Role-to-subnet mapping for Linux VMs: srvlin→server subnet, clilin→client subnet.
       // Each role has a dedicated subnet enforcing network segmentation and security group policies.
@@ -888,6 +894,29 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
       osDisk: roleSizingMap[vm.type].osDisk
 
       vmAutoDeleteOptions: vmAutoDeleteOptions
+    }
+  }
+]
+
+var hasLinuxVMs = vmCounts.linuxServer > 0 || vmCounts.linuxClient > 0
+
+module installJumpboxSshKey 'modules/identity/ssh-key.bicep' = [
+  for vm in (hasLinuxVMs ? activeJumpboxVMs : []): {
+    name: '${prefix}-sshkey-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+
+    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
+
+    dependsOn: [
+      windowsVMs
+      linuxVMs
+    ]
+
+    params: {
+      vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+
+      adminUsername: jumpboxAdminUsername
+
+      sshPrivateKey: sshPrivateKey
     }
   }
 ]
