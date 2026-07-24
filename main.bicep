@@ -624,10 +624,6 @@ var activeWindowsVMs = concat(
   deployIdentityTargets ? workloadWindowsVMs : []
 )
 
-var activeJumpboxVMs = filter(activeWindowsVMs, vm =>
-  vm.type == 'jmp'
-)
-
 // ------------------------------
 // Windows VM Module Deployment
 // ------------------------------

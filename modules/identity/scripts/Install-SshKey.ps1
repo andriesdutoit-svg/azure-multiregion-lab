@@ -3,7 +3,9 @@ param(
     [string]$AdminUsername,
 
     [Parameter(Mandatory)]
-    [string]$SshPrivateKey
+    [string]$SshPrivateKey,
+
+    [string]$ReconciliationToken
 )
 
 $sshFolder = "C:\ProgramData\ssh"
@@ -18,13 +20,22 @@ if (-not (Test-Path $sshFolder)) {
         -Force | Out-Null
 }
 
-Set-Content `
-    -Path $keyPath `
-    -Value $SshPrivateKey `
-    -NoNewline
+Write-Host "[INFO] Key length = $($SshPrivateKey.Length)"
+Write-Host "[INFO] First 50 chars:"
+Write-Host $SshPrivateKey.Substring(0,50)
+
+[System.IO.File]::WriteAllText(
+    $keyPath,
+    ($SshPrivateKey + "`n"),
+    [System.Text.UTF8Encoding]::new($false)
+)
 
 icacls $sshFolder /inheritance:r | Out-Null
 icacls $keyPath /inheritance:r | Out-Null
-icacls $keyPath /grant:r "Users:(R)" | Out-Null
+
+icacls $keyPath /remove:g "Users" | Out-Null
+
+icacls $keyPath /grant:r "Administrators:(F)" | Out-Null
+icacls $keyPath /grant:r "${AdminUsername}:(R)" | Out-Null
 
 Write-Host "[INFO] SSH key installed to $keyPath"
