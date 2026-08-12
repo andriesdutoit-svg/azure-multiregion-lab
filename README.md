@@ -260,6 +260,11 @@ For full parameter-by-parameter guidance, continue with [Start Guide (Detailed)]
 > az keyvault secret set --vault-name <key-vault-name> --name sshPublicKey --value ((Get-Content "$HOME/.ssh/id_ed25519.pub" -Raw).Trim())
 > ```
 >
+> Upload the matching private key as `sshPrivateKey`:
+> ```powershell
+> az keyvault secret set --vault-name <key-vault-name> --name sshPrivateKey --file "$HOME/.ssh/id_ed25519"
+> ```
+>
 > Linux administration uses SSH key authentication from jumpbox hosts. For details, see [Linux Administration](#linux-administration).
 
 > **Note on Subscription Types**
@@ -1263,6 +1268,8 @@ Key Vault provides:
    az keyvault secret set --vault-name <key-vault-name> --name jumpboxAdminPassword --value <password>
    az keyvault secret set --vault-name <key-vault-name> --name serverAdminPassword --value <password>
    az keyvault secret set --vault-name <key-vault-name> --name clientAdminPassword --value <password>
+  az keyvault secret set --vault-name <key-vault-name> --name sshPublicKey --value ((Get-Content "$HOME/.ssh/id_ed25519.pub" -Raw).Trim())
+  az keyvault secret set --vault-name <key-vault-name> --name sshPrivateKey --file "$HOME/.ssh/id_ed25519"
    ```
 
 5. Use your Key Vault ID in parameter file credential references.
