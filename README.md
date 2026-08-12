@@ -80,18 +80,19 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
 - [Quick Start (Demo Setup)](#quick-start-demo-setup)
   - [Required Placeholder Values](#required-placeholder-values)
   - [Quick Demo Steps](#quick-demo-steps)
+    - [Identity Setup Notes](#identity-setup-notes)
 - [Start Guide (Detailed)](#start-guide-detailed)
   - [Step 1: Understand the Core Concept](#step-1-understand-the-core-concept)
   - [Step 2: Core Deployment Settings](#step-2-core-deployment-settings)
   - [Step 3: Region Mapping](#step-3-region-mapping)
   - [Step 4a: Subnet Mapping](#step-4a-subnet-mapping)
   - [Step 4b: Greenfield and Brownfield Deployments](#step-4b-greenfield-and-brownfield-deployments)
-    - [Greenfield Deployments](#greenfield-deployments)
-    - [Brownfield Deployments](#brownfield-deployments)
     - [Relationship Between Stages and Brownfield Deployments](#relationship-between-stages-and-brownfield-deployments)
+    - [Stage Dependency Diagram](#stage-dependency-diagram)
     - [Parameters That Can Be Changed Between Deployments](#parameters-that-can-be-changed-between-deployments)
     - [Changes Requiring Careful Planning](#changes-requiring-careful-planning)
     - [Supported Deployment Models](#supported-deployment-models)
+    - [Design Principle](#design-principle)
   - [Step 5: VM Counts (Controls Scale)](#step-5-vm-counts-controls-scale)
   - [Step 6: Role-Based VM Sizing and Storage](#step-6-role-based-vm-sizing-and-storage)
   - [Step 7: Jumpbox Allowed Sources](#step-7-jumpbox-allowed-sources)
@@ -112,6 +113,13 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
   - [Security and Access](#security-and-access)
   - [Credentials and Secrets](#credentials-and-secrets)
   - [Identity Configuration (Optional)](#identity-configuration-optional)
+  - [Step 9: Deploy](#step-9-deploy)
+    - [Full Deployment](#full-deployment)
+    - [Stages](#stages)
+    - [Recommended Deployment Order](#recommended-deployment-order)
+  - [Step 10: Validate Results](#step-10-validate-results)
+    - [Key Outputs](#key-outputs)
+    - [How to Use These Outputs](#how-to-use-these-outputs)
 
 </details>
 
@@ -148,24 +156,45 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
   - [Important: Pre-Deployment Azure Resource Validation](#important-pre-deployment-azure-resource-validation)
   - [Validation Pipeline Diagram](#validation-pipeline-diagram)
   - [CI Workflow Validation (`validate.yml`)](#ci-workflow-validation-validateyml)
+    - [GitHub Actions Prerequisites](#github-actions-prerequisites)
+      - [Quick CLI Setup (PowerShell)](#quick-cli-setup-powershell)
+      - [References](#references)
+    - [Trial Subscription Note](#trial-subscription-note)
   - [Release Workflow (`release.yml`)](#release-workflow-releaseyml)
   - [Bicep Template Validation Rules](#bicep-template-validation-rules)
+    - [Placement and Capacity Rules](#placement-and-capacity-rules)
+    - [Configuration Rules](#configuration-rules)
+    - [Identity and Department Rules](#identity-and-department-rules)
+    - [Stage and Brownfield Deployment Rules](#stage-and-brownfield-deployment-rules)
   - [Bicep Template Validation Outputs](#bicep-template-validation-outputs)
 
 </details>
 
 <details>
-<summary><strong>Outputs and Limitations</strong></summary>
+<summary><strong>Outputs</strong></summary>
 
 - [Outputs](#outputs)
+  - [Core Outputs](#core-outputs)
+  - [Purpose](#purpose)
+  - [Best Practice](#best-practice)
+
+</details>
+
+<details>
+<summary><strong>Known Limitations</strong></summary>
+
 - [Known Limitations](#known-limitations)
 
 </details>
 
 <details>
-<summary><strong>Licensing</strong></summary>
+<summary><strong>Third-Party Components</strong></summary>
 
 - [Third-Party Components](#third-party-components)
+  - [Relationship to AMRL](#relationship-to-amrl)
+  - [AMRL Enhancements](#amrl-enhancements)
+  - [Files Derived From or Inspired By Set-DummyAD](#files-derived-from-or-inspired-by-set-dummyad)
+  - [Notes](#notes)
 
 </details>
 
@@ -203,11 +232,11 @@ The demo parameter template contains these three placeholders:
 
 4. Deploy locally:
 
-```bash
-az deployment sub create \
-  --name demo-deployment \
-  --location westeurope \
-  --template-file main.bicep \
+```powershell
+az deployment sub create `
+  --name demo-deployment `
+  --location westeurope `
+  --template-file main.bicep `
   --parameters <your-local-parameters-file>.json
 ```
 
@@ -215,9 +244,20 @@ For full parameter-by-parameter guidance, continue with [Start Guide (Detailed)]
 
 > **Note on Linux VMs**
 >
-> If deploying Linux virtual machines (`linuxServer` or `linuxClient`), you must also add the SSH public key to Key Vault:
-> ```bash
-> az keyvault secret set --vault-name <key-vault-name> --name sshPublicKey --value "$(cat ~/.ssh/id_rsa.pub)"
+> If deploying Linux virtual machines (`linuxServer` or `linuxClient`), you must also add the SSH public key to Key Vault.
+>
+> Before uploading the SSH public key, complete [Step 8: Key Vault Setup (Required)](#step-8-key-vault-setup-required) so your account has secret write permissions.
+>
+> Create an SSH key first if you do not already have one:
+> ```powershell
+> New-Item -ItemType Directory -Force "$HOME/.ssh" | Out-Null
+> ssh-keygen -t ed25519 -f "$HOME/.ssh/id_ed25519"
+> ```
+> When prompted for a passphrase, press Enter twice to leave it empty.
+>
+> Then upload `id_ed25519.pub` to Key Vault:
+> ```powershell
+> az keyvault secret set --vault-name <key-vault-name> --name sshPublicKey --value ((Get-Content "$HOME/.ssh/id_ed25519.pub" -Raw).Trim())
 > ```
 >
 > Linux administration uses SSH key authentication from jumpbox hosts. For details, see [Linux Administration](#linux-administration).
@@ -236,7 +276,7 @@ For full parameter-by-parameter guidance, continue with [Start Guide (Detailed)]
 > - Sufficient vCPU quota for your `maxVmsPerRegion` and `regionCount` settings
 >
 > **Important**: Before deploying, verify that your target regions support the required VM sizes and images. Use the commands below to check availability in your subscription:
-> ```bash
+> ```powershell
 > az vm list-sizes --location <region> -o table
 > az vm image list-publishers --location <region> -o table
 > ```
@@ -1145,7 +1185,7 @@ Configure VM sizes, disk types, and operating system images per VM role.
 **VM Sizing and Storage**:
 
 **Verify availability before deploying**:
-```bash
+```powershell
 az vm list-sizes --location <region> -o table
 az vm image list-publishers --location <region> -o table
 ```
@@ -1188,24 +1228,44 @@ Key Vault provides:
 **Quick setup**:
 
 1. Create foundation resource group:
-   ```bash
+  ```powershell
    az group create --name <foundation-rg> --location <azure-region>
    ```
 
 2. Create Key Vault:
-   ```bash
-   az keyvault create --name <key-vault-name> --resource-group <foundation-rg> \
+   ```powershell
+   az keyvault create --name <key-vault-name> --resource-group <foundation-rg> `
      --location <azure-region> --bypass AzureServices --enabled-for-template-deployment true
    ```
 
-3. Add secrets (reference names from [Configuration Parameters Reference](#credentials-and-secrets)):
-   ```bash
+  > **Troubleshooting: MissingSubscriptionRegistration**
+  >
+  > If you get an error like `The subscription is not registered to use namespace 'Microsoft.KeyVault'`, register the provider once per subscription, then retry:
+  > ```powershell
+  > az provider register --namespace Microsoft.KeyVault --wait
+  > az provider show --namespace Microsoft.KeyVault --query registrationState -o tsv
+  > ```
+  > Expected state: `Registered`
+
+3. Grant secret write permissions on the Key Vault (required when the vault uses Azure RBAC):
+  ```powershell
+  $KV_ID = az keyvault show --name <key-vault-name> --resource-group <foundation-rg> --query id -o tsv
+  $MY_OBJECT_ID = az ad signed-in-user show --query id -o tsv
+   az role assignment create --assignee-object-id $MY_OBJECT_ID --assignee-principal-type User --role "Key Vault Secrets Officer" --scope $KV_ID
+   ```
+
+   > If `az ad signed-in-user show` is unavailable in your tenant context, use your object ID directly in `--assignee-object-id`.
+   >
+   > Role assignment propagation may take a few minutes. If `set secret` fails immediately after assignment, wait and retry.
+
+4. Add secrets (reference names from [Configuration Parameters Reference](#credentials-and-secrets)):
+  ```powershell
    az keyvault secret set --vault-name <key-vault-name> --name jumpboxAdminPassword --value <password>
    az keyvault secret set --vault-name <key-vault-name> --name serverAdminPassword --value <password>
    az keyvault secret set --vault-name <key-vault-name> --name clientAdminPassword --value <password>
    ```
 
-4. Use your Key Vault ID in parameter file credential references.
+5. Use your Key Vault ID in parameter file credential references.
 
 For credential parameters and parameter file examples, see [Configuration Parameters Reference → Credentials and Secrets](#credentials-and-secrets).
 
@@ -1413,11 +1473,11 @@ The solution supports both full and staged deployments through the `stage` param
 
 Deploy all networking and compute resources (and identity resources when `enableIdentity=true`):
 
-```bash
-az deployment sub create \
-  --name <deployment-name> \
-  --location <azure-region> \
-  --template-file main.bicep \
+```powershell
+az deployment sub create `
+  --name <deployment-name> `
+  --location <azure-region> `
+  --template-file main.bicep `
   --parameters <your-local-parameters-file>.json
 ```
 
@@ -1435,25 +1495,25 @@ Example in a parameters file:
 
 Deploy only networking resources:
 
-```bash
+```powershell
 --parameters stage=network
 ```
 
 Deploy only control-plane VMs (DCs and jumpboxes):
 
-```bash
+```powershell
 --parameters stage=control
 ```
 
 Deploy identity bootstrap, replica promotion, and directory population:
 
-```bash
+```powershell
 --parameters stage=identity --parameters enableIdentity=true
 ```
 
 Deploy only workload VMs:
 
-```bash
+```powershell
 --parameters stage=workload
 ```
 
@@ -1903,18 +1963,18 @@ This solution has two distinct validation layers:
 While the Bicep template validates configuration consistency, it does not validate Azure resource availability. **You must manually verify** before deploying:
 
 1. **VM SKU Availability**: Check if your chosen VM sizes exist in target regions
-   ```bash
-   az vm list-sizes --location <region> -o table | grep <sku-name>
+  ```powershell
+  az vm list-sizes --location <region> -o table | Select-String <sku-name>
    ```
 
 2. **Image Availability**: Verify Gen2 images are available (required for Trusted Launch)
-   ```bash
+  ```powershell
    az vm image list --publisher Canonical --offer 0001-com-ubuntu-server-jammy --sku 22_04-lts-gen2 --location <region>
    ```
 
 3. **Regional Quota**: Confirm vCPU quota is sufficient for your deployment
-   ```bash
-   az vm list-usage --location <region> -o table | grep "Total Regional vCPUs"
+  ```powershell
+  az vm list-usage --location <region> -o table | Select-String "Total Regional vCPUs"
    ```
 
 For details, see [Step 2: Core Deployment Settings → Placement Recalculation Warning](#placement-recalculation-warning) and [Known Limitations](#known-limitations).
@@ -1938,40 +1998,96 @@ flowchart LR
 If you are using GitHub Actions, this repository includes `.github/workflows/validate.yml`.
 
 - It runs on pushes to `main`, pushes to `feature/**`, and pull requests targeting `main`.
+- For feature branch validation, ensure federated credentials exist for each feature branch ref.
 - It builds/lints `main.bicep`, injects values for the three placeholders, then runs `az deployment sub validate` and `what-if` using `main.parameters.demo.json`.
 
 #### GitHub Actions Prerequisites
 
 The validation workflow uses Azure OpenID Connect (OIDC) and Azure Resource Manager deployment validation.
 
-##### Required GitHub Secrets
+##### Quick CLI Setup (PowerShell)
 
-Set these repository secrets:
+Use this end-to-end command sequence for the fastest setup path.
 
-- AZURE_CLIENT_ID
-- AZURE_TENANT_ID
-- AZURE_SUBSCRIPTION_ID
-- SSH_PUBLIC_KEY
+Prerequisites:
 
-##### Required GitHub Variables
+- Azure CLI installed and logged in (`az login`)
+- GitHub CLI installed and logged in (`gh auth login`)
+- Repository admin access for setting secrets and variables
 
-Set these repository variables:
+```powershell
+# 0) Set repository context
+$GITHUB_OWNER = "<github-owner>"
+$GITHUB_REPO = "<github-repo>"
+$AZURE_SUBSCRIPTION_ID = az account show --query id -o tsv
 
-- KEYVAULT_ID
-- YOUR_PUBLIC_IP
+# Optional values used by validate.yml placeholders
+$KEYVAULT_ID = "<key-vault-resource-id>"
 
-##### Azure Service Principal
+# Key Vault variable note:
+# `KEYVAULT_ID` must be the full Key Vault resource ID, not a resource group name.
+# Example format: `/subscriptions/<subscription-id>/resourceGroups/<rg-name>/providers/Microsoft.KeyVault/vaults/<vault-name>`
 
-Create an Azure App Registration and Service Principal for GitHub Actions with at least Contributor role on the target subscription.
+$YOUR_PUBLIC_IP = "<your-public-ip>/32"
+$SSH_PUBLIC_KEY = (Get-Content "$HOME/.ssh/id_ed25519.pub" -Raw).Trim()
 
-##### Federated Credentials (OIDC)
+# 1) Tenant ID
+$AZURE_TENANT_ID = az account show --query tenantId -o tsv
 
-Configure Federated Credentials on the App Registration to match workflow trigger subjects:
+# 2) Create app registration and service principal
+$APP_NAME = "amrl-gha-oidc-$GITHUB_REPO"
+$APP_ID = az ad app create --display-name $APP_NAME --query appId -o tsv
+az ad sp create --id $APP_ID | Out-Null
 
-- `main`
-- `feature/**`
+# 3) Grant Contributor on subscription scope
+$SUB_SCOPE = "/subscriptions/$AZURE_SUBSCRIPTION_ID"
+az role assignment create --assignee $APP_ID --role "Contributor" --scope $SUB_SCOPE
+# Optional: for stricter least privilege, scope this role to a resource group used by validation.
 
-At minimum, configure `main`. For feature branches, use branch-specific credentials. Validation will fail if credentials are not created when moving to a new branch.
+# 4) Add federated credential for main branch
+$mainCred = @"
+{
+  "name": "github-main",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:$GITHUB_OWNER/$GITHUB_REPO:ref:refs/heads/main",
+  "audiences": ["api://AzureADTokenExchange"]
+}
+"@
+$mainCredFile = Join-Path $env:TEMP "gha-main-federated.json"
+$mainCred | Set-Content -Path $mainCredFile -Encoding UTF8
+az ad app federated-credential create --id $APP_ID --parameters @$mainCredFile
+
+# 5) (Optional) Add federated credential for one feature branch
+# Replace <feature-branch-name> with the exact branch, e.g. feature/my-change
+$FEATURE_BRANCH = "<feature-branch-name>"
+$featureCred = @"
+{
+  "name": "github-feature-branch",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:$GITHUB_OWNER/$GITHUB_REPO:ref:refs/heads/$FEATURE_BRANCH",
+  "audiences": ["api://AzureADTokenExchange"]
+}
+"@
+$featureCredFile = Join-Path $env:TEMP "gha-feature-federated.json"
+$featureCred | Set-Content -Path $featureCredFile -Encoding UTF8
+az ad app federated-credential create --id $APP_ID --parameters @$featureCredFile
+
+# 6) Set GitHub repository secrets
+gh secret set AZURE_CLIENT_ID --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$APP_ID"
+gh secret set AZURE_TENANT_ID --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$AZURE_TENANT_ID"
+gh secret set AZURE_SUBSCRIPTION_ID --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$AZURE_SUBSCRIPTION_ID"
+gh secret set SSH_PUBLIC_KEY --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$SSH_PUBLIC_KEY"
+
+# 7) Set GitHub repository variables
+gh variable set KEYVAULT_ID --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$KEYVAULT_ID"
+gh variable set YOUR_PUBLIC_IP --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$YOUR_PUBLIC_IP"
+
+# 8) Verify role assignment and federated credentials
+az role assignment list --assignee $APP_ID --scope $SUB_SCOPE -o table
+az ad app federated-credential list --id $APP_ID -o table
+```
+
+If your tenant blocks `az ad` commands, ask your Entra administrator to create the app registration and federated credentials, then only run steps 6 to 8.
 
 ##### References
 
@@ -1979,7 +2095,6 @@ At minimum, configure `main`. For feature branches, use branch-specific credenti
 - [Azure Login GitHub Action](https://github.com/Azure/login)
 - [Azure OIDC Authentication for GitHub Actions](https://learn.microsoft.com/azure/developer/github/connect-from-azure-openid-connect)
 - [Create GitHub OIDC Federated Credentials in Microsoft Entra ID](https://learn.microsoft.com/entra/workload-id/workload-identity-federation-create-trust)
-- [GitHub Actions Status](https://www.githubstatus.com)
 
 #### Trial Subscription Note
 
@@ -1995,7 +2110,7 @@ If you are using GitHub Releases, this repository includes `.github/workflows/re
 
 Typical release flow:
 
-```bash
+```powershell
 git tag v1.13.3
 git push origin v1.13.3
 ```
