@@ -588,6 +588,12 @@ module routeTables 'modules/networking/routeTable.bicep' = [
       location: region
 
       #disable-next-line BCP318
+      dcSubnetId: vnets[i].outputs.subnets.dc.id
+
+      #disable-next-line BCP318
+      jumpboxSubnetId: vnets[i].outputs.subnets.jumpbox.id
+
+      #disable-next-line BCP318
       serverSubnetId: vnets[i].outputs.subnets.server.id
 
       #disable-next-line BCP318
