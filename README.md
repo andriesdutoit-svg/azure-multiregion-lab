@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.2
+# Azure Multi-Region Lab (AMRL) v2.3.1
 
 ## Overview
 
@@ -133,7 +133,7 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
   - [Active Directory User Access](#active-directory-user-access)
   - [Linux Domain Authentication](#linux-domain-authentication)
   - [Linux Administrator Delegation](#linux-administrator-delegation)
-  - [Current V2.2 Access Model](#current-v22-access-model)
+  - [Current V2.3.1 Access Model](#current-v231-access-model)
   - [SSH Key Deployment](#ssh-key-deployment)
   - [Future Enhancement Consideration](#future-enhancement-consideration)
 
@@ -374,6 +374,9 @@ The solution was developed iteratively, with each phase introducing additional a
 
 - **v2.2 – Domain Join Automation, Reconciliation & Department Parameter Refactoring**
   Automated domain join for Windows and Linux systems with customisable OU placement. Introduced identity reconciliation through re-executable Azure VM Run Commands, allowing identity deployments to safely self-heal and recreate missing required objects. Refactored department parameters into sysAdminDepartment and additionalDepartments.
+
+- **v2.3.1 – Route Table and Hub/Spoke Routing Refactor**
+  Corrected workload route-table association logic so route tables and workload subnets are only created in spoke regions, while the hub remains the control-plane and firewall hub for the multi-region design.
 
 [Back to top](#table-of-contents)
 ---
@@ -1839,9 +1842,9 @@ root
 
 This allows Linux administrative rights to be managed entirely through Active Directory group membership.
 
-### Current V2.2 Access Model
+### Current V2.3.1 Access Model
 
-The following access methods are supported in V2.2:
+The following access methods are supported in V2.3.1:
 
 | Access Method | Supported |
 |---|---|
@@ -1901,7 +1904,7 @@ ssh -i C:\ProgramData\ssh\ssh-key azureadmin@<linux-vm-ip>
 
 ### Future Enhancement Consideration
 
-A future release may optionally support direct SSH authentication using Active Directory credentials (e.g., `ssh user@amrl.lab@10.2.3.4`). This capability is intentionally disabled in V2.2 because Linux VMs are deployed with `disablePasswordAuthentication: true`, keeping infrastructure administration (SSH keys via `azureadmin`) and user authentication (Active Directory credentials) as separate security models.
+A future release may optionally support direct SSH authentication using Active Directory credentials (e.g., `ssh user@amrl.lab@10.2.3.4`). This capability is intentionally disabled in V2.3.1 because Linux VMs are deployed with `disablePasswordAuthentication: true`, keeping infrastructure administration (SSH keys via `azureadmin`) and user authentication (Active Directory credentials) as separate security models.
 
 See [Known Limitations](#known-limitations) for the full list of limitations that may be addressed in future versions.
 
@@ -1910,7 +1913,7 @@ See [Known Limitations](#known-limitations) for the full list of limitations tha
 
 ## Known Limitations
 
-The following limitations exist in the current V2.2 release and may be addressed in future versions:
+The following limitations exist in the current V2.3.1 release and may be addressed in future versions:
 
 - Direct Active Directory password-based SSH logons are not enabled
 - Placement preservation across topology changes is not implemented (placement is recalculated deterministically from current inputs)
