@@ -384,7 +384,7 @@ The deployment creates a consistent infrastructure footprint across multiple Azu
 
 ### Network Architecture
 
-- Spoke server and client subnets use User-Defined Routes (UDRs) to direct traffic through the hub firewall
+- Spoke server and client subnets are associated with route tables that direct traffic through the hub firewall; these custom routes are Azure User-Defined Routes (UDRs)
 - Hub firewall provides centralised east-west traffic inspection and acts as the control point for inter-region communication
 - Controlled administrative access via regional jumpboxes (only tier with public exposure)
 - Subnet-level traffic segmentation enforced using NSGs
@@ -438,19 +438,23 @@ Traffic path: Spoke VM -> UDR -> Hub Firewall -> Destination Spoke VM (no direct
 
 Spoke workloads do not talk directly to each other by default. Instead:
 
-- Server and client subnets in spoke regions use route tables to send internal traffic to the hub firewall
+- Server and client subnets in spoke regions are associated with route tables that send internal traffic to the hub firewall
 - The hub firewall applies the central routing and security control point
 - Jumpboxes remain the entry point for administration
 - NSGs still enforce subnet-level access rules
 
+The route tables are intentionally limited to server and client workload subnets in spoke regions. DC subnets are Tier 0 control-plane assets, and jumpbox subnets are administration entry points; neither is placed under the workload routing policy. Their protection relies on subnet NSGs, private addressing, and restricted administrative paths.
+
+> The primary region is treated as the hub/control region. Workload route tables and workload subnets are created only in spoke regions because the placement logic excludes the hub from normal server/client VM placement. The hub VNet still contains the firewall and control-plane subnets, but it does not host the standard workload subnets used by server and client VMs.
+
 #### Subnet Roles and Network Segmentation
 
-Each region contains five subnets with distinct security functions:
+Each spoke region contains the full workload-oriented subnet set, while the hub region is control-plane focused:
 
 - **DC Subnet**: Hosts domain controllers; restricted to AD-related traffic (DNS, Kerberos, LDAP, LDAPS, RPC, SMB, Global Catalog, NTP) plus RDP from jumpbox only
 - **Jumpbox Subnet**: Hosts regional jumpbox; RDP access only from `jumpboxAllowedSources` IPs
-- **Server Subnet**: Hosts Windows and Linux servers; RDP/SSH from jumpbox only; AD protocol access from internal 10.0.0.0/8
-- **Client Subnet**: Hosts Windows and Linux clients; RDP/SSH from jumpbox only (SSH conditional on `enableClientSsh`); AD protocol access from internal 10.0.0.0/8
+- **Server Subnet**: Hosts Windows and Linux servers in spoke regions; RDP/SSH from jumpbox only; AD protocol access from internal 10.0.0.0/8
+- **Client Subnet**: Hosts Windows and Linux clients in spoke regions; RDP/SSH from jumpbox only (SSH conditional on `enableClientSsh`); AD protocol access from internal 10.0.0.0/8
 - **Firewall Subnet** (hub only): Hosts Azure Firewall with baseline rule allowing all internal (10.0.0.0/8) traffic
 
 Traffic between subnets is enforced through NSGs and the hub firewall, ensuring segmentation and controlled inter-region communication.

@@ -317,36 +317,12 @@ module subnetJumpbox 'subnet.bicep' = if (createSubnets) {
   }
 }
 
-module subnetServer 'subnet.bicep' = if (createSubnets) {
-  name: '${vnetName}-subnet-server'
-  dependsOn: [
-    subnetJumpbox
-  ]
-  params: {
-    vnetName: vnetName
-    subnetName: subnetNames.server
-    addressPrefix: subnetPrefix.server
-    nsgId: nsgServer!.outputs.nsgId
-  }
-}
-
-module subnetClient 'subnet.bicep' = if (createSubnets) {
-  name: '${vnetName}-subnet-client'
-  dependsOn: [
-    subnetServer
-  ]
-  params: {
-    vnetName: vnetName
-    subnetName: subnetNames.client
-    addressPrefix: subnetPrefix.client
-    nsgId: nsgClient!.outputs.nsgId
-  }
-}
+// Server and client subnet creation moved to main.bicep
 
 module subnetHub 'subnet.bicep' = if (isHub && createSubnets) {
   name: 'AzureFirewallSubnet'
   dependsOn: [
-    subnetClient
+    subnetJumpbox
   ]
   params: {
     vnetName: vnetName
@@ -462,3 +438,17 @@ output subnets object = {
     id: serverSubnetId
   }
 }
+
+output isExistingRegion bool = isExistingRegion
+output subnetNames object = subnetNames
+output subnetPrefixes object = subnetPrefix
+output createSubnets bool = createSubnets
+
+output nsgIds object = {
+  dc: dcNsgId
+  jumpbox: jumpboxNsgId
+  server: serverNsgId
+  client: clientNsgId
+}
+
+output isHub bool = isHub

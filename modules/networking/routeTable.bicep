@@ -12,17 +12,8 @@
 param location string
 param nextHopIp string
 
-// DC subnet inputs
-param dcSubnetId string
-
-// Jumpbox subnet inputs
-param jumpboxSubnetId string
-
-// Server subnet inputs
-param serverSubnetId string
-
-// Client subnet inputs
-param clientSubnetId string
+param serverSubnetName string
+param clientSubnetName string
 
 // ========================================
 // DERIVED IDENTIFIERS
@@ -31,62 +22,10 @@ param clientSubnetId string
 // ========================================
 //
 
-// Subnets
-
-var dcSubnetName = last(split(dcSubnetId, '/subnets/'))
-
-var jumpboxSubnetName = last(split(jumpboxSubnetId, '/subnets/'))
-
-var serverSubnetName = last(split(serverSubnetId, '/subnets/'))
-
-var clientSubnetName = last(split(clientSubnetId, '/subnets/'))
-
 // ========================================
 // RESOURCE CREATED: ROUTE TABLES
 // One route table per subnet role.
 // ========================================
-
-resource rtDc 'Microsoft.Network/routeTables@2023-02-01' = {
-  name: '${dcSubnetName}-rt'
-  location: location
-  properties: {
-    routes: [
-      {
-        name: 'route-all-to-hub'
-        properties: {
-          addressPrefix: '10.0.0.0/8'
-          nextHopType: 'VirtualAppliance'
-          nextHopIpAddress: nextHopIp
-        }
-      }
-      {
-        name: 'route-internet-to-hub'
-        properties: {
-          addressPrefix: '0.0.0.0/0'
-          nextHopType: 'VirtualAppliance'
-          nextHopIpAddress: nextHopIp
-        }
-      }
-    ]
-  }
-}
-
-resource rtJumpbox 'Microsoft.Network/routeTables@2023-02-01' = {
-  name: '${jumpboxSubnetName}-rt'
-  location: location
-  properties: {
-    routes: [
-      {
-        name: 'route-all-to-hub'
-        properties: {
-          addressPrefix: '10.0.0.0/8'
-          nextHopType: 'VirtualAppliance'
-          nextHopIpAddress: nextHopIp
-        }
-      }
-    ]
-  }
-}
 
 // Server route table
 resource rtServer 'Microsoft.Network/routeTables@2023-02-01' = {
@@ -129,10 +68,6 @@ resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
     ]
   }
 }
-
-output dcRouteTableId string = rtDc.id
-
-output jumpboxRouteTableId string = rtJumpbox.id
 
 output serverRouteTableId string = rtServer.id
 

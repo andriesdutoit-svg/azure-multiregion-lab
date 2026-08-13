@@ -587,20 +587,43 @@ module routeTables 'modules/networking/routeTable.bicep' = [
     params: {
       location: region
 
-      #disable-next-line BCP318
-      dcSubnetId: vnets[i].outputs.subnets.dc.id
+      serverSubnetName: '${prefix}-vnet-${region}-subnet-server'
 
-      #disable-next-line BCP318
-      jumpboxSubnetId: vnets[i].outputs.subnets.jumpbox.id
-
-      #disable-next-line BCP318
-      serverSubnetId: vnets[i].outputs.subnets.server.id
-
-      #disable-next-line BCP318
-      clientSubnetId: vnets[i].outputs.subnets.client.id
+      clientSubnetName: '${prefix}-vnet-${region}-subnet-client'
 
       #disable-next-line BCP318
       nextHopIp: firewall.outputs.firewallPrivateIp
+    }
+  }
+]
+
+module workloadSubnets 'modules/networking/workloadSubnets.bicep' = [
+  for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
+    name: '${prefix}-workload-subnets-${region}'
+
+    scope: resourceGroup('${prefix}-rg-${region}')
+
+    dependsOn: [
+      routeTables[i]
+    ]
+
+    params: {
+      #disable-next-line BCP318
+      vnetName: vnets[i].outputs.vnetName
+
+      #disable-next-line BCP318
+      subnetNames: vnets[i].outputs.subnetNames
+
+      #disable-next-line BCP318
+      subnetPrefixes: vnets[i].outputs.subnetPrefixes
+
+      #disable-next-line BCP318
+      nsgIds: vnets[i].outputs.nsgIds
+
+      #disable-next-line BCP318
+      serverRouteTableId: routeTables[i].outputs.serverRouteTableId
+      #disable-next-line BCP318
+      clientRouteTableId: routeTables[i].outputs.clientRouteTableId
     }
   }
 ]
@@ -644,6 +667,7 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
     dependsOn: [
       vnets
       routeTables
+      workloadSubnets
     ]
 
     params: {
@@ -866,6 +890,7 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
     dependsOn: [
       vnets
       routeTables
+      workloadSubnets
     ]
 
     params: {
