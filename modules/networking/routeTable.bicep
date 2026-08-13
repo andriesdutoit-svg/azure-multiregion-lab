@@ -59,6 +59,14 @@ resource rtDc 'Microsoft.Network/routeTables@2023-02-01' = {
           nextHopIpAddress: nextHopIp
         }
       }
+      {
+        name: 'route-internet-to-hub'
+        properties: {
+          addressPrefix: '0.0.0.0/0'
+          nextHopType: 'VirtualAppliance'
+          nextHopIpAddress: nextHopIp
+        }
+      }
     ]
   }
 }
