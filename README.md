@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.2
+# Azure Multi-Region Lab (AMRL) v2.3.1
 
 ## Overview
 
@@ -133,7 +133,7 @@ For the fastest setup path, go to [Quick Start (Demo Setup)](#quick-start-demo-s
   - [Active Directory User Access](#active-directory-user-access)
   - [Linux Domain Authentication](#linux-domain-authentication)
   - [Linux Administrator Delegation](#linux-administrator-delegation)
-  - [Current V2.2 Access Model](#current-v22-access-model)
+  - [Current V2.3.1 Access Model](#current-v231-access-model)
   - [SSH Key Deployment](#ssh-key-deployment)
   - [Future Enhancement Consideration](#future-enhancement-consideration)
 
@@ -375,6 +375,9 @@ The solution was developed iteratively, with each phase introducing additional a
 - **v2.2 – Domain Join Automation, Reconciliation & Department Parameter Refactoring**
   Automated domain join for Windows and Linux systems with customisable OU placement. Introduced identity reconciliation through re-executable Azure VM Run Commands, allowing identity deployments to safely self-heal and recreate missing required objects. Refactored department parameters into sysAdminDepartment and additionalDepartments.
 
+- **v2.3.1 – Route Table and Hub/Spoke Routing Refactor**
+  Corrected workload route-table association logic so route tables and workload subnets are only created in spoke regions, while the hub remains the control-plane and firewall hub for the multi-region design.
+
 [Back to top](#table-of-contents)
 ---
 
@@ -384,7 +387,7 @@ The deployment creates a consistent infrastructure footprint across multiple Azu
 
 ### Network Architecture
 
-- Spoke server and client subnets use User-Defined Routes (UDRs) to direct traffic through the hub firewall
+- Spoke server and client subnets are associated with route tables that direct traffic through the hub firewall; these custom routes are Azure User-Defined Routes (UDRs)
 - Hub firewall provides centralised east-west traffic inspection and acts as the control point for inter-region communication
 - Controlled administrative access via regional jumpboxes (only tier with public exposure)
 - Subnet-level traffic segmentation enforced using NSGs
@@ -438,19 +441,23 @@ Traffic path: Spoke VM -> UDR -> Hub Firewall -> Destination Spoke VM (no direct
 
 Spoke workloads do not talk directly to each other by default. Instead:
 
-- Server and client subnets in spoke regions use route tables to send internal traffic to the hub firewall
+- Server and client subnets in spoke regions are associated with route tables that send internal traffic to the hub firewall
 - The hub firewall applies the central routing and security control point
 - Jumpboxes remain the entry point for administration
 - NSGs still enforce subnet-level access rules
 
+The route tables are intentionally limited to server and client workload subnets in spoke regions. DC subnets are Tier 0 control-plane assets, and jumpbox subnets are administration entry points; neither is placed under the workload routing policy. Their protection relies on subnet NSGs, private addressing, and restricted administrative paths.
+
+> The primary region is treated as the hub/control region. Workload route tables and workload subnets are created only in spoke regions because the placement logic excludes the hub from normal server/client VM placement. The hub VNet still contains the firewall and control-plane subnets, but it does not host the standard workload subnets used by server and client VMs.
+
 #### Subnet Roles and Network Segmentation
 
-Each region contains five subnets with distinct security functions:
+Each spoke region contains the full workload-oriented subnet set, while the hub region is control-plane focused:
 
 - **DC Subnet**: Hosts domain controllers; restricted to AD-related traffic (DNS, Kerberos, LDAP, LDAPS, RPC, SMB, Global Catalog, NTP) plus RDP from jumpbox only
 - **Jumpbox Subnet**: Hosts regional jumpbox; RDP access only from `jumpboxAllowedSources` IPs
-- **Server Subnet**: Hosts Windows and Linux servers; RDP/SSH from jumpbox only; AD protocol access from internal 10.0.0.0/8
-- **Client Subnet**: Hosts Windows and Linux clients; RDP/SSH from jumpbox only (SSH conditional on `enableClientSsh`); AD protocol access from internal 10.0.0.0/8
+- **Server Subnet**: Hosts Windows and Linux servers in spoke regions; RDP/SSH from jumpbox only; AD protocol access from internal 10.0.0.0/8
+- **Client Subnet**: Hosts Windows and Linux clients in spoke regions; RDP/SSH from jumpbox only (SSH conditional on `enableClientSsh`); AD protocol access from internal 10.0.0.0/8
 - **Firewall Subnet** (hub only): Hosts Azure Firewall with baseline rule allowing all internal (10.0.0.0/8) traffic
 
 Traffic between subnets is enforced through NSGs and the hub firewall, ensuring segmentation and controlled inter-region communication.
@@ -992,6 +999,8 @@ Networking create/reuse behaviour is controlled by the `existingRegions` paramet
 
 - **Greenfield**: Regions not listed in `existingRegions` have all networking components created fresh (VNets, subnets, NSGs, route tables)
 - **Brownfield**: Regions listed in `existingRegions` reuse existing VNets, NSGs, and subnets; route tables, peerings, and dependent resources continue to be managed
+
+> Brownfield support currently covers network reuse and stage-aware dependency handling. It does not yet reconcile live Azure VM inventory when deciding placement. Placement is still derived from the desired VM model (`vmCounts` and region capacity), so previously deployed VMs in reused regions should be treated as part of the deployment model and validated carefully before expanding or re-running a brownfield deployment.
 
 For new lab environments, set `existingRegions` to an empty array:
 ```json
@@ -1833,9 +1842,9 @@ root
 
 This allows Linux administrative rights to be managed entirely through Active Directory group membership.
 
-### Current V2.2 Access Model
+### Current V2.3.1 Access Model
 
-The following access methods are supported in V2.2:
+The following access methods are supported in V2.3.1:
 
 | Access Method | Supported |
 |---|---|
@@ -1895,7 +1904,7 @@ ssh -i C:\ProgramData\ssh\ssh-key azureadmin@<linux-vm-ip>
 
 ### Future Enhancement Consideration
 
-A future release may optionally support direct SSH authentication using Active Directory credentials (e.g., `ssh user@amrl.lab@10.2.3.4`). This capability is intentionally disabled in V2.2 because Linux VMs are deployed with `disablePasswordAuthentication: true`, keeping infrastructure administration (SSH keys via `azureadmin`) and user authentication (Active Directory credentials) as separate security models.
+A future release may optionally support direct SSH authentication using Active Directory credentials (e.g., `ssh user@amrl.lab@10.2.3.4`). This capability is intentionally disabled in V2.3.1 because Linux VMs are deployed with `disablePasswordAuthentication: true`, keeping infrastructure administration (SSH keys via `azureadmin`) and user authentication (Active Directory credentials) as separate security models.
 
 See [Known Limitations](#known-limitations) for the full list of limitations that may be addressed in future versions.
 
@@ -1904,7 +1913,7 @@ See [Known Limitations](#known-limitations) for the full list of limitations tha
 
 ## Known Limitations
 
-The following limitations exist in the current V2.2 release and may be addressed in future versions:
+The following limitations exist in the current V2.3.1 release and may be addressed in future versions:
 
 - Direct Active Directory password-based SSH logons are not enabled
 - Placement preservation across topology changes is not implemented (placement is recalculated deterministically from current inputs)

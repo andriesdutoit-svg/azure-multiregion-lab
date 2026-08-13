@@ -1,7 +1,7 @@
 // ========================================
 // MODULE PURPOSE
-// Creates server/client route tables and attaches them to existing subnets.
-// Routes internal traffic (10.0.0.0/8) to the hub firewall next hop.
+// Creates route tables for DC, Jumpbox, Server, and Client subnets.
+// Route table association is handled elsewhere.
 // ========================================
 
 // ========================================
@@ -12,11 +12,8 @@
 param location string
 param nextHopIp string
 
-// Server subnet inputs
-param serverSubnetId string
-
-// Client subnet inputs
-param clientSubnetId string
+param serverSubnetName string
+param clientSubnetName string
 
 // ========================================
 // DERIVED IDENTIFIERS
@@ -25,15 +22,9 @@ param clientSubnetId string
 // ========================================
 //
 
-// Server subnet name from ARM ID
-var serverSubnetName = last(split(serverSubnetId, '/subnets/'))
-
-// Client subnet name from ARM ID
-var clientSubnetName = last(split(clientSubnetId, '/subnets/'))
-
 // ========================================
 // RESOURCE CREATED: ROUTE TABLES
-// One route table per subnet role (server/client).
+// One route table per subnet role.
 // ========================================
 
 // Server route table
@@ -79,4 +70,5 @@ resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
 }
 
 output serverRouteTableId string = rtServer.id
+
 output clientRouteTableId string = rtClient.id

@@ -49,9 +49,11 @@ jobs:
 
       - name: Inject demo values
         run: |
+          YOUR_PUBLIC_IP='${{ vars.YOUR_PUBLIC_IP }}'
+          YOUR_PUBLIC_IP="${YOUR_PUBLIC_IP%/32}"
           sed -i "s|<SSH_PUBLIC_KEY>|${{ secrets.SSH_PUBLIC_KEY }}|g" main.parameters.demo.json
           sed -i "s|<KEYVAULT_ID>|${{ vars.KEYVAULT_ID }}|g" main.parameters.demo.json
-          sed -i "s|<YOUR_PUBLIC_IP>|${{ vars.YOUR_PUBLIC_IP }}|g" main.parameters.demo.json
+          sed -i "s|<YOUR_PUBLIC_IP>|$YOUR_PUBLIC_IP|g" main.parameters.demo.json
     
       - name: Verify Placeholder Replacement
         run: |
