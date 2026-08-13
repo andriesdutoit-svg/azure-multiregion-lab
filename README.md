@@ -997,6 +997,8 @@ Networking create/reuse behaviour is controlled by the `existingRegions` paramet
 - **Greenfield**: Regions not listed in `existingRegions` have all networking components created fresh (VNets, subnets, NSGs, route tables)
 - **Brownfield**: Regions listed in `existingRegions` reuse existing VNets, NSGs, and subnets; route tables, peerings, and dependent resources continue to be managed
 
+> Brownfield support currently covers network reuse and stage-aware dependency handling. It does not yet reconcile live Azure VM inventory when deciding placement. Placement is still derived from the desired VM model (`vmCounts` and region capacity), so previously deployed VMs in reused regions should be treated as part of the deployment model and validated carefully before expanding or re-running a brownfield deployment.
+
 For new lab environments, set `existingRegions` to an empty array:
 ```json
 "existingRegions": { "value": [] }
