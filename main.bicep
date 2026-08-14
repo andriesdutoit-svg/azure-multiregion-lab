@@ -27,6 +27,8 @@ param regionCount int
 param maxVmsPerRegion int
 @description('Regions where VNets, NSGs, subnets, and route tables already exist and should be reused. Resources in listed regions are reused; resources in other regions are created (greenfield).')
 param existingRegions array
+@description('Existing VM placement inventory used for brownfield VM reconciliation.')
+param existingVmPlacements array = []
 
 // ----
 // Networking Configuration
@@ -150,6 +152,20 @@ var vmList = concat(
   linuxClientArray
 )
 
+var existingVmKeys = [
+  for vm in existingVmPlacements: '${vm.type}-${string(vm.index)}'
+]
+
+var missingVmList = filter(
+  vmList,
+  vm => !contains(
+    existingVmKeys,
+    '${vm.type}-${string(vm.index)}'
+  )
+)
+
+output missingVmCountDebug int = length(missingVmList)
+
 //
 // ========================================
 // REGION ORDERING (Index-Based Sorting)
@@ -185,11 +201,11 @@ var invalidExistingRegions = filter(
 
 // Split the unified VM model into control-plane and workload sets.
 // Placement uses different rules for these two groups.
-var controlPlaneVmList = filter(vmList, vm =>
+var controlPlaneVmList = filter(missingVmList, vm =>
   vm.type == 'dc' || vm.type == 'jmp'
 )
 
-var workloadVmList = filter(vmList, vm =>
+var workloadVmList = filter(missingVmList, vm =>
   !(vm.type == 'dc' || vm.type == 'jmp')
 )
 
@@ -223,7 +239,7 @@ var hubRegion = primaryRegion
 // Place control-plane VMs first so workload placement can see how much spoke capacity remains.
 // Non-control VMs never use hub capacity.
 var controlPlanePlacements = [
-  for (vm, i) in vmList: !(vm.type == 'dc' || vm.type == 'jmp') ? {
+  for (vm, i) in missingVmList: !(vm.type == 'dc' || vm.type == 'jmp') ? {
     type: ''
     index: -1
     regionKey: ''
@@ -286,7 +302,7 @@ var workloadRegionCapacityCumulative = [
 //
 
 var vmPlacements = [
-  for (vm, i) in vmList: {
+  for (vm, i) in missingVmList: {
     type: vm.type
     index: vm.index
     name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
@@ -327,16 +343,21 @@ var vmPlacements = [
   }
 ]
 
+var finalVmPlacements = concat(
+  existingVmPlacementModels,
+  vmPlacements
+)
+
 var maxDcPerRegion = maxVmsPerRegion
 var totalDcs = vmCounts.dc
 var minRegionsNeededForDcs = (totalDcs + maxDcPerRegion - 1) / maxDcPerRegion
 var hasTooManyDcs = minRegionsNeededForDcs > regionCount
 
-var primaryDc = first(filter(vmPlacements, vm =>
+var primaryDc = first(filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index == 0
 ))
 
-var replicaDcList = filter(vmPlacements, vm =>
+var replicaDcList = filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index > 0
 )
 
@@ -385,11 +406,21 @@ var roleSizingMap = {
 // NETWORK HELPER VARIABLES
 // ========================================
 
-var windowsVMList = filter(vmPlacements, vm =>
+var existingVmPlacementModels = [
+  for vm in existingVmPlacements: {
+    type: vm.type
+    index: vm.index
+    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+    regionKey: vm.regionKey
+    dcSlot: 0
+  }
+]
+
+var windowsVMList = filter(finalVmPlacements, vm =>
   vm.type == 'dc' || vm.type == 'jmp' || vm.type == 'srvwin' || vm.type == 'cliwin'
 )
 
-var linuxVMList = filter(vmPlacements, vm =>
+var linuxVMList = filter(finalVmPlacements, vm =>
   vm.type == 'srvlin' || vm.type == 'clilin'
 )
 
@@ -417,7 +448,7 @@ var subnetPrefixesArray = [
 // Collect the region key for each DC placement entry.
 // Non-DC VMs emit an empty marker that gets removed later.
 var dcPlacements = [
-  for vm in vmPlacements: vm.type == 'dc' ? vm.regionKey : ''
+  for vm in finalVmPlacements: vm.type == 'dc' ? vm.regionKey : ''
 ]
 
 // Remove empty markers and de-duplicate region keys.
@@ -459,7 +490,7 @@ module validationEngine 'modules/logic/validation.bicep' = {
     regionCount: regionCount
     regionIndexMap: regionIndexMap
     subnetIndexMap: subnetIndexMap
-    vmPlacements: vmPlacements
+    vmPlacements: finalVmPlacements
     regionKeys: regionKeys
     maxVmsPerRegion: maxVmsPerRegion
     primaryRegion: primaryRegion
@@ -988,7 +1019,18 @@ module domainJoinLinux 'modules/identity/domain-join-linux.bicep' = [
 
 // List of regions selected for this deployment (ordered by regionIndexMap) and assigned region
 // This is the primary output used to verify distribution logic
-output vmPlacement array = vmPlacements
+output vmPlacement array = finalVmPlacements
+
+output existingVmKeysDebug array = existingVmKeys
+
+output missingVmInventoryDebug array = [
+  for vm in missingVmList: {
+    type: vm.type
+    index: vm.index
+    key: '${vm.type}-${string(vm.index)}'
+    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+  }
+]
 
 // Validation message describing the first detected validation issue, or a success message when all checks pass.
 
@@ -1033,6 +1075,14 @@ output regionSummary array = [
     region: region
     addressSpace: addressPrefixes[i]
     subnets: subnetPrefixesArray[i]
-    vmCount: length(filter(vmPlacements, vm => vm.regionKey == region))
+    vmCount: length(filter(finalVmPlacements, vm => vm.regionKey == region))
   }
 ]
+
+output controlPlaneVmListDebug array = controlPlaneVmList
+
+output workloadVmListDebug array = workloadVmList
+
+output controlPlanePlacementsDebug array = controlPlanePlacements
+
+output workloadRegionCapacityDebug array = workloadRegionCapacity

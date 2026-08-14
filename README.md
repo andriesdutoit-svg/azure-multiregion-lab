@@ -2014,6 +2014,7 @@ flowchart LR
 If you are using GitHub Actions, this repository includes `.github/workflows/validate.yml`.
 
 - It runs on pushes to `main`, pushes to `feature/**`, and pull requests targeting `main`.
+- For pull request validation, create a separate federated credential with the subject `repo:<owner>/<repo>:pull_request` in addition to the main and feature-branch credentials.
 - For feature branch validation, ensure federated credentials exist for each feature branch ref.
 - It builds/lints `main.bicep`, injects values for the three placeholders, then runs `az deployment sub validate` and `what-if` using `main.parameters.demo.json`.
 
@@ -2060,7 +2061,21 @@ $SUB_SCOPE = "/subscriptions/$AZURE_SUBSCRIPTION_ID"
 az role assignment create --assignee $APP_ID --role "Contributor" --scope $SUB_SCOPE
 # Optional: for stricter least privilege, scope this role to a resource group used by validation.
 
-# 4) Add federated credential for main branch
+# 4) Add federated credential for pull requests
+# Required because validate.yml also runs on pull_request events.
+$prCred = @"
+{
+  "name": "github-pr",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:$GITHUB_OWNER/$GITHUB_REPO:pull_request",
+  "audiences": ["api://AzureADTokenExchange"]
+}
+"@
+$prCredFile = Join-Path $env:TEMP "gha-pr-federated.json"
+$prCred | Set-Content -Path $prCredFile -Encoding UTF8
+az ad app federated-credential create --id $APP_ID --parameters @$prCredFile
+
+# 5) Add federated credential for main branch
 $mainCred = @"
 {
   "name": "github-main",
@@ -2073,7 +2088,7 @@ $mainCredFile = Join-Path $env:TEMP "gha-main-federated.json"
 $mainCred | Set-Content -Path $mainCredFile -Encoding UTF8
 az ad app federated-credential create --id $APP_ID --parameters @$mainCredFile
 
-# 5) (Optional) Add federated credential for one feature branch
+# 6) (Optional) Add federated credential for one feature branch
 # Replace <feature-branch-name> with the exact branch, e.g. feature/my-change
 $FEATURE_BRANCH = "<feature-branch-name>"
 $featureCred = @"
@@ -2088,22 +2103,22 @@ $featureCredFile = Join-Path $env:TEMP "gha-feature-federated.json"
 $featureCred | Set-Content -Path $featureCredFile -Encoding UTF8
 az ad app federated-credential create --id $APP_ID --parameters @$featureCredFile
 
-# 6) Set GitHub repository secrets
+# 7) Set GitHub repository secrets
 gh secret set AZURE_CLIENT_ID --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$APP_ID"
 gh secret set AZURE_TENANT_ID --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$AZURE_TENANT_ID"
 gh secret set AZURE_SUBSCRIPTION_ID --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$AZURE_SUBSCRIPTION_ID"
 gh secret set SSH_PUBLIC_KEY --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$SSH_PUBLIC_KEY"
 
-# 7) Set GitHub repository variables
+# 8) Set GitHub repository variables
 gh variable set KEYVAULT_ID --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$KEYVAULT_ID"
 gh variable set YOUR_PUBLIC_IP --repo "$GITHUB_OWNER/$GITHUB_REPO" --body "$YOUR_PUBLIC_IP"
 
-# 8) Verify role assignment and federated credentials
+# 9) Verify role assignment and federated credentials
 az role assignment list --assignee $APP_ID --scope $SUB_SCOPE -o table
 az ad app federated-credential list --id $APP_ID -o table
 ```
 
-If your tenant blocks `az ad` commands, ask your Entra administrator to create the app registration and federated credentials, then only run steps 6 to 8.
+If your tenant blocks `az ad` commands, ask your Entra administrator to create the app registration and federated credentials, then only run steps 7 to 9.
 
 ##### References
 
