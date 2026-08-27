@@ -3,7 +3,8 @@
 # ============================================================================
 # LINUX DOMAIN JOIN SCRIPT
 # Joins Linux VMs to Active Directory domain using realmd/SSSD integration.
-# Idempotent: script checks for existing domain membership before join attempt.
+# Idempotent: script checks for existing domain membership and skips only the
+# join-specific work while retaining the configuration healing steps.
 # ============================================================================
 
 set -euo pipefail
@@ -59,39 +60,47 @@ log_info "Input validation completed successfully"
 #
 # Phase 2 - Idempotency check: already joined?
 # Realm list output includes domain-name field only for joined domains.
-# Script exits early if already joined, supporting safe re-execution.
+# The result controls package installation, discovery, and join behavior below.
 #
 
 ALREADY_JOINED=false
 
-if realm list | grep -qi "domain-name:[[:space:]]*${DOMAIN_NAME}$"; then
+if command -v realm >/dev/null 2>&1 && realm list | grep -qi "domain-name:[[:space:]]*${DOMAIN_NAME}$"; then
     log_info "Computer is already joined to ${DOMAIN_NAME}"
     ALREADY_JOINED=true
 fi
 
 #
-# Phase 3 - Install prerequisites
+# Phase 3 - Install prerequisites when the VM still needs to join or heal
+#
+# Already joined VMs skip package installation, but continue through the
+# configuration and validation phases below so incomplete setup can heal.
 #
 
-log_info "Installing domain join prerequisites"
+if [[ "${ALREADY_JOINED}" == "false" ]] || ! command -v realm >/dev/null 2>&1; then
+    log_info "Installing domain join prerequisites"
 
-export DEBIAN_FRONTEND=noninteractive
+    export DEBIAN_FRONTEND=noninteractive
 
-apt-get update
+    apt-get update
 
-apt-get install -y \
-    realmd \
-    sssd \
-    sssd-tools \
-    adcli \
-    krb5-user \
-    packagekit \
-    oddjob \
-    oddjob-mkhomedir \
-    samba-common-bin \
-    jq
+    apt-get install -y \
+        realmd \
+        sssd \
+        sssd-tools \
+        adcli \
+        krb5-user \
+        packagekit \
+        oddjob \
+        oddjob-mkhomedir \
+        samba-common-bin \
+        bind9-dnsutils \
+        jq
 
-log_info "Prerequisite installation completed"
+    log_info "Prerequisite installation completed"
+else
+    log_info "Skipping prerequisite installation because the computer is already joined"
+fi
 
 COMPUTER_OU=$(echo "${DIRECTORY_MODEL}" | jq -r \
     ".computerOuMapping.${VM_TYPE}")
@@ -146,34 +155,28 @@ fi
 log_info "Linux administrators group = ${LINUX_ADMINS_GROUP}"
 
 #
-# Phase 4 - DNS validation
+# Phase 4 - DNS and domain validation
 #
 
-log_info "Validating DNS"
+if [[ "${ALREADY_JOINED}" == "false" ]]; then
+    log_info "Validating DNS and discovering domain"
 
-host "${DOMAIN_NAME}"
+    realm discover "${DOMAIN_NAME}"
 
-log_info "DNS validation completed"
-
-#
-# Phase 5 - Domain discovery
-#
-
-log_info "Discovering domain"
-
-realm discover "${DOMAIN_NAME}"
-
-log_info "Domain discovery completed"
+    log_info "DNS and domain validation completed"
+else
+    log_info "Skipping DNS and domain discovery because the computer is already joined"
+fi
 
 #
-# Phase 6 - Domain join
+# Phase 5 - Domain join
 #
 
 if [[ "${ALREADY_JOINED}" == "false" ]]; then
 
     log_info "realm join OU = ${FULL_COMPUTER_OU_DN}"
 
-    echo "${SERVER_ADMIN_PASSWORD}" | realm join \
+    echo "${SERVER_ADMIN_PASSWORD}" | realm join --verbose \
         "${DOMAIN_NAME}" \
         --user="${SERVER_ADMIN_USERNAME}" \
         --computer-ou="${FULL_COMPUTER_OU_DN}"
@@ -187,7 +190,7 @@ else
 fi
 
 #
-# Phase 7 - SSSD configuration
+# Phase 6 - SSSD configuration
 # SSSD (System Security Services Daemon) authenticates users and enforces group membership.
 # ad_gpo_access_control = permissive: Allows login by any domain user; GPO restrictions not enforced at login.
 # Sudo rights are instead enforced via sudoers file entries using AGDLP groups (see Phase 8).
@@ -216,7 +219,7 @@ pam-auth-update --enable mkhomedir
 log_info "Home directory creation configured"
 
 #
-# Phase 8 - Access configuration
+# Phase 7 - Access configuration
 # realm permit --all: Allows login for any domain user (permissive access model).
 # Sudo rights are controlled by AGDLP group membership configured in sudoers file.
 # %{LINUX_ADMINS_GROUP}@{DOMAIN_NAME}: Sudoers entry grants sudo to domain-based AGDLP group.
@@ -243,7 +246,7 @@ else
 fi
 
 #
-# Phase 9 - Validation
+# Phase 8 - Validation
 #
 
 log_info "Validating domain membership"

@@ -32,10 +32,12 @@ param deployControl bool
 param deployWorkload bool
 // Full existingRegions array used for brownfield consistency checks.
 param existingRegions array = []
+// Existing VM inventory used for brownfield capacity validation.
+param existingVmPlacements array = []
 
 // ========================================
 // PLACEMENT & CAPACITY VALIDATION
-// Counts and boolean checks evaluated from the final placement result
+// Counts and boolean checks evaluated from the final placement result, including retained brownfield VMs.
 // ========================================
 
 var vmPerRegionCounts = [
@@ -54,6 +56,8 @@ var missingPinnedJumpbox = empty(filter(vmPlacements, vm => vm.type == 'jmp' && 
 var invalidPrimaryPinning = missingPinnedDc || missingPinnedJumpbox
 var hasNonControlInHub = length(filter(vmPlacements, vm => !(vm.type == 'dc' || vm.type == 'jmp') && vm.regionKey == hubRegion)) > 0
 var nonControlVmCount = vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
+var existingNonControlVmCount = length(filter(existingVmPlacements, vm => !(vm.type == 'dc' || vm.type == 'jmp')))
+var newNonControlVmCount = nonControlVmCount - existingNonControlVmCount
 var totalVMs = vmCounts.dc + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
 var totalCapacity = regionCount * maxVmsPerRegion
 var invalidCapacity = totalVMs > totalCapacity
@@ -141,7 +145,7 @@ var hasMixedCreationMode = deployNetwork && length(existingRegions) > 0 && lengt
 // ========================================
 
 // Per-region control-plane occupancy and remaining workload capacity.
-// The hub contributes zero workload capacity by design.
+// Existing VMs are part of vmPlacements, and the hub contributes zero workload capacity by design.
 var workloadCapacityDebug = [
   for region in regionKeys: {
     region: region
@@ -166,7 +170,7 @@ var totalWorkloadRegionCapacity = reduce(
   (current, item) => current + item
 )
 
-var hasInsufficientWorkloadCapacity = nonControlVmCount > totalWorkloadRegionCapacity
+var hasInsufficientWorkloadCapacity = newNonControlVmCount > totalWorkloadRegionCapacity
 
 // ========================================
 // IDENTITY & DIRECTORY POPULATION VALIDATION

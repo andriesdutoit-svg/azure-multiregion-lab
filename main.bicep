@@ -152,19 +152,15 @@ var vmList = concat(
   linuxClientArray
 )
 
+// Existing VM keys identify resources that should be retained during brownfield reconciliation.
 var existingVmKeys = [
   for vm in existingVmPlacements: '${vm.type}-${string(vm.index)}'
 ]
 
 var missingVmList = filter(
   vmList,
-  vm => !contains(
-    existingVmKeys,
-    '${vm.type}-${string(vm.index)}'
-  )
+  vm => !contains(existingVmKeys, '${vm.type}-${string(vm.index)}')
 )
-
-output missingVmCountDebug int = length(missingVmList)
 
 //
 // ========================================
@@ -214,30 +210,43 @@ var roundRobinControlPlaneVmList = filter(controlPlaneVmList, vm =>
   !(vm.type == 'dc' && vm.index == 0) && !(vm.type == 'jmp' && vm.index == 0)
 )
 
-// Track control-plane and workload positions independently.
-// This prevents workload placement from inheriting offsets created by DC/jumpbox placement.
-var roundRobinControlPlaneVmIndexList = [
-  for vm in vmList: !(vm.type == 'dc' || vm.type == 'jmp')
-    ? -1
-    : (vm.type == 'dc' && vm.index == 0) || (vm.type == 'jmp' && vm.index == 0)
-      ? -1
-      : indexOf(roundRobinControlPlaneVmList, vm)
-]
-
-var workloadVmIndexList = [
-  for vm in vmList: vm.type == 'dc' || vm.type == 'jmp'
-    ? -1
-    : indexOf(workloadVmList, vm)
-]
-
 // ========================================
 // HUB MODEL
 // ========================================
 
 var hubRegion = primaryRegion
 
-// Place control-plane VMs first so workload placement can see how much spoke capacity remains.
-// Non-control VMs never use hub capacity.
+// Existing VMs consume capacity before new control-plane or workload VMs are placed.
+var spokeRegionKeys = filter(regionKeys, region => region != hubRegion)
+
+var existingVmCountBySpoke = [
+  for region in spokeRegionKeys: length(filter(existingVmPlacements, vm => vm.regionKey == region))
+]
+
+var availableControlPlaneCapacityBySpoke = [
+  for (count, i) in existingVmCountBySpoke: maxVmsPerRegion > count ? maxVmsPerRegion - count : 0
+]
+
+var totalAvailableControlPlaneCapacity = reduce(
+  availableControlPlaneCapacityBySpoke,
+  0,
+  (current, item) => current + item
+)
+
+var controlPlaneCapacityCumulative = [
+  for (capacity, i) in availableControlPlaneCapacityBySpoke: {
+    region: spokeRegionKeys[i]
+    capacity: capacity
+    cumulativeCapacity: reduce(
+      take(availableControlPlaneCapacityBySpoke, i + 1),
+      0,
+      (current, item) => current + item
+    )
+  }
+]
+
+// Model the new control-plane assignments separately from the final VM list.
+// Existing VM occupancy is removed from spoke capacity first; pinned primary VMs remain in the hub.
 var controlPlanePlacements = [
   for (vm, i) in missingVmList: !(vm.type == 'dc' || vm.type == 'jmp') ? {
     type: ''
@@ -252,20 +261,22 @@ var controlPlanePlacements = [
         ? primaryRegion
       : (vm.type == 'jmp' && vm.index == 0)
         ? primaryRegion
-        : roundRobinControlPlaneVmIndexList[i] < (regionCount - 1)
-        ? regionKeys[(roundRobinControlPlaneVmIndexList[i] % (regionCount - 1)) + 1]
-      : regionKeys[roundRobinControlPlaneVmIndexList[i] % regionCount]
+        : totalAvailableControlPlaneCapacity > 0 && indexOf(roundRobinControlPlaneVmList, vm) < totalAvailableControlPlaneCapacity
+        ? first(filter(
+            controlPlaneCapacityCumulative,
+          slot => slot.capacity > 0 && indexOf(roundRobinControlPlaneVmList, vm) < slot.cumulativeCapacity
+          )).?region ?? hubRegion
+        : hubRegion
   }
 ]
 
-// Model remaining spoke capacity after control-plane placement.
-// Workloads are then mapped to the first spoke whose cumulative remaining capacity contains the workload ordinal.
-// This avoids overfilling spokes that already consumed capacity with DC/jumpbox placements.
+// Model remaining spoke capacity after existing and new control-plane placement.
+// Each cumulative slot represents one legal workload position; workloads never use the hub.
 var workloadRegionCapacity = [
   for region in filter(regionKeys, candidate => candidate != hubRegion): {
     region: region
-    remainingCapacity: maxVmsPerRegion > length(filter(controlPlanePlacements, vm => vm.regionKey == region))
-      ? maxVmsPerRegion - length(filter(controlPlanePlacements, vm => vm.regionKey == region))
+    remainingCapacity: maxVmsPerRegion > length(filter(controlPlanePlacements, vm => vm.regionKey == region)) + length(filter(existingVmPlacements, vm => vm.regionKey == region))
+      ? maxVmsPerRegion - length(filter(controlPlanePlacements, vm => vm.regionKey == region)) - length(filter(existingVmPlacements, vm => vm.regionKey == region))
       : 0
   }
 ]
@@ -311,8 +322,7 @@ var vmPlacements = [
     regionKey: isSingleRegion
       ? regionKeys[0]
 
-      // Branch order is intentional:
-      // single-region override -> pinned hub control-plane -> spoke-only workloads -> spoke-first DC/JMP -> hub-eligible fallback.
+      // Branch order: single-region override -> pinned primary VMs -> workloads -> capacity-aware control-plane placement.
 
       // Always pin first DC and jumpbox
       : (vm.type == 'dc' && vm.index == 0)
@@ -328,18 +338,32 @@ var vmPlacements = [
         ? totalWorkloadRegionCapacity > 0
           ? first(filter(
               workloadRegionCapacityCumulative,
-              slot => slot.remainingCapacity > 0 && ((workloadVmIndexList[i] % totalWorkloadRegionCapacity) < slot.cumulativeCapacity)
+              slot => slot.remainingCapacity > 0 && ((indexOf(workloadVmList, vm) % totalWorkloadRegionCapacity) < slot.cumulativeCapacity)
             )).?region ?? regionKeys[1]
           : regionKeys[1]
 
-      // DC/JMP prefer spokes first: round-robin across non-hub regions until spokes exhaust.
-      // (regionCount - 1) excludes hub from round-robin; index + 1 shifts to spoke range [1..N-1].
-        : roundRobinControlPlaneVmIndexList[i] < (regionCount - 1)
-        ? regionKeys[(roundRobinControlPlaneVmIndexList[i] % (regionCount - 1)) + 1]
+      // New DC/JMP VMs use available spoke slots, skipping spokes that are already full.
+        : totalAvailableControlPlaneCapacity > 0 && indexOf(roundRobinControlPlaneVmList, vm) < totalAvailableControlPlaneCapacity
+        ? first(filter(
+            controlPlaneCapacityCumulative,
+            slot => slot.capacity > 0 && indexOf(roundRobinControlPlaneVmList, vm) < slot.cumulativeCapacity
+          )).?region ?? hubRegion
+        : hubRegion
+  }
+]
 
-      // Once the first spoke pass is exhausted, additional control-plane VMs may use the hub.
-      // Full modulo wraps across all regions, allowing hub placement on overflow.
-      : regionKeys[roundRobinControlPlaneVmIndexList[i] % regionCount]
+var maxDcPerRegion = maxVmsPerRegion
+var totalDcs = vmCounts.dc
+var minRegionsNeededForDcs = (totalDcs + maxDcPerRegion - 1) / maxDcPerRegion
+var hasTooManyDcs = minRegionsNeededForDcs > regionCount
+
+var existingVmPlacementModels = [
+  for vm in existingVmPlacements: {
+    type: vm.type
+    index: vm.index
+    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+    regionKey: vm.regionKey
+    dcSlot: 0
   }
 ]
 
@@ -347,11 +371,6 @@ var finalVmPlacements = concat(
   existingVmPlacementModels,
   vmPlacements
 )
-
-var maxDcPerRegion = maxVmsPerRegion
-var totalDcs = vmCounts.dc
-var minRegionsNeededForDcs = (totalDcs + maxDcPerRegion - 1) / maxDcPerRegion
-var hasTooManyDcs = minRegionsNeededForDcs > regionCount
 
 var primaryDc = first(filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index == 0
@@ -406,21 +425,11 @@ var roleSizingMap = {
 // NETWORK HELPER VARIABLES
 // ========================================
 
-var existingVmPlacementModels = [
-  for vm in existingVmPlacements: {
-    type: vm.type
-    index: vm.index
-    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-    regionKey: vm.regionKey
-    dcSlot: 0
-  }
-]
-
-var windowsVMList = filter(finalVmPlacements, vm =>
+var windowsVMList = filter(vmPlacements, vm =>
   vm.type == 'dc' || vm.type == 'jmp' || vm.type == 'srvwin' || vm.type == 'cliwin'
 )
 
-var linuxVMList = filter(finalVmPlacements, vm =>
+var linuxVMList = filter(vmPlacements, vm =>
   vm.type == 'srvlin' || vm.type == 'clilin'
 )
 
@@ -505,6 +514,7 @@ module validationEngine 'modules/logic/validation.bicep' = {
     deployControl: deployControl
     deployWorkload: deployWorkload
     existingRegions: existingRegions
+    existingVmPlacements: existingVmPlacements
   }
 }
 
@@ -882,7 +892,7 @@ module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
 // ========================================
 
 module domainJoinWindows 'modules/identity/domain-join.bicep' = [
-  for vm in filter(activeWindowsVMs, vm => vm.type == 'srvwin' || vm.type == 'cliwin'): if (deployIdentity) {
+  for vm in filter(finalVmPlacements, vm => vm.type == 'srvwin' || vm.type == 'cliwin'): if (deployIdentity) {
     name: '${prefix}-domainjoin-${vm.name}'
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
@@ -992,7 +1002,7 @@ module installJumpboxSshKey 'modules/identity/ssh-key.bicep' = [
 // ========================================
 
 module domainJoinLinux 'modules/identity/domain-join-linux.bicep' = [
-  for vm in filter(activeLinuxVMs, vm => vm.type == 'srvlin' || vm.type == 'clilin'): if (deployIdentity) {
+  for vm in filter(finalVmPlacements, vm => vm.type == 'srvlin' || vm.type == 'clilin'): if (deployIdentity) {
     name: '${prefix}-domainjoin-${vm.name}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
@@ -1020,17 +1030,6 @@ module domainJoinLinux 'modules/identity/domain-join-linux.bicep' = [
 // List of regions selected for this deployment (ordered by regionIndexMap) and assigned region
 // This is the primary output used to verify distribution logic
 output vmPlacement array = finalVmPlacements
-
-output existingVmKeysDebug array = existingVmKeys
-
-output missingVmInventoryDebug array = [
-  for vm in missingVmList: {
-    type: vm.type
-    index: vm.index
-    key: '${vm.type}-${string(vm.index)}'
-    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-  }
-]
 
 // Validation message describing the first detected validation issue, or a success message when all checks pass.
 
@@ -1078,11 +1077,3 @@ output regionSummary array = [
     vmCount: length(filter(finalVmPlacements, vm => vm.regionKey == region))
   }
 ]
-
-output controlPlaneVmListDebug array = controlPlaneVmList
-
-output workloadVmListDebug array = workloadVmList
-
-output controlPlanePlacementsDebug array = controlPlanePlacements
-
-output workloadRegionCapacityDebug array = workloadRegionCapacity

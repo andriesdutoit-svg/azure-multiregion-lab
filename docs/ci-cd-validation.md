@@ -1,0 +1,53 @@
+# CI and Validation
+
+[Back to README](../README.md)
+
+## GitHub Actions
+
+The workflow at `.github/workflows/validate.yml` runs for pushes to `main`, pushes to feature branches, and pull requests targeting `main`.
+
+It performs:
+
+1. Azure OIDC login.
+2. Bicep build.
+3. Bicep lint.
+4. Parameter placeholder replacement for the demo file.
+5. Subscription deployment validation.
+6. What-if analysis.
+
+The workflow requires Azure credentials configured as GitHub secrets and demo values configured as repository variables. See the workflow file for the exact secret and variable names.
+
+## Local Validation
+
+Build and lint the template locally:
+
+```powershell
+az bicep build --file main.bicep
+az bicep lint --file main.bicep
+```
+
+Validate a deployment without creating resources:
+
+```powershell
+az deployment sub validate `
+  --location <deployment-location> `
+  --template-file main.bicep `
+  --parameters <parameters-file>.json
+```
+
+Preview changes:
+
+```powershell
+az deployment sub what-if `
+  --location <deployment-location> `
+  --template-file main.bicep `
+  --parameters <parameters-file>.json
+```
+
+## Validation Outputs
+
+The template returns placement, capacity, and configuration outputs rather than relying only on deployment success. Review `validationSummary`, `validationMessage`, `validationDebug`, `vmPlacement`, and `vmCountPerRegion` after a deployment.
+
+Azure deployment success means that Azure accepted the resource operation. For VM Run Commands, inspect the guest execution state and exit code separately.
+
+[Back to README](../README.md)
