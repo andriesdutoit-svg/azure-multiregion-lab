@@ -36,15 +36,14 @@
         "australiaeast": 16,
         "mexicocentral": 17,
         "eastasia": 18,
-        "southeastasia": 19,
-        "koreasouth": 20,
-        "austriaeast": 21,
-        "westcentralus": 22,
-        "israelcentral": 23,
-        "newzealandnorth": 24,
-        "chilecentral": 25,
-        "japanwest": 26,
-        "westus2": 27
+        "koreasouth": 19,
+        "austriaeast": 20,
+        "westcentralus": 21,
+        "israelcentral": 22,
+        "newzealandnorth": 23,
+        "chilecentral": 24,
+        "japanwest": 25,
+        "westus2": 26
       }
     },
 
@@ -92,6 +91,10 @@
     },
 
     "existingRegions": {
+      "value": []
+    },
+
+    "existingVmPlacements": {
       "value": []
     },
 
