@@ -17,6 +17,8 @@ It performs:
 
 The workflow requires Azure credentials configured as GitHub secrets and demo values configured as repository variables. See the workflow file for the exact secret and variable names.
 
+When creating a new branch, make sure the matching GitHub Actions federated credential is created in Azure so OIDC authentication remains valid for that branch.
+
 ## Local Validation
 
 Build and lint the template locally:

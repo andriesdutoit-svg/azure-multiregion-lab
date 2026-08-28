@@ -120,6 +120,8 @@ See [Identity and Domain Join](docs/identity-and-domain-join.md) for Windows and
 
 See [Access and Administration](docs/access-and-administration.md) for RDP, SSH, Key Vault key setup, and AD access.
 
+See [CI and Validation](docs/ci-cd-validation.md) for GitHub Actions and Azure authentication guidance.
+
 ## Validation
 
 The deployment returns outputs for placement and configuration review, including:
