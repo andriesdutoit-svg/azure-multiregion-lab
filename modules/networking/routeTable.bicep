@@ -28,18 +28,24 @@ param clientSubnetName string
 // ========================================
 
 // Server route table
+// Default outbound traffic is forced through the firewall next hop so workload subnets no longer use direct Internet egress.
 resource rtServer 'Microsoft.Network/routeTables@2023-02-01' = {
   name: '${serverSubnetName}-rt'
   location: location
   properties: {
     routes: [
       {
-        name: 'route-all-to-hub'
+        name: 'route-internal-to-hub'
         properties: {
-          // 10.0.0.0/8 is the global internal address space (environment-wide constant).
-          // All regions' VNets use /16 subnets within this range, so this single route
-          // covers inter-region and intra-region traffic. Hardcoded to match environment topology.
           addressPrefix: '10.0.0.0/8'
+          nextHopType: 'VirtualAppliance'
+          nextHopIpAddress: nextHopIp
+        }
+      }
+      {
+        name: 'route-internet-to-hub'
+        properties: {
+          addressPrefix: '0.0.0.0/0'
           nextHopType: 'VirtualAppliance'
           nextHopIpAddress: nextHopIp
         }
@@ -49,18 +55,24 @@ resource rtServer 'Microsoft.Network/routeTables@2023-02-01' = {
 }
 
 // Client route table
+// Default outbound traffic is forced through the firewall next hop so workload subnets no longer use direct Internet egress.
 resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
   name: '${clientSubnetName}-rt'
   location: location
   properties: {
     routes: [
       {
-        name: 'route-all-to-hub'
+        name: 'route-internal-to-hub'
         properties: {
-          // 10.0.0.0/8 is the global internal address space (environment-wide constant).
-          // All regions' VNets use /16 subnets within this range, so this single route
-          // covers inter-region and intra-region traffic. Hardcoded to match environment topology.
           addressPrefix: '10.0.0.0/8'
+          nextHopType: 'VirtualAppliance'
+          nextHopIpAddress: nextHopIp
+        }
+      }
+      {
+        name: 'route-internet-to-hub'
+        properties: {
+          addressPrefix: '0.0.0.0/0'
           nextHopType: 'VirtualAppliance'
           nextHopIpAddress: nextHopIp
         }

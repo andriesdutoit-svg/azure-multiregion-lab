@@ -42,6 +42,16 @@ Example inventory entry:
 }
 ```
 
+## Controlled Egress
+
+This branch completes the firewall egress control update.
+
+- Server and client workload subnets no longer have direct Internet access.
+- Their default route is sent to the Azure Firewall private IP via the route table next hop.
+- All outbound Internet traffic from those subnets is inspected and controlled at the firewall before leaving the environment.
+- Internal traffic remains allowed, and firewall policy continues to allow required outbound HTTP/HTTPS flows.
+- This is a controlled-egress model: the lab still has outbound connectivity where required, but it is centralized and inspectable at the firewall rather than exposed directly from workload subnets.
+
 ## Stages
 
 | Stage | Behavior |
