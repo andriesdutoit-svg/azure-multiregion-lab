@@ -82,6 +82,10 @@ if [[ "${ALREADY_JOINED}" == "false" ]] || ! command -v realm >/dev/null 2>&1; t
 
     export DEBIAN_FRONTEND=noninteractive
 
+    # Ubuntu repository HTTP responses are rejected on the controlled egress path.
+    find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec \
+        sed -i -E 's#http://(archive|security)\.ubuntu\.com/ubuntu#https://\1.ubuntu.com/ubuntu#g' {} +
+
     apt-get update
 
     apt-get install -y \
