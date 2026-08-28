@@ -4,7 +4,7 @@
 
 ## GitHub Actions
 
-The workflow at `.github/workflows/validate.yml` runs for pushes to `main`, pushes to feature branches, and pull requests targeting `main`.
+The workflow at `.github/workflows/validate.yml` runs for pushes to `main`, pushes to feature branches, pushes to fix branches, manual runs via `workflow_dispatch`, and pull requests targeting `main`.
 
 It performs:
 
@@ -16,6 +16,8 @@ It performs:
 6. What-if analysis.
 
 The workflow requires Azure credentials configured as GitHub secrets and demo values configured as repository variables. See the workflow file for the exact secret and variable names.
+
+When creating a new branch, make sure the matching GitHub Actions federated credential is created in Azure so OIDC authentication remains valid for that branch. This also applies to fix branches that should trigger validation automatically.
 
 ## Local Validation
 

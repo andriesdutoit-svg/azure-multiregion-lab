@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.3.2
+# Azure Multi-Region Lab (AMRL) v2.3.3
 
 AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, hub-and-spoke networking, capacity-aware VM placement, and idempotent Active Directory automation.
 
@@ -13,6 +13,7 @@ AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates m
 - Idempotent AD forest, replica, directory population, and domain-join automation.
 - Validation outputs that explain template decisions and configuration problems.
 - Secure credential and SSH-key references through Azure Key Vault.
+- Controlled egress via Azure Firewall for workload subnets, with Internet access routed through the firewall rather than direct outbound access.
 
 See [Project History and Learning Notes](docs/project-history.md) for the design decisions and IaC concepts demonstrated by the project.
 
@@ -24,6 +25,7 @@ The deployment creates a hub-and-spoke topology:
 - Other selected regions are spokes.
 - The hub contains Azure Firewall and control-plane resources.
 - Workload traffic is routed through the hub firewall.
+- Server and client subnets use route tables that send 0.0.0.0/0 to the firewall next hop, eliminating direct Internet egress from workload subnets.
 - Jumpboxes provide the administrative entry point.
 - Spoke workload subnets are protected by role-based NSGs and route tables.
 
@@ -118,6 +120,8 @@ See [Identity and Domain Join](docs/identity-and-domain-join.md) for Windows and
 
 See [Access and Administration](docs/access-and-administration.md) for RDP, SSH, Key Vault key setup, and AD access.
 
+See [CI and Validation](docs/ci-cd-validation.md) for GitHub Actions and Azure authentication guidance.
+
 ## Validation
 
 The deployment returns outputs for placement and configuration review, including:
@@ -172,4 +176,4 @@ See the detailed guides for implementation boundaries and operational guidance.
 
 ## Release
 
-**v2.3.2** includes brownfield VM placement reconciliation, capacity-aware placement, stable region-index guidance, Linux domain-join resilience, and expanded validation documentation.
+**v2.3.3** completes the controlled-egress change: workload subnet Internet access is routed through Azure Firewall, protecting outbound traffic with centralized inspection and policy enforcement while preserving existing application flows.

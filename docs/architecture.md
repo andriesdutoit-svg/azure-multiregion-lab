@@ -42,6 +42,12 @@ client   = 4
 
 The hub contains the firewall and control-plane subnets. Spokes contain workload subnets and route tables. NSGs restrict administration and AD traffic by subnet role.
 
+## Controlled Egress
+
+The workload subnets no longer use direct outbound Internet access. Route tables for the server and client subnets send `0.0.0.0/0` to the Azure Firewall private IP, so all egress from those subnets is forced through the hub firewall. This creates a centralized inspection and policy-enforcement point while preserving internal communication and allowed outbound HTTP/HTTPS flows.
+
+This is a controlled-egress design rather than a block-all design: outbound connectivity is still allowed where required, but it is centralized and inspectable at the firewall instead of being direct from the workload subnets.
+
 ## Desired State
 
 The template combines the desired VM model with `existingVmPlacements`. Existing VM identities are retained, missing VM identities are created, and the combined placement model is used for validation, DNS generation, capacity calculations, and identity targeting.

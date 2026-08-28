@@ -101,6 +101,8 @@ resource firewall 'Microsoft.Network/azureFirewalls@2023-02-01' = {
 // ========================================
 // POLICY RULES
 // Allow east-west internal traffic across 10.0.0.0/8.
+// The firewall also serves as the centralized egress control point for workload subnets.
+// Any required outbound connectivity must be permitted here; otherwise default Internet egress is not available.
 // ========================================
 
 resource policyRuleCollectionGroup 'Microsoft.Network/firewallPolicies/ruleCollectionGroups@2023-02-01' = {
@@ -131,6 +133,33 @@ resource policyRuleCollectionGroup 'Microsoft.Network/firewallPolicies/ruleColle
             ]
             destinationPorts: [
               '*'
+            ]
+          }
+        ]
+      }
+      {
+        name: 'outbound-internet'
+        priority: 200
+        ruleCollectionType: 'FirewallPolicyFilterRuleCollection'
+        action: {
+          type: 'Allow'
+        }
+        rules: [
+          {
+            ruleType: 'NetworkRule'
+            name: 'allow-http-https-outbound'
+            ipProtocols: [
+              'TCP'
+            ]
+            sourceAddresses: [
+              internalRange
+            ]
+            destinationAddresses: [
+              '*'
+            ]
+            destinationPorts: [
+              '80'
+              '443'
             ]
           }
         ]
