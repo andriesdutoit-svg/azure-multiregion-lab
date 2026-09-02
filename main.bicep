@@ -35,7 +35,6 @@ param existingVmPlacements array = []
 // ----
 param subnetIndexMap object
 param jumpboxAllowedSources array
-param enableClientSsh bool
 
 // ----
 // Compute: VM Sizing & Images
@@ -558,7 +557,6 @@ module vnets 'modules/networking/vnet.bicep' = [
       dnsServers: dnsServers
       jumpboxSubnets: jumpboxSubnets
       jumpboxAllowedSources: jumpboxAllowedSources
-      enableClientSsh: enableClientSsh
       tags: finalTags
     }
   }
@@ -994,6 +992,21 @@ module installJumpboxSshKey 'modules/identity/ssh-key.bicep' = [
   }
 ]
 
+module linuxDesktop 'modules/compute/linux-desktop.bicep' = [
+  for vm in filter(finalVmPlacements, vm => vm.type == 'clilin'): if (deployIdentity) {
+    name: '${prefix}-desktop-${vm.name}'
+
+    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
+
+    params: {
+      vmName: vm.name
+      domainName: domainName
+      directoryModel: string(directoryModel)
+      reconciliationToken: reconciliationToken
+    }
+  }
+]
+
 // ========================================
 // DEPLOYMENT STAGE 8b: LINUX DOMAIN JOIN
 // Joins Linux servers (srvlin) and clients (clilin) to the AD domain using realmd/SSSD integration.
@@ -1009,6 +1022,7 @@ module domainJoinLinux 'modules/identity/domain-join-linux.bicep' = [
 
     dependsOn: [
       adPopulate
+      linuxDesktop
     ]
 
     params: {

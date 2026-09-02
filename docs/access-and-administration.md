@@ -31,7 +31,17 @@ From a jumpbox:
 ssh -i C:\ProgramData\ssh\ssh-key azureadmin@<linux-vm-private-ip>
 ```
 
-Linux client SSH access from jumpboxes is controlled by `enableClientSsh`.
+Linux client SSH access from jumpboxes is always enabled and is not gated by a parameter.
+
+### Linux Client GUI (RDP)
+
+Linux client VMs (`clilin`) automatically install `ubuntu-desktop-minimal` and `xrdp` during the identity stage, exposing a desktop session over RDP through the jumpbox:
+
+```text
+Internet -> Jumpbox -> Linux client VM (RDP, GUI desktop)
+```
+
+Connect the same way as a Windows RDP session, targeting the Linux client's private IP on port 3389.
 
 ## Active Directory Access
 

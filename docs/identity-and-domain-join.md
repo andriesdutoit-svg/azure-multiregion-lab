@@ -48,6 +48,10 @@ Linux workload VMs use `realmd`, `adcli`, Kerberos, and SSSD. The script:
 
 Already joined Linux VMs skip package installation, discovery, and joining but continue the SSSD, access, sudo, and validation steps. This preserves the healing path for partially configured machines.
 
+## Linux Client Desktop Installation
+
+Before Linux clients (`clilin`) join the domain, `modules/compute/linux-desktop.bicep` runs a Run Command that installs `ubuntu-desktop-minimal` and `xrdp`, enabling RDP-based GUI access. It also configures a Polkit rule granting the Linux administrator group interactive authorization for desktop actions. `domainJoinLinux` depends on this step so the desktop environment is present before the client is joined.
+
 Bash scripts are stored with LF line endings through `.gitattributes`:
 
 ```gitattributes
