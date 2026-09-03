@@ -1,4 +1,4 @@
-# CI and Validation
+# CI/CD Workflow and Local Checks
 
 [Back to README](../README.md)
 
@@ -46,10 +46,8 @@ az deployment sub what-if `
   --parameters <parameters-file>.json
 ```
 
-## Validation Outputs
+## Validation Reference
 
-The template returns placement, capacity, and configuration outputs rather than relying only on deployment success. Review `validationSummary`, `validationMessage`, `validationDebug`, `vmPlacement`, and `vmCountPerRegion` after a deployment.
-
-Azure deployment success means that Azure accepted the resource operation. For VM Run Commands, inspect the guest execution state and exit code separately.
+This guide covers how validation runs in GitHub Actions and locally. For the validation outputs, placement and capacity checks, post-deployment review command, and Run Command troubleshooting, see [Validation and Troubleshooting](validation-and-troubleshooting.md).
 
 [Back to README](../README.md)

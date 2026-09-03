@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.3.4
+# Azure Multi-Region Lab (AMRL) v2.3.5
 
 AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, hub-and-spoke networking, capacity-aware VM placement, and idempotent Active Directory automation.
 
@@ -121,7 +121,7 @@ See [Identity and Domain Join](docs/identity-and-domain-join.md) for Windows and
 
 See [Access and Administration](docs/access-and-administration.md) for RDP, SSH, Key Vault key setup, and AD access.
 
-See [CI and Validation](docs/ci-cd-validation.md) for GitHub Actions and Azure authentication guidance.
+See [CI/CD Workflow and Local Checks](docs/ci-cd-validation.md) for GitHub Actions and Azure authentication guidance.
 
 ## Validation
 
@@ -129,17 +129,20 @@ The deployment returns outputs for placement and configuration review, including
 
 - `validationSummary`
 - `validationMessage`
-- `validationDebug`
-- `validationCapacityDebug`
-- `validationWorkloadCapacityDebug`
+- `validationFlags`
+- `workloadCapacitySummary`
+- `workloadCapacityByRegion`
+- `invalidExistingVmPlacementDetails`
+- `invalidExistingVmPlacementCount`
+- `hasInvalidExistingVmPlacements`
 - `vmPlacement`
 - `vmCountPerRegion`
 - `capacityCheck`
 - `regionSummary`
 
-See [Validation and Troubleshooting](docs/validation-and-troubleshooting.md).
+See [Deployment Results and Troubleshooting](docs/validation-and-troubleshooting.md).
 
-See [CI and Validation](docs/ci-cd-validation.md) for GitHub Actions and local Bicep validation.
+See [CI/CD Workflow and Local Checks](docs/ci-cd-validation.md) for GitHub Actions and local Bicep validation.
 
 ## Repository Structure
 
@@ -160,6 +163,7 @@ docs/                              Detailed project documentation
 - Region indexes determine VNet address spaces and must be treated as part of the deployed network contract.
 - Azure VM SKU availability and quota are subscription- and region-specific and require preflight checks.
 - Identity scripts depend on guest networking, DNS, Kerberos, LDAP, and a healthy Azure VM Agent.
+- Control-plane placement falls back to the hub after spoke capacity is exhausted; per-region validation reports hub overflow after placement rather than preventing the fallback.
 - The solution is designed for networking structures created by its own modules, not arbitrary existing VNets.
 
 See the detailed guides for implementation boundaries and operational guidance.
@@ -171,10 +175,10 @@ See the detailed guides for implementation boundaries and operational guidance.
 - [Placement and Reconciliation](docs/placement-and-reconciliation.md)
 - [Identity and Domain Join](docs/identity-and-domain-join.md)
 - [Access and Administration](docs/access-and-administration.md)
-- [Validation and Troubleshooting](docs/validation-and-troubleshooting.md)
-- [CI and Validation](docs/ci-cd-validation.md)
+- [Deployment Results and Troubleshooting](docs/validation-and-troubleshooting.md)
+- [CI/CD Workflow and Local Checks](docs/ci-cd-validation.md)
 - [Project History and Learning Notes](docs/project-history.md)
 
 ## Release
 
-**v2.3.3** completes the controlled-egress change: workload subnet Internet access is routed through Azure Firewall, protecting outbound traffic with centralized inspection and policy enforcement while preserving existing application flows.
+**v2.3.5** completes placement remediation: brownfield VM placements are validated against the active region set, and validation outputs provide clearer placement and capacity diagnostics.
