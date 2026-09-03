@@ -194,6 +194,11 @@ var invalidExistingRegions = filter(
   region => !contains(regionKeys, region)
 )
 
+var invalidExistingVmPlacements = filter(
+  existingVmPlacements,
+  vm => !contains(regionKeys, vm.regionKey)
+)
+
 // Split the unified VM model into control-plane and workload sets.
 // Placement uses different rules for these two groups.
 var controlPlaneVmList = filter(missingVmList, vm =>
@@ -205,9 +210,9 @@ var workloadVmList = filter(missingVmList, vm =>
 )
 
 // Pinned primary-region control-plane VMs are excluded from the spoke placement below.
-// Despite this variable's name, placement is first-fit (fills one spoke to capacity before
-// the next), not true round-robin (which would alternate one VM per spoke).
-var roundRobinControlPlaneVmList = filter(controlPlaneVmList, vm =>
+// The remaining control-plane VMs are placed first-fit: one spoke is filled to capacity before
+// placement continues to the next spoke.
+var controlPlanePlacementVmList = filter(controlPlaneVmList, vm =>
   !(vm.type == 'dc' && vm.index == 0) && !(vm.type == 'jmp' && vm.index == 0)
 )
 
@@ -264,10 +269,10 @@ var controlPlanePlacements = [
         ? primaryRegion
       : (vm.type == 'jmp' && vm.index == 0)
         ? primaryRegion
-        : totalAvailableControlPlaneCapacity > 0 && indexOf(roundRobinControlPlaneVmList, vm) < totalAvailableControlPlaneCapacity
+        : totalAvailableControlPlaneCapacity > 0 && indexOf(controlPlanePlacementVmList, vm) < totalAvailableControlPlaneCapacity
         ? first(filter(
             controlPlaneCapacityCumulative,
-          slot => slot.capacity > 0 && indexOf(roundRobinControlPlaneVmList, vm) < slot.cumulativeCapacity
+          slot => slot.capacity > 0 && indexOf(controlPlanePlacementVmList, vm) < slot.cumulativeCapacity
           )).?region ?? hubRegion
         : hubRegion
   }
@@ -320,8 +325,6 @@ var vmPlacements = [
     type: vm.type
     index: vm.index
     name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-    // dcSlot is reserved for future multi-DC-per-region logic; not read anywhere yet.
-    dcSlot: 0
 
     regionKey: isSingleRegion
       ? regionKeys[0]
@@ -348,10 +351,10 @@ var vmPlacements = [
 
       // New DC/JMP VMs fill spoke capacity first-fit (one spoke to its max before the next),
       // then fall back to the hub with no capacity limit once spoke capacity is exhausted.
-        : totalAvailableControlPlaneCapacity > 0 && indexOf(roundRobinControlPlaneVmList, vm) < totalAvailableControlPlaneCapacity
+        : totalAvailableControlPlaneCapacity > 0 && indexOf(controlPlanePlacementVmList, vm) < totalAvailableControlPlaneCapacity
         ? first(filter(
             controlPlaneCapacityCumulative,
-            slot => slot.capacity > 0 && indexOf(roundRobinControlPlaneVmList, vm) < slot.cumulativeCapacity
+            slot => slot.capacity > 0 && indexOf(controlPlanePlacementVmList, vm) < slot.cumulativeCapacity
           )).?region ?? hubRegion
         : hubRegion
   }
@@ -368,7 +371,6 @@ var existingVmPlacementModels = [
     index: vm.index
     name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
     regionKey: vm.regionKey
-    dcSlot: 0
   }
 ]
 
@@ -517,6 +519,7 @@ module validationEngine 'modules/logic/validation.bicep' = {
     departmentCount: departmentCount
     usersPerDepartment: usersPerDepartment
     invalidExistingRegions: invalidExistingRegions
+    invalidExistingVmPlacementCount: length(invalidExistingVmPlacements)
     deployNetwork: deployNetwork
     deployControl: deployControl
     deployWorkload: deployWorkload

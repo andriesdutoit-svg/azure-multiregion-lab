@@ -26,6 +26,7 @@ param additionalDepartments object
 param departmentCount int
 param usersPerDepartment int
 param invalidExistingRegions array
+param invalidExistingVmPlacementCount int = 0
 // Stage-based deployment flags for brownfield and dependency validation.
 param deployNetwork bool
 param deployControl bool
@@ -51,6 +52,7 @@ var regionOverflowFlags = [
 var hasRegionOverflow = contains(regionOverflowFlags, true)
 var invalidMinimums = vmCounts.dc < 1 || vmCounts.jumpbox < 1
 var invalidRegionCount = regionCount > length(regionIndexMap)
+var hasInvalidExistingVmPlacements = invalidExistingVmPlacementCount > 0
 var missingPinnedDc = empty(filter(vmPlacements, vm => vm.type == 'dc' && vm.index == 0 && vm.regionKey == primaryRegion))
 var missingPinnedJumpbox = empty(filter(vmPlacements, vm => vm.type == 'jmp' && vm.index == 0 && vm.regionKey == primaryRegion))
 var invalidPrimaryPinning = missingPinnedDc || missingPinnedJumpbox
@@ -259,24 +261,28 @@ var msg15 = invalidMinimumDepartments ? 'At least one department is required.' :
 var msg16 = invalidUsersPerDepartment ? 'Users per department must be at least 1.' : ''
 var msg17 = duplicateDepartmentCodes ? 'Department codes must be unique.' : ''
 
-// Brownfield & Deployment Stage Validation (msg18-21): Region reuse, hub/spoke availability for incremental deployments
+// Brownfield & Deployment Stage Validation (msg18-23): Region reuse, hub/spoke availability for incremental deployments
 var msg18 = length(invalidExistingRegions) > 0
   ? 'existingRegions contains regions that are not selected for the current deployment.'
   : ''
-var msg19 = insufficientBrownfieldForStage
+
+var msg19 = hasInvalidExistingVmPlacements
+  ? 'existingVmPlacements contains one or more regionKey values that are not present in the active regionKeys set. Remove stale inventory entries or include the missing regions in regionIndexMap.'
+  : ''
+var msg20 = insufficientBrownfieldForStage
   ? 'Stage deployment (control/workload/identity) requires either stage=network or existingRegions to include all deployed regions.'
   : ''
-var msg20 = hubRequiredButMissing
+var msg21 = hubRequiredButMissing
   ? 'Hub region is required but not available. Either deploy stage=network or add hub region to existingRegions.'
   : ''
-var msg21 = !spokeRegionsCovered
+var msg22 = !spokeRegionsCovered
   ? 'One or more spoke regions are not available. Either deploy stage=network or add all spoke regions to existingRegions.'
   : ''
-var msg22 = hasMixedCreationMode
+var msg23 = hasMixedCreationMode
   ? 'Mixing greenfield (create) and brownfield (reuse) regions in same deployment. Ensure consistent creation mode across all regions.'
   : ''
 
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : 'All validation checks passed.'
+var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : msg23 != '' ? msg23 : 'All validation checks passed.'
 
 // ========================================
 // OUTPUTS

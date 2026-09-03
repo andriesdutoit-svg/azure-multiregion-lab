@@ -160,6 +160,7 @@ docs/                              Detailed project documentation
 - Region indexes determine VNet address spaces and must be treated as part of the deployed network contract.
 - Azure VM SKU availability and quota are subscription- and region-specific and require preflight checks.
 - Identity scripts depend on guest networking, DNS, Kerberos, LDAP, and a healthy Azure VM Agent.
+- Control-plane placement falls back to the hub after spoke capacity is exhausted; per-region validation reports hub overflow after placement rather than preventing the fallback.
 - The solution is designed for networking structures created by its own modules, not arbitrary existing VNets.
 
 See the detailed guides for implementation boundaries and operational guidance.

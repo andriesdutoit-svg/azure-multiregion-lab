@@ -50,6 +50,35 @@ az deployment sub what-if `
 
 The template returns placement, capacity, and configuration outputs rather than relying only on deployment success. Review `validationSummary`, `validationMessage`, `validationDebug`, `vmPlacement`, and `vmCountPerRegion` after a deployment.
 
+The custom Bicep outputs are evaluated only when Azure creates or updates a deployment. `az deployment sub validate` checks whether the template can be submitted, while `what-if` previews resource changes; neither command exposes evaluated template outputs.
+
+Before deployment, use both checks:
+
+```powershell
+az deployment sub validate `
+  --location <deployment-location> `
+  --template-file main.bicep `
+  --parameters <parameters-file>.json
+
+az deployment sub what-if `
+  --location <deployment-location> `
+  --template-file main.bicep `
+  --parameters <parameters-file>.json
+```
+
+Use `what-if` to review which regions and resources will be created or reused. To inspect the calculated `vmPlacement`, capacity flags, and validation message themselves, deploy with a unique deployment name and review the outputs immediately afterward.
+
+Show the validation outputs for a completed subscription deployment:
+
+```powershell
+az deployment sub show `
+  --name <deployment-name> `
+  --query "properties.outputs.{summary:validationSummary.value,message:validationMessage.value,debug:validationDebug.value,capacity:capacityCheck.value,placements:vmPlacement.value,counts:vmCountPerRegion.value}" `
+  --output json
+```
+
+For a deployment to be considered valid, confirm that `validationSummary` is `Validation passed.` and that `validationDebug.hasRegionOverflow`, `validationDebug.hasNonControlInHub`, and `validationDebug.hasInsufficientWorkloadCapacity` are `false`. A successful ARM deployment only confirms that Azure accepted the resource operations; it does not confirm that every calculated placement or guest Run Command completed correctly.
+
 Azure deployment success means that Azure accepted the resource operation. For VM Run Commands, inspect the guest execution state and exit code separately.
 
 [Back to README](../README.md)

@@ -29,6 +29,25 @@ It checks:
 - `vmCountPerRegion`: Final count by region.
 - `regionSummary`: Addressing, subnet, and regional VM summary.
 
+## Post-Deployment Review
+
+After deployment, review the outputs before treating the deployment as valid:
+
+```powershell
+az deployment sub show `
+  --name <deployment-name> `
+  --query "properties.outputs.{summary:validationSummary.value,message:validationMessage.value,debug:validationDebug.value,capacity:capacityCheck.value,placements:vmPlacement.value}" `
+  --output json
+```
+
+A healthy result has `validationSummary` set to `Validation passed.` and `capacityCheck.withinLimit` set to `true`. In `validationDebug`, the following flags should be `false`:
+
+- `hasRegionOverflow`: A region, including the hub, exceeds `maxVmsPerRegion`.
+- `hasNonControlInHub`: A workload VM was placed in the hub.
+- `hasInsufficientWorkloadCapacity`: Control-plane placement left too few spoke slots for workloads.
+
+Validation outputs describe the calculated result; they do not by themselves change or roll back resources. Also inspect VM Run Command results separately.
+
 ## Azure Availability Checks
 
 Template validation cannot guarantee that a VM size, image, or quota is available in Azure. Check these independently:
