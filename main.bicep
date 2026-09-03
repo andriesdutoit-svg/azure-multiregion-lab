@@ -998,6 +998,10 @@ module linuxDesktop 'modules/compute/linux-desktop.bicep' = [
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
+    dependsOn: [
+      linuxVMs
+    ]
+
     params: {
       vmName: vm.name
       domainName: domainName

@@ -1,19 +1,5 @@
 #!/bin/bash
 
-DOMAIN_NAME="${DomainName}"
-DIRECTORY_MODEL="${DirectoryModel}"
-
-LINUX_ADMINS_GROUP=$(echo "${DIRECTORY_MODEL}" | jq -r '
-  .groupNaming.globalSecurityPrefix +
-  "_" +
-  .platformAdminGroups.linuxAdmins
-')
-
-if [[ -z "${LINUX_ADMINS_GROUP}" || "${LINUX_ADMINS_GROUP}" == "null" ]]; then
-    echo "[ERROR] Unable to determine Linux administrators group"
-    exit 1
-fi
-
 set -euo pipefail
 
 echo "[INFO] Installing Ubuntu desktop"
@@ -23,8 +9,25 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 
 apt-get install -y \
+    jq \
     ubuntu-desktop-minimal \
     xrdp
+
+DOMAIN_NAME="${DomainName}"
+DIRECTORY_MODEL="${DirectoryModel}"
+
+LINUX_ADMINS_GROUP=$(echo "${DIRECTORY_MODEL}" | jq -r '
+  .groupNaming.globalSecurityPrefix +
+  "_" +
+  .platformAdminGroups.linuxAdmins
+' | tr '[:upper:]' '[:lower:]')
+
+echo "[INFO] Linux administrators group = ${LINUX_ADMINS_GROUP}"
+
+if [[ -z "${LINUX_ADMINS_GROUP}" || "${LINUX_ADMINS_GROUP}" == "null" ]]; then
+    echo "[ERROR] Unable to determine Linux administrators group"
+    exit 1
+fi
 
 systemctl enable xrdp
 systemctl start xrdp

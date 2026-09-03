@@ -194,10 +194,11 @@ else
 fi
 
 #
-# Phase 6 - SSSD configuration
+# Phase 6 - SSSD configuration, hostname, and dynamic DNS
 # SSSD (System Security Services Daemon) authenticates users and enforces group membership.
 # ad_gpo_access_control = permissive: Allows login by any domain user; GPO restrictions not enforced at login.
 # Sudo rights are instead enforced via sudoers file entries using AGDLP groups (see Phase 8).
+# Hostname is set to FQDN and adcli triggers an immediate DNS registration alongside SSSD's dyndns settings.
 #
 
 log_info "Configuring SSSD"
@@ -206,8 +207,23 @@ if ! grep -q "^ad_gpo_access_control = permissive" /etc/sssd/sssd.conf; then
     cat >> /etc/sssd/sssd.conf <<EOF
 
 ad_gpo_access_control = permissive
+# Registers this VM's A/PTR records in AD-integrated DNS and keeps them current after IP changes.
+dyndns_update = True
+dyndns_refresh_interval = 43200
+dyndns_update_ptr = True
 EOF
 fi
+
+log_info "Configuring Linux hostname"
+
+# SSSD dynamic DNS registers under the short hostname's domain suffix, so the OS hostname must be the FQDN.
+CURRENT_HOSTNAME=$(hostname)
+
+if [[ "${CURRENT_HOSTNAME}" != *".${DOMAIN_NAME}" ]]; then
+hostnamectl set-hostname "${CURRENT_HOSTNAME}.${DOMAIN_NAME}"
+fi
+
+log_info "Hostname configured as $(hostname)"
 
 chmod 600 /etc/sssd/sssd.conf
 
@@ -215,6 +231,13 @@ systemctl enable sssd
 systemctl restart sssd
 
 log_info "SSSD configured"
+
+log_info "Triggering dynamic DNS update"
+
+# Forces an immediate DNS registration instead of waiting for SSSD's next dyndns_refresh_interval.
+adcli update --verbose || log_warn "Dynamic DNS update failed"
+
+log_info "Dynamic DNS update triggered"
 
 log_info "Configuring automatic home directory creation"
 
