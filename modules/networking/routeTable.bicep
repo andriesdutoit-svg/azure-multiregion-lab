@@ -16,13 +16,6 @@ param serverSubnetName string
 param clientSubnetName string
 
 // ========================================
-// DERIVED IDENTIFIERS
-// Parse VNet and subnet names from subnet ARM IDs.
-// Assumes subnet IDs are valid full ARM resource IDs.
-// ========================================
-//
-
-// ========================================
 // RESOURCE CREATED: ROUTE TABLES
 // One route table per subnet role.
 // ========================================

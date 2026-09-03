@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.3.3
+# Azure Multi-Region Lab (AMRL) v2.3.4
 
 AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, hub-and-spoke networking, capacity-aware VM placement, and idempotent Active Directory automation.
 
@@ -14,6 +14,7 @@ AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates m
 - Validation outputs that explain template decisions and configuration problems.
 - Secure credential and SSH-key references through Azure Key Vault.
 - Controlled egress via Azure Firewall for workload subnets, with Internet access routed through the firewall rather than direct outbound access.
+- Automatic GUI desktop and RDP access on Linux clients, with dynamic DNS registration for FQDN reachability.
 
 See [Project History and Learning Notes](docs/project-history.md) for the design decisions and IaC concepts demonstrated by the project.
 

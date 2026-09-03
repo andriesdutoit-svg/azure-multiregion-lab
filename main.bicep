@@ -204,7 +204,9 @@ var workloadVmList = filter(missingVmList, vm =>
   !(vm.type == 'dc' || vm.type == 'jmp')
 )
 
-// Pinned primary-region control-plane VMs are excluded from control-plane round-robin placement.
+// Pinned primary-region control-plane VMs are excluded from the spoke placement below.
+// Despite this variable's name, placement is first-fit (fills one spoke to capacity before
+// the next), not true round-robin (which would alternate one VM per spoke).
 var roundRobinControlPlaneVmList = filter(controlPlaneVmList, vm =>
   !(vm.type == 'dc' && vm.index == 0) && !(vm.type == 'jmp' && vm.index == 0)
 )
@@ -246,6 +248,8 @@ var controlPlaneCapacityCumulative = [
 
 // Model the new control-plane assignments separately from the final VM list.
 // Existing VM occupancy is removed from spoke capacity first; pinned primary VMs remain in the hub.
+// Once spoke capacity (totalAvailableControlPlaneCapacity) is exhausted, remaining VMs fall back
+// to the hub via "?? hubRegion" below, with no capacity limit enforced on the hub at this stage.
 var controlPlanePlacements = [
   for (vm, i) in missingVmList: !(vm.type == 'dc' || vm.type == 'jmp') ? {
     type: ''
@@ -316,6 +320,7 @@ var vmPlacements = [
     type: vm.type
     index: vm.index
     name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
+    // dcSlot is reserved for future multi-DC-per-region logic; not read anywhere yet.
     dcSlot: 0
 
     regionKey: isSingleRegion
@@ -341,7 +346,8 @@ var vmPlacements = [
             )).?region ?? regionKeys[1]
           : regionKeys[1]
 
-      // New DC/JMP VMs use available spoke slots, skipping spokes that are already full.
+      // New DC/JMP VMs fill spoke capacity first-fit (one spoke to its max before the next),
+      // then fall back to the hub with no capacity limit once spoke capacity is exhausted.
         : totalAvailableControlPlaneCapacity > 0 && indexOf(roundRobinControlPlaneVmList, vm) < totalAvailableControlPlaneCapacity
         ? first(filter(
             controlPlaneCapacityCumulative,
@@ -436,6 +442,8 @@ var addressPrefixes = [
   for region in regionKeys: '10.${regionIndexMap[region]}.0.0/16'
 ]
 
+// Each region gets its own /16 (10.<regionIndex>.0.0/16), and each role subnet is a /24 carved
+// out of that /16 using its octet from subnetIndexMap (e.g. subnetIndexMap.dc = 2 -> 10.x.2.0/24).
 var subnetPrefixesArray = [
   for region in regionKeys: {
     firewall: '10.${regionIndexMap[region]}.${subnetIndexMap.firewall}.0/24'
@@ -687,7 +695,8 @@ var workloadWindowsVMs = filter(windowsVMList, vm =>
 
 var deployIdentityTargets = deployWorkload || deployIdentity
 
-
+// Workload VMs (non-DC/jumpbox) must exist for the identity stage to domain-join them,
+// so the identity stage also creates any workload VMs that are still missing.
 var activeWindowsVMs = concat(
   deployControl ? controlWindowsVMs : [],
   deployIdentityTargets ? workloadWindowsVMs : []
@@ -770,6 +779,8 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 // DEPLOYMENT STAGE 7: IDENTITY BOOTSTRAP (PRIMARY DC)
 // ========================================
 
+// Directory shape passed (as a JSON string) to every identity Run Command script.
+// It centralizes OU paths, group naming, and admin group names so scripts never hardcode AD structure.
 var directoryModel = {
   preventOuDeletion: false
 
@@ -969,6 +980,8 @@ var hasLinuxVMs = vmCounts.linuxServer > 0 || vmCounts.linuxClient > 0
 
 var jumpboxLinuxSshKeyVMs = hasLinuxVMs ? filter(controlWindowsVMs, item => item.type == 'jmp') : []
 
+// Deploys the SSH private key onto jumpboxes only, so admins can hop from a jumpbox to Linux VMs
+// without distributing the private key to every workload VM.
 module installJumpboxSshKey 'modules/identity/ssh-key.bicep' = [
   for vm in jumpboxLinuxSshKeyVMs: {
     name: '${prefix}-sshkey-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'

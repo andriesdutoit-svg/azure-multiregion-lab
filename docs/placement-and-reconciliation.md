@@ -23,10 +23,10 @@ var missingVmList = filter(
 
 1. `dc01` and `jmp01` are pinned to the primary region, which is the hub.
 2. Workload VMs are placed on spokes and do not use hub workload capacity.
-3. New DCs and jumpboxes use available spoke capacity first.
+3. New DCs and jumpboxes fill spoke capacity first-fit, in region-index order, one spoke to its full capacity before the next (not round-robin across spokes).
 4. Existing VMs reduce the available capacity of their regions before new placement occurs.
 5. Workloads use the remaining spoke capacity after existing and new control-plane occupancy is accounted for.
-6. If spoke capacity is exhausted, additional control-plane placement falls back to the hub according to the configured model.
+6. If spoke capacity is exhausted, additional control-plane placement falls back to the hub, which has no capacity limit enforced at placement time.
 
 ## Capacity Model
 

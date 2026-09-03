@@ -41,7 +41,7 @@ Linux client VMs (`clilin`) automatically install `ubuntu-desktop-minimal` and `
 Internet -> Jumpbox -> Linux client VM (RDP, GUI desktop)
 ```
 
-Connect the same way as a Windows RDP session, targeting the Linux client's private IP on port 3389.
+Connect the same way as a Windows RDP session, targeting the Linux client's private IP or its FQDN (registered via dynamic DNS).
 
 ## Active Directory Access
 

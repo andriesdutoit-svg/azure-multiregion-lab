@@ -44,7 +44,8 @@ Linux workload VMs use `realmd`, `adcli`, Kerberos, and SSSD. The script:
 4. Discovers the domain when a join is required.
 5. Runs verbose `realm join` for an unjoined VM.
 6. Configures SSSD, automatic home directories, realm access, and Linux administrator sudo rights.
-7. Validates the resulting realm state.
+7. Sets the VM hostname to its FQDN (`<hostname>.<domainName>`) and enables SSSD dynamic DNS so the VM registers its own A/PTR records, then triggers an immediate `adcli update` instead of waiting for the next refresh interval.
+8. Validates the resulting realm state.
 
 Already joined Linux VMs skip package installation, discovery, and joining but continue the SSSD, access, sudo, and validation steps. This preserves the healing path for partially configured machines.
 

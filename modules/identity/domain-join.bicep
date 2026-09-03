@@ -1,5 +1,11 @@
 targetScope = 'resourceGroup'
 
+// ========================================
+// MODULE PURPOSE
+// Joins a Windows VM (server or client) to the AD domain via Azure VM Run Command.
+// Idempotent: the underlying script checks PartOfDomain before attempting to join.
+// ========================================
+
 param vmName string
 param domainName string
 param serverAdminUsername string
