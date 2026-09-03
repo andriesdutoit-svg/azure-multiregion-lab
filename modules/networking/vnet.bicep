@@ -17,7 +17,6 @@ param dnsServers array
 param jumpboxSubnets array
 param existingRegions array = []
 param jumpboxAllowedSources array
-param enableClientSsh bool
 param tags object = {}
 
 // ========================================
@@ -196,7 +195,7 @@ var nsgRules = {
     adRules
   )  
   client: concat(
-    enableClientSsh ? sshRules : [],
+    sshRules,
     rdpRules
   )
 }

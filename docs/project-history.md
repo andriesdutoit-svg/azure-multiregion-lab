@@ -15,7 +15,8 @@
 - **v2.2**: Domain join automation, identity reconciliation, and department refactoring.
 - **v2.3.1**: Route table and hub-spoke routing refactor.
 - **v2.3.2**: Brownfield VM placement reconciliation, capacity accounting, Linux domain-join resilience, and stable region-index guidance.
-- **v2.3.3**: Completed controlled egress through Azure Firewall; server/client subnet default routes now send Internet-bound traffic to the firewall for centralized inspection and policy enforcement.
+- **v2.3.3**: Controlled egress through Azure Firewall for workload subnets.
+- **v2.3.4**: Linux client GUI desktop with RDP access, and dynamic DNS registration for FQDN reachability.
 
 ## Learning Outcomes Demonstrated
 

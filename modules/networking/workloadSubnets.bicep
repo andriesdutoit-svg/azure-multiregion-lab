@@ -1,5 +1,11 @@
 targetScope = 'resourceGroup'
 
+// ========================================
+// MODULE PURPOSE
+// Creates the server and client subnets for a spoke region and attaches their
+// pre-created route tables so workload traffic is forced through the hub firewall.
+// ========================================
+
 param vnetName string
 param subnetNames object
 param subnetPrefixes object

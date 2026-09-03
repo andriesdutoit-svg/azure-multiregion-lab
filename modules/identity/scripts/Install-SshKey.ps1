@@ -1,3 +1,8 @@
+<#
+Installs the shared SSH private key on a jumpbox so admins can SSH from the
+jumpbox into Linux workload VMs without distributing the key more widely.
+#>
+
 param(
     [Parameter(Mandatory)]
     [string]$AdminUsername,
@@ -31,6 +36,8 @@ Write-Host "[INFO] Key length = $($SshPrivateKey.Length)"
 icacls $sshFolder /inheritance:r | Out-Null
 icacls $keyPath /inheritance:r | Out-Null
 
+# Remove the default "Users" group access, then grant only Administrators (full control)
+# and the jumpbox admin account (read-only), matching OpenSSH's private key permission requirements.
 icacls $keyPath /remove:g "Users" | Out-Null
 
 icacls $keyPath /grant:r "Administrators:(F)" | Out-Null

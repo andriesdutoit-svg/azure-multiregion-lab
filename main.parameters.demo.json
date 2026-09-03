@@ -82,10 +82,6 @@
       ]
     },
 
-    "enableClientSsh": {
-      "value": true
-    },
-
     "enableIdentity": {
       "value": false
     },

@@ -1,5 +1,11 @@
 targetScope = 'resourceGroup'
 
+// ========================================
+// MODULE PURPOSE
+// Deploys the shared SSH private key onto a jumpbox via Azure VM Run Command,
+// so admins can hop from the jumpbox to Linux VMs using SSH key authentication.
+// ========================================
+
 param vmName string
 param adminUsername string
 

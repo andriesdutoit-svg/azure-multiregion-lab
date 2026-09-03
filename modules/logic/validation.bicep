@@ -244,7 +244,9 @@ var msg5 = missingRegionIndex ? 'One or more regions are missing in regionIndexM
 var msg6 = hasInvalidSubnetIndex ? 'Subnet index map must include firewall, dc, jumpbox, server, and client.' : ''
 var msg7 = hasMissingVmSizeRole ? 'vmSizes must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.' : ''
 var msg8 = hasMissingOsDiskRole ? 'osDisks must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.' : ''
-var msg9 = hasInsufficientWorkloadCapacity ? 'Non-control workloads exceed the remaining spoke capacity after DC/jumpbox placement.' : ''
+var msg9 = hasInsufficientWorkloadCapacity
+  ? 'Insufficient spoke capacity. Requested workload VMs require ${newNonControlVmCount} spoke slots, but only ${totalWorkloadRegionCapacity} remain after DC/jumpbox placement. Reduce VM counts, add regions, or increase maxVmsPerRegion.'
+  : ''
 var msg10 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : ''
 var msg11 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
 var msg12 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
