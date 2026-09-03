@@ -1,4 +1,4 @@
-# Validation and Troubleshooting
+# Deployment Results and Troubleshooting
 
 [Back to README](../README.md)
 
@@ -22,9 +22,12 @@ It checks:
 
 - `validationSummary`: Short status for quick review.
 - `validationMessage`: First detected validation message.
-- `validationDebug`: Boolean validation flags.
-- `validationCapacityDebug`: Workload demand versus remaining capacity.
-- `validationWorkloadCapacityDebug`: Per-region control-plane and workload capacity.
+- `validationFlags`: Boolean validation flags.
+- `workloadCapacitySummary`: Workload demand versus remaining capacity.
+- `workloadCapacityByRegion`: Per-region control-plane and workload capacity.
+- `invalidExistingVmPlacementDetails`: Existing VM entries whose regions are not active.
+- `invalidExistingVmPlacementCount`: Number of invalid existing VM placement entries.
+- `hasInvalidExistingVmPlacements`: Whether invalid existing VM placement entries were found.
 - `vmPlacement`: Combined existing and new VM placement model.
 - `vmCountPerRegion`: Final count by region.
 - `regionSummary`: Addressing, subnet, and regional VM summary.
@@ -36,11 +39,11 @@ After deployment, review the outputs before treating the deployment as valid:
 ```powershell
 az deployment sub show `
   --name <deployment-name> `
-  --query "properties.outputs.{summary:validationSummary.value,message:validationMessage.value,debug:validationDebug.value,capacity:capacityCheck.value,placements:vmPlacement.value}" `
+  --query "properties.outputs.{summary:validationSummary.value,message:validationMessage.value,flags:validationFlags.value,capacity:capacityCheck.value,placements:vmPlacement.value}" `
   --output json
 ```
 
-A healthy result has `validationSummary` set to `Validation passed.` and `capacityCheck.withinLimit` set to `true`. In `validationDebug`, the following flags should be `false`:
+A healthy result has `validationSummary` set to `Validation passed.` and `capacityCheck.withinLimit` set to `true`. In `validationFlags`, the following flags should be `false`:
 
 - `hasRegionOverflow`: A region, including the hub, exceeds `maxVmsPerRegion`.
 - `hasNonControlInHub`: A workload VM was placed in the hub.

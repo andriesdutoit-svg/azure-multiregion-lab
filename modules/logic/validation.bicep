@@ -148,7 +148,7 @@ var hasMixedCreationMode = deployNetwork && length(existingRegions) > 0 && lengt
 
 // Per-region control-plane occupancy and remaining workload capacity.
 // Existing VMs are part of vmPlacements, and the hub contributes zero workload capacity by design.
-var workloadCapacityDebug = [
+var workloadCapacityByRegion = [
   for region in regionKeys: {
     region: region
     isHub: region == hubRegion
@@ -162,7 +162,7 @@ var workloadCapacityDebug = [
 ]
 
 var workloadRemainingCapacityCounts = [
-  for slot in workloadCapacityDebug: slot.isHub ? 0 : slot.remainingWorkloadCapacity
+  for slot in workloadCapacityByRegion: slot.isHub ? 0 : slot.remainingWorkloadCapacity
 ]
 
 // Aggregate remaining spoke workload capacity for comparison against requested non-control VMs.
@@ -223,6 +223,7 @@ var validationFlags = {
   invalidUsersPerDepartment: invalidUsersPerDepartment
   duplicateDepartmentCodes: duplicateDepartmentCodes
   hasInvalidExistingRegions: length(invalidExistingRegions) > 0
+  hasInvalidExistingVmPlacements: hasInvalidExistingVmPlacements
   insufficientBrownfieldForStage: insufficientBrownfieldForStage
   hubRequiredButMissing: hubRequiredButMissing
   spokeRegionsCovered: !spokeRegionsCovered
@@ -295,9 +296,10 @@ output totalCapacity int = totalCapacity
 output vmPerRegionCounts array = vmPerRegionCounts
 output nonControlVmCount int = nonControlVmCount
 output totalWorkloadRegionCapacity int = totalWorkloadRegionCapacity
-output workloadCapacityDebug array = workloadCapacityDebug
+output workloadCapacityByRegion array = workloadCapacityByRegion
 output departmentCount int = departmentCount
 output usersPerDepartment int = usersPerDepartment
 output requestedDirectoryAccounts int = requestedDirectoryAccounts
 output invalidExistingRegions array = invalidExistingRegions
-
+output invalidExistingVmPlacementCount int = invalidExistingVmPlacementCount
+output hasInvalidExistingVmPlacements bool = hasInvalidExistingVmPlacements

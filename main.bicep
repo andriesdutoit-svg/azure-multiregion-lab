@@ -366,7 +366,7 @@ var minRegionsNeededForDcs = (totalDcs + maxDcPerRegion - 1) / maxDcPerRegion
 var hasTooManyDcs = minRegionsNeededForDcs > regionCount
 
 var existingVmPlacementModels = [
-  for vm in existingVmPlacements: {
+  for vm in filter(existingVmPlacements, vm => contains(regionKeys, vm.regionKey)): {
     type: vm.type
     index: vm.index
     name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
@@ -1067,16 +1067,21 @@ output vmPlacement array = finalVmPlacements
 
 // Validation message describing the first detected validation issue, or a success message when all checks pass.
 
-output validationDebug object = validationEngine.outputs.validationFlags
-output validationCapacityDebug object = {
+output validationFlags object = validationEngine.outputs.validationFlags
+output workloadCapacitySummary object = {
   nonControlVmCount: validationEngine.outputs.nonControlVmCount
   totalWorkloadRegionCapacity: validationEngine.outputs.totalWorkloadRegionCapacity
 }
-output validationWorkloadCapacityDebug array = validationEngine.outputs.workloadCapacityDebug
+output workloadCapacityByRegion array = validationEngine.outputs.workloadCapacityByRegion
 output validationMessage string = validationEngine.outputs.validationMessage
 output validationSummary string = empty(validationEngine.outputs.validationMessage)
   ? 'Validation passed.'
   : validationEngine.outputs.validationMessage
+
+// Brownfield inventory details identify existing VM entries outside the active region set.
+output invalidExistingVmPlacementDetails array = invalidExistingVmPlacements
+output invalidExistingVmPlacementCount int = validationEngine.outputs.invalidExistingVmPlacementCount
+output hasInvalidExistingVmPlacements bool = validationEngine.outputs.hasInvalidExistingVmPlacements
 
 // Per-region VM count after placement
 // Useful for confirming even distribution and ensuring no region exceeds limits

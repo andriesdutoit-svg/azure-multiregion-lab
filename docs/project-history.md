@@ -17,6 +17,7 @@
 - **v2.3.2**: Brownfield VM placement reconciliation, capacity accounting, Linux domain-join resilience, and stable region-index guidance.
 - **v2.3.3**: Controlled egress through Azure Firewall for workload subnets.
 - **v2.3.4**: Linux client GUI desktop with RDP access, and dynamic DNS registration for FQDN reachability.
+- **v2.3.5**: Brownfield placement validation and clearer deployment diagnostics.
 
 ## Learning Outcomes Demonstrated
 
