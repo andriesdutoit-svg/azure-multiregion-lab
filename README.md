@@ -119,7 +119,7 @@ The scripts inspect current state before applying changes. Existing forests, dom
 
 See [Identity and Domain Join](docs/identity-and-domain-join.md) for Windows and Linux behavior, healing, troubleshooting, and Run Command inspection.
 
-See [Access and Administration](docs/access-and-administration.md) for RDP, SSH, Key Vault key setup, and AD access.
+See [Access and Administration](docs/access-and-administration.md) for RDP, SSH, Key Vault setup and recreation, and AD access.
 
 See [CI/CD Workflow and Local Checks](docs/ci-cd-validation.md) for GitHub Actions and Azure authentication guidance.
 

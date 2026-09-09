@@ -1,5 +1,5 @@
 <#
-Populate AMRL AD objects (OU/group/share/user) on dc01.
+Populate AMRL AD objects (OU/group/user) on dc01.
 Derived from Set-DummyAD and adapted for idempotent Run Command execution.
 #>
 
@@ -44,12 +44,9 @@ Write-Host "DomainName = $DomainName"
 
 Import-Module ActiveDirectory -ErrorAction Stop
 
-#
 # Transcript logging.
-#
 # Captures all console output for troubleshooting
 # brownfield remediation and user population issues.
-#
 
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
@@ -225,15 +222,12 @@ function Ensure-ADUser {
         -LDAPFilter "(sAMAccountName=$SamAccountName)" `
         -ErrorAction SilentlyContinue
 
-#
 # Existing users are updated rather than recreated.
 # Selected attributes such as Department and Title
 # are reconciled during re-execution.
-#
 # Reporting-line remediation is handled later by
 # Get-DepartmentManagerInfo() and
 # Invoke-Phase6UserRemediation().
-#
 
 if ($existingUser) {
 
@@ -262,13 +256,10 @@ if ($existingUser) {
 
     Set-ADUser @updateParams
 
-    #
     # Reporting lines are reconciled later by
     # Get-DepartmentManagerInfo() and
     # Invoke-Phase6UserRemediation().
-    #
     # Manager assignments should not be updated here.
-    #
 
     return (
         Get-ADUser `
@@ -429,12 +420,9 @@ function Get-SamAccountName {
     )
     
 
-    #
     # Reject invalid CSV records.
-    #
     # Empty first or last names can generate invalid
     # sAMAccountNames and cause New-ADUser failures.
-    #
     if (
             [string]::IsNullOrWhiteSpace($FirstName) -or
             [string]::IsNullOrWhiteSpace($LastName)
@@ -452,10 +440,8 @@ function Get-SamAccountName {
         ($LastName -replace '\s+', '')
     ).ToLower()
 
-    #
     # Active Directory sAMAccountName maximum:
     # 20 characters.
-    #
     if ($sam.Length -gt 20) {
         $sam = $sam.Substring(0, 20)
     }
@@ -616,6 +602,7 @@ function Invoke-Phase3DepartmentSecurityGroups {
             -GroupCategory Security `
             -GroupScope Global
 
+        # Share_RW/Share_RO are AD groups only; the file server (Populate-Shares.ps1) references them by name for NTFS ACLs.
         Ensure-ADGroup `
             -Name "${dlgsPrefix}_${code}_Share_RW" `
             -Path $dlgsOU.DistinguishedName `
@@ -650,6 +637,8 @@ function Invoke-Phase4DepartmentGroupNesting {
     )
 
     Write-Host "[i] Department group nesting starting"
+
+    # Nests Managers/Users into Share_RW/Share_RO so the file server's ACLs (Populate-Shares.ps1) resolve correct membership.
 
     $platformAdminUsersGroup = (
         "${ggsPrefix}_" +
@@ -690,136 +679,10 @@ function Invoke-Phase4DepartmentGroupNesting {
     Write-Host "[i] Department group nesting completed"
 }
 
-function Invoke-Phase5DepartmentShares {
-    param(
-        [object[]]$SelectedDepartments,
-        [object]$PopulationModel
-    )
-
-    Write-Host "[i] Root share creation starting"
-
-    $dlgsPrefix = $PopulationModel.groupNaming.domainLocalSecurityPrefix
-
-    $rootSharePath = $PopulationModel.shares.root.path
-
-    if (-not (Test-Path $rootSharePath)) {
-
-        New-Item `
-            -Path $rootSharePath `
-            -ItemType Directory `
-            -Force | Out-Null
-
-        Write-Host "[+] Created $rootSharePath"
-    }
-    else {
-
-        Write-Host "[=] Root share already exists: $rootSharePath"
-    }
-
-    Write-Host "[i] Root share creation completed"
-
-    Write-Host "[i] Root share ACL configuration starting"
-
-    icacls $rootSharePath /inheritance:d | Out-Null
-
-    $fACLs = Get-Acl $rootSharePath
-
-    foreach ($rule in $fACLs.Access) {
-
-        if ($rule.IdentityReference -like "*Users") {
-
-            $fACLs.RemoveAccessRuleAll($rule) | Out-Null
-        }
-    }
-
-    Set-Acl `
-        -Path $rootSharePath `
-        -AclObject $fACLs
-
-    Write-Host "[i] Root share ACL configuration completed"
-
-    Write-Host "[i] Department share generation starting"
-
-    foreach ($department in $SelectedDepartments) {
-
-        $code = $department.Value
-
-        $departmentSharePath = Join-Path `
-            -Path $PopulationModel.shares.root.path `
-            -ChildPath $department.Name
-
-        if (-not (Test-Path $departmentSharePath)) {
-
-            New-Item `
-                -Path $departmentSharePath `
-                -ItemType Directory `
-                -Force | Out-Null
-
-            Write-Host "[+] Created share directory: $departmentSharePath"
-        }
-        else {
-
-            Write-Host "[=] Share directory already exists: $departmentSharePath"
-        }
-
-        if (-not (Get-SmbShare -Name $code -ErrorAction SilentlyContinue)) {
-
-            New-SmbShare `
-                -Name $code `
-                -Path $departmentSharePath | Out-Null
-
-            Grant-SmbShareAccess `
-                -Name $code `
-                -AccountName 'Everyone' `
-                -AccessRight Full `
-                -Force | Out-Null
-
-            Write-Host "[+] Created SMB share: $code"
-        }
-        else {
-
-            Write-Host "[=] SMB share already exists: $code"
-        }
-
-        $dirACL = Get-Acl $departmentSharePath
-
-        $acrw = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            "${dlgsPrefix}_${code}_Share_RW",
-            "Modify",
-            "ContainerInherit,ObjectInherit",
-            "None",
-            "Allow"
-        )
-
-        $acro = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            "${dlgsPrefix}_${code}_Share_RO",
-            "ReadAndExecute",
-            "ContainerInherit,ObjectInherit",
-            "None",
-            "Allow"
-        )
-
-        $dirACL.SetAccessRule($acrw)
-        $dirACL.SetAccessRule($acro)
-
-        Set-Acl `
-            -Path $departmentSharePath `
-            -AclObject $dirACL
-
-        Write-Host "[+] Applied NTFS permissions: $department.Name"
-    }
-
-    Write-Host "[i] Department share generation completed"
-}
-
-#
 # Manager reconciliation phase.
-#
 # OU placement is the authoritative source of
 # departmental ownership and reporting lines.
-#
 # Rules:
-#
 # - One manager per department is supported.
 # - Additional manager accounts are demoted.
 # - Users without managers remain unmanaged.
@@ -831,14 +694,12 @@ function Invoke-Phase5DepartmentShares {
 # - When no departmental manager exists,
 #   incorrect reporting lines are removed by
 #   clearing the Manager attribute.
-#
 # Reconciliation includes:
 # - Department attribute
 # - Title
 # - Manager assignments
 # - Departmental ALL groups
 # - Departmental Manager groups
-#
 
 function Get-DepartmentManagerInfo {
     param(
@@ -872,11 +733,9 @@ function Get-DepartmentManagerInfo {
             }
         )
 
-        #
         # Brownfield remediation:
         # DummyAD supports one manager per department.
         # Keep the first manager found and demote the rest.
-        #
         if ($existingDepartmentManagers.Count -gt 1) {
 
             $primaryManager = $existingDepartmentManagers |
@@ -896,10 +755,8 @@ function Get-DepartmentManagerInfo {
                     -Identity $duplicateManager `
                     -Clear Title
 
-                #
                 # Reporting lines will be remediated later
                 # in this function.
-                #
 
                 Remove-ADGroupMember `
                     -Identity "${ggsPrefix}_$($department.Value)_Managers" `
@@ -1001,14 +858,11 @@ function Get-DepartmentManagerInfo {
             }
         }
 
-#
 # Bootstrap manager creation.
-#
 # Departments are expected to contain exactly
 # one manager account. If no manager exists,
 # a manager is created from the available
 # CSV population source.
-#
 
 if ($existingDepartmentManagers.Count -eq 0) {
 
@@ -1111,11 +965,9 @@ if ($existingDepartmentManagers.Count -eq 0) {
 
 }
 
-        #
         # A departmental manager exists.
         # Remediate invalid reporting lines to the
         # department manager.
-        #
 
         $primaryManager = $existingDepartmentManagers |
             Select-Object -First 1
@@ -1129,16 +981,11 @@ if ($existingDepartmentManagers.Count -eq 0) {
         } |
         ForEach-Object {
 
-            #
-            # A departmental manager exists.
-            #
-            # Any user that is:
+            # A departmental manager exists. Any user that is:
             # - unmanaged
             # - assigned to an invalid manager
             # - assigned to a manager in another department
-            #
             # should be assigned to the departmental manager.
-            #
 
             if (-not $_.Manager) {
 
@@ -1186,10 +1033,8 @@ if ($existingDepartmentManagers.Count -eq 0) {
         }
     }
 
-    #
 # Validate that every department has exactly one
 # manager before user population begins.
-#
 
 foreach ($departmentName in $departmentInfo.Keys) {
 
@@ -1223,12 +1068,9 @@ function Get-DepartmentUserTargets {
         $departmentOU = $departmentData.DepartmentOU
         $managerObjects = $departmentData.ManagerObjects
 
-        #
         # Managers are excluded from user counts.
-        #
         # UsersPerDepartment represents standard users
         # only and does not include manager accounts.
-        #
 
         $currentUserCount = (
             Get-ADUser `
@@ -1263,16 +1105,12 @@ function Get-DepartmentUserTargets {
     return $departmentTargets
 }
 
-#
 # User remediation phase.
-#
 # Responsibilities:
 # - Department attribute remediation
 # - Group membership remediation
-#
 # Reporting-line remediation is handled earlier
 # by Get-DepartmentManagerInfo().
-#
 
 function Invoke-Phase6UserRemediation {
     param(
@@ -1289,9 +1127,7 @@ function Invoke-Phase6UserRemediation {
         $department = $departmentData.Department
         $departmentOU = $departmentData.DepartmentOU
 
-        #
         # Departments without managers are valid.
-        #
 
         Get-ADUser `
             -SearchBase $departmentOU.DistinguishedName `
@@ -1316,17 +1152,13 @@ function Invoke-Phase6UserRemediation {
                     $user.SamAccountName
                 )
 
-                #
                 # Department
-                #
 
                 Set-ADUser `
                     -Identity $user `
                     -Department $department.Name
 
-                #
                 # Remove bad *_Users groups
-                #
 
                 Get-ADPrincipalGroupMembership $user |
                 Where-Object {
@@ -1341,9 +1173,7 @@ function Invoke-Phase6UserRemediation {
                         -Confirm:$false
                 }
 
-                #
                 # Remove bad *_Managers groups
-                #
 
                 Get-ADPrincipalGroupMembership $user |
                 Where-Object {
@@ -1357,9 +1187,7 @@ function Invoke-Phase6UserRemediation {
                         -Confirm:$false
                 }
 
-                #
                 # Remove bad *_ALL groups
-                #
 
                 Get-ADPrincipalGroupMembership $user |
                 Where-Object {
@@ -1374,9 +1202,7 @@ function Invoke-Phase6UserRemediation {
                         -Confirm:$false
                 }
 
-                #
                 # Add correct groups
-                #
 
                 Ensure-ADPrincipalGroupMembership `
                     -GroupName "${ggsPrefix}_$($department.Value)_ALL" `
@@ -1392,21 +1218,16 @@ function Invoke-Phase6UserRemediation {
     Write-Host "[i] Existing user remediation completed"
 }
 
-#
 # Round-robin user population.
-#
 # Each pass attempts to add one standard user to
 # every department that has not yet reached its
 # target population.
-#
 # Existing usernames are discarded and a new
 # candidate is selected until a unique username
 # is found or the CSV is exhausted.
-#
 # Population ends when:
 # - All departments have reached target capacity.
 # - No additional unique usernames are available.
-#
 
 function Invoke-Phase7RoundRobinUserPopulation {
     param(
@@ -1419,11 +1240,9 @@ function Invoke-Phase7RoundRobinUserPopulation {
 
     $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
 
-    #
     # Build an in-memory lookup of existing
     # sAMAccountNames to avoid repeated AD queries
     # during user generation.
-    #
 
     $existingSamAccounts = [System.Collections.Generic.HashSet[string]]::new()
 
@@ -1445,18 +1264,13 @@ function Invoke-Phase7RoundRobinUserPopulation {
 
     $stopPopulation = $false
 
-    #
     # Users are added round-robin across departments.
-    #
     # This allows balanced population when fewer
     # source names are available than requested.
-    #
 
-    #
     # Track successful user creation counts per
     # department. Progress is based on actual
     # accounts created rather than loop iterations.
-    #
 
     $createdUsers = @{}
 
@@ -1466,10 +1280,8 @@ function Invoke-Phase7RoundRobinUserPopulation {
 
     while (-not $stopPopulation) {
 
-        #
         # Only process departments that have not
         # yet reached their target user count.
-        #
 
         $remainingDepartments = @(
             $DepartmentTargets.Values |
@@ -1499,10 +1311,8 @@ function Invoke-Phase7RoundRobinUserPopulation {
             $departmentOU = $departmentData.DepartmentOU
             $managerObjects = $departmentData.ManagerObjects
 
-            #
             # New users are assigned to the department's
             # primary manager if one exists.
-            #
 
             $managerObject = $managerObjects |
                 Select-Object -First 1
@@ -1516,13 +1326,10 @@ function Invoke-Phase7RoundRobinUserPopulation {
             $userRecord = $null
             $userSam = $null
 
-            #
             # Select a candidate username.
-            #
             # Existing usernames are discarded until
             # a unique username is found or the CSV
             # source is exhausted.
-            #
 
             while ($CsvNames.Count -gt 0) {
 
@@ -1616,22 +1423,17 @@ function Invoke-Phase7RoundRobinUserPopulation {
     }
 }
 
-#
 # Execute directory population workflow.
-#
 # The script is designed to be idempotent and
 # may be executed repeatedly. Existing objects
 # are reconciled where possible and missing
 # objects are created.
-#
 # Execution order:
 # 1. Validate AD connectivity
 # 2. Build OU structure
 # 3. Create security groups
-# 4. Configure share permissions
-# 5. Reconcile existing users
-# 6. Populate missing users
-#
+# 4. Reconcile existing users
+# 5. Populate missing users
 
 Write-Host "[INFO] Waiting for Active Directory availability"
 
@@ -1711,17 +1513,11 @@ Invoke-Phase4DepartmentGroupNesting `
     -SelectedDepartments $departments `
     -PopulationModel $model
 
-Invoke-Phase5DepartmentShares `
-    -SelectedDepartments $departments `
-    -PopulationModel $model
-
 Write-Host "[i] User generation starting"
 
-#
 # Password is supplied through Azure Run Command
 # protected parameters and arrives as plaintext.
 # Conversion to SecureString must occur locally.
-#
 
 $password = ConvertTo-SecureString `
     $ClientAdminPassword `
@@ -1774,8 +1570,3 @@ Invoke-Phase7RoundRobinUserPopulation `
 Write-Host "[i] Directory population completed"
 
 Stop-Transcript
-
-# TODO:
-# Future AMRL release:
-# Move departmental shares to dedicated file servers
-# rather than hosting on domain controllers.

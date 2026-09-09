@@ -387,6 +387,16 @@ var replicaDcList = filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index > 0
 )
 
+var fileServerVmList = filter(finalVmPlacements, vm =>
+  vm.type == 'srvwin'
+)
+
+var fileServerVm = length(fileServerVmList) > 0
+  ? fileServerVmList[0]
+  : primaryDc!
+
+var fileServerName = fileServerVm.name
+
 // ========================================
 // VM GROUPING + SUPPORT VARIABLES
 // ========================================
@@ -827,6 +837,7 @@ var directoryModel = {
     root: {
       name: 'Shares'
       path: 'C:\\Shares'
+      host: fileServerName
     }
   }
 
@@ -892,6 +903,26 @@ module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
     clientAdminPassword: clientAdminPassword
     departmentCount: departmentCount
     directoryModel: string(directoryModel)
+    reconciliationToken: reconciliationToken
+  }
+}
+
+module fileServices 'modules/identity/file-services.bicep' = if (deployIdentity) {
+  name: '${prefix}-file-services'
+
+  scope: resourceGroup('${prefix}-rg-${fileServerVm.regionKey}')
+
+  dependsOn: [
+    adPopulate
+    domainJoinWindows
+  ]
+
+  params: {
+    fileServerVmName: fileServerName
+    directoryModel: string(directoryModel)
+    sysAdminDepartment: sysAdminDepartment
+    additionalDepartments: additionalDepartments
+    departmentCount: departmentCount
     reconciliationToken: reconciliationToken
   }
 }
