@@ -21,6 +21,17 @@ When creating a new branch, make sure the matching GitHub Actions federated cred
 
 Pull-request workflows use the separate Entra federated credential subject `repo:<GitHub profile>/<repo>:pull_request`, not the source branch subject. Create this credential when enabling Azure login for pull requests. Do not expose Azure credentials to workflows that execute untrusted code from forked repositories.
 
+## Release Workflow
+
+The workflow at `.github/workflows/release.yml` runs when a tag matching `v*` is pushed (for example, `v2.3.6`). It requires `contents: write` permission and uses `softprops/action-gh-release@v2` with generated release notes enabled.
+
+Typical release flow:
+
+```powershell
+git tag v2.3.6
+git push origin v2.3.6
+```
+
 ## Bootstrapping OIDC for a New Subscription or Tenant
 
 Run this once whenever the target Azure subscription or tenant changes (for example, moving the lab to a new subscription). It creates the Entra app registration used for GitHub Actions OIDC login, grants it access, and wires up federated credentials for `main`, the active branch, and pull requests.

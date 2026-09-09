@@ -2,6 +2,16 @@
 
 [Back to README](../README.md)
 
+```mermaid
+flowchart LR
+  A[GitHub Actions validate.yml] --> B[Bicep build and lint]
+  B --> C[az deployment sub validate]
+  C --> D[what-if]
+  E[Bicep validation module rules] --> F[validation outputs]
+  D --> F
+  F --> G[validationSummary and diagnostics]
+```
+
 ## Template Validation
 
 `modules/logic/validation.bicep` evaluates configuration and placement rules and returns outputs used by `main.bicep`.
@@ -17,6 +27,7 @@ It checks:
 - Existing region coverage for staged brownfield deployments.
 - Remaining workload capacity after existing and new control-plane placement.
 - Department and identity configuration.
+- Dedicated file server availability when `useDedicatedFileServer` is `true`. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
 
 ## Useful Outputs
 
@@ -48,12 +59,21 @@ A healthy result has `validationSummary` set to `Validation passed.` and `capaci
 - `hasRegionOverflow`: A region, including the hub, exceeds `maxVmsPerRegion`.
 - `hasNonControlInHub`: A workload VM was placed in the hub.
 - `hasInsufficientWorkloadCapacity`: Control-plane placement left too few spoke slots for workloads.
+- `missingDedicatedFileServer`: `useDedicatedFileServer` is `true` but no `srvwin` VM exists. File services silently fall back to the DC when this is `true`; it does not block deployment.
 
 Validation outputs describe the calculated result; they do not by themselves change or roll back resources. Also inspect VM Run Command results separately.
 
 ## Azure Availability Checks
 
 Template validation cannot guarantee that a VM size, image, or quota is available in Azure. Check these independently:
+
+Regional vCPU quotas vary significantly by subscription type:
+
+- **Trial/Free subscriptions**: often 4–8 vCPU per region.
+- **Student subscriptions**: often 4 vCPU per region.
+- **Standard/Pay-as-you-go subscriptions**: often 20+ vCPU per region.
+
+Example: if each VM uses 2 vCPUs and your regional quota is 4, set `maxVmsPerRegion = 2`.
 
 ```powershell
 az vm list-sizes --location <region> -o table

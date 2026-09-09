@@ -57,7 +57,7 @@ az deployment sub create `
   --parameters <parameters-file>.json
 ```
 
-For Key Vault setup and parameter details, see [Deployment Guide](docs/deployment.md).
+For Key Vault setup and parameter details, see [Deployment Guide](docs/deployment.md) and [Configuration Parameters Reference](docs/configuration-parameters-reference.md).
 
 ## Quick Start: Brownfield
 
@@ -172,6 +172,7 @@ See the detailed guides for implementation boundaries and operational guidance.
 
 - [Architecture](docs/architecture.md)
 - [Deployment Guide](docs/deployment.md)
+- [Configuration Parameters Reference](docs/configuration-parameters-reference.md)
 - [Placement and Reconciliation](docs/placement-and-reconciliation.md)
 - [Identity and Domain Join](docs/identity-and-domain-join.md)
 - [Access and Administration](docs/access-and-administration.md)

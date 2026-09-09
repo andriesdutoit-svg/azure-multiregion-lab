@@ -68,7 +68,40 @@ Typical staged order:
 network -> control -> identity -> workload
 ```
 
+```mermaid
+flowchart LR
+  N[stage=network] --> C[stage=control]
+  C --> I[stage=identity optional]
+  C --> W[stage=workload]
+  I --> W
+  A[stage=all] --> N
+  E[existingRegions includes a region] -.-> N
+```
+
 Use a new deployment name when rerunning identity automation so Azure reapplies the VM Run Command resources.
+
+## Supported Deployment Models
+
+| Scenario | Supported |
+|---|---|
+| Greenfield deployment | Yes |
+| Full deployment (`stage=all`) | Yes |
+| Staged deployment (`network` -> `control` -> `identity` -> `workload`) | Yes |
+| Redeploy an existing environment created by this framework | Yes |
+| Reuse existing networking that follows this framework's structure | Yes |
+| Modify VM counts, role-based sizes/disks, images, tags, and access settings | Yes |
+| Deploy into arbitrary pre-existing VNets with different structures or naming | No |
+
+## Changes Requiring Careful Planning
+
+These parameters can significantly affect topology or addressing, and changing them after deployment may require resource recreation or migration planning:
+
+- `prefix`
+- `regionCount`
+- `regionIndexMap`
+- `subnetIndexMap` (including the `firewall` index)
+
+See [Region Indexes](#region-indexes) below for why `regionIndexMap` changes are especially disruptive to existing (brownfield) regions.
 
 ## Region Indexes
 

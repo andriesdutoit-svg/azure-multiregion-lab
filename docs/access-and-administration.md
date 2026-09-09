@@ -13,6 +13,21 @@ Internet -> Jumpbox -> Linux workload VMs (SSH)
 
 Only jumpboxes receive public IP addresses. `jumpboxAllowedSources` controls inbound RDP access to them.
 
+## Current Access Model
+
+| Access method | Supported |
+|---|---|
+| Jumpbox -> Windows VM (RDP) | Yes |
+| Jumpbox -> Linux VM (SSH key authentication) | Yes |
+| Active Directory user logon on Linux (via SSSD, after SSH access) | Yes |
+| Active Directory user logon on Windows | Yes |
+| Linux sudo via the Linux admin group | Yes |
+| Direct Internet -> Windows workload VM (RDP) | No |
+| Direct Internet -> Linux workload VM (SSH) | No |
+| Direct SSH logon using an Active Directory password | No |
+
+All infrastructure administration is performed from jumpbox VMs. Workload VMs are never directly exposed to the Internet.
+
 ## Windows
 
 Connect to a jumpbox with RDP, then connect to Windows servers and clients using the local deployment administrator account. Workload VMs are not directly exposed to the Internet.
@@ -32,6 +47,10 @@ ssh -i C:\ProgramData\ssh\ssh-key azureadmin@<linux-vm-private-ip>
 ```
 
 Linux client SSH access from jumpboxes is always enabled and is not gated by a parameter.
+
+### Future Enhancement Consideration
+
+Direct SSH authentication using Active Directory credentials (e.g. `ssh user@amrl.lab@<ip>`) is not supported. Linux VMs are deployed with `disablePasswordAuthentication: true`, which intentionally keeps infrastructure administration (SSH keys via `azureadmin`) and user authentication (Active Directory credentials, via `su -` after SSH access) as separate security models.
 
 ### Linux Client GUI (RDP)
 

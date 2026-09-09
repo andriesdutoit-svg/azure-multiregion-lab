@@ -75,6 +75,9 @@ param additionalDepartments object
 param departmentCount int
 param usersPerDepartment int
 
+@description('Use a dedicated Windows server for departmental file shares.')
+param useDedicatedFileServer bool
+
 // ----
 // Tagging & Resource Identification
 // ----
@@ -391,11 +394,13 @@ var fileServerVmList = filter(finalVmPlacements, vm =>
   vm.type == 'srvwin'
 )
 
-var fileServerVm = length(fileServerVmList) > 0
+var fileServerVm = useDedicatedFileServer && length(fileServerVmList) > 0
   ? fileServerVmList[0]
   : primaryDc!
 
-var fileServerName = fileServerVm.name
+var fileServerName = useDedicatedFileServer
+  ? fileServerVm.name
+  : primaryDc!.name
 
 // ========================================
 // VM GROUPING + SUPPORT VARIABLES
@@ -535,6 +540,8 @@ module validationEngine 'modules/logic/validation.bicep' = {
     deployWorkload: deployWorkload
     existingRegions: existingRegions
     existingVmPlacements: existingVmPlacements
+    useDedicatedFileServer: useDedicatedFileServer
+    fileServerVmAvailable: length(fileServerVmList) > 0
   }
 }
 

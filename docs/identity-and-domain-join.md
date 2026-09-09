@@ -18,6 +18,46 @@ Windows and Linux domain join
 
 The primary DC and replica DCs must already exist before a standalone `identity` stage can complete. Missing workload VMs may be created during the identity stage so they are available for domain joining.
 
+```mermaid
+flowchart LR
+  A[enableIdentity=true] --> B{stage value}
+  B -->|identity| C[Run identity modules only]
+  B -->|all| D[Run full deployment with identity]
+  C --> E[dc01 forest bootstrap]
+  D --> E
+  E --> F[Promote replica DCs]
+  F --> G[Populate OU, groups, and users]
+  G --> H[Domain join Windows and Linux]
+  H --> I[Safe re-run keeps state idempotent]
+```
+
+## Directory Model
+
+The `directoryModel` object in `main.bicep` (passed as a JSON string to every identity script) centralises OU paths, group naming, and share configuration so scripts never hardcode AD structure:
+
+- `rootOuName` — top-level OU beneath the domain root (`_ROOT`).
+- `customOus` — hierarchical OU structure for computers, groups, and users, including reserved OUs for disabled users.
+- `computerOuMapping` — maps VM types to OU locations (e.g. `srvwin`/`srvlin` → `Computers/Servers`, `cliwin`/`clilin` → `Computers/Clients`).
+- `groupOuMapping` — OUs for global security groups (`Groups/GGS`) and domain local security groups (`Groups/DLGS`).
+- `groupNaming` — configurable prefixes: `globalSecurityPrefix` (`GGS`) for user-facing department groups, `domainLocalSecurityPrefix` (`DLGS`) for share permission groups.
+- `platformAdminGroups` — names of the Windows/Linux platform admin groups and the department code they're sourced from.
+- `shares` — root share name/path (`C:\Shares`) and the current file server host (`fileServerName`).
+- `coreOuMapping` — references to the core `Users`/`Groups` OUs used by scripts.
+
+The directory model is not parameterised; it represents a stable architectural decision. Customisation requires editing `main.bicep` directly.
+
+## Directory Population Rules
+
+`Populate-AD.ps1` enforces these rules on every run (greenfield and brownfield):
+
+- **Manager rule**: exactly one manager per department, identified by a title matching `*Manager*`. If multiple exist, the first is retained and others are demoted. If none exists, a new manager is created from an unused CSV record.
+- **Reporting lines**: unmanaged users are assigned to their department's manager; users with invalid or cross-department reporting lines are reassigned.
+- **User targets**: `usersPerDepartment` is enforced as a minimum for standard users (managers counted separately). Under-populated departments are topped up; over-populated departments are left as-is.
+- **New user addition**: added round-robin across departments that still need users; username collisions are skipped, and population stops with a warning when unique CSV names are exhausted.
+- **Department removal**: removing a department from `additionalDepartments` does not delete its OU or users; the OU becomes unmanaged rather than deleted.
+
+This reflects the non-destructive design: existing compliant objects are preserved, and only missing required objects are restored.
+
 ## Reconciliation
 
 Identity operations use Azure VM Run Command resources. A new deployment name changes the Run Command definition and causes the command to be reapplied. The scripts inspect the current state rather than relying on a persisted reconciliation token.

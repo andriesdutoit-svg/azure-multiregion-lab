@@ -86,6 +86,10 @@
       "value": false
     },
 
+    "useDedicatedFileServer": {
+      "value": false
+    },
+
     "existingRegions": {
       "value": []
     },
