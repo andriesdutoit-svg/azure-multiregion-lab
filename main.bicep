@@ -102,6 +102,57 @@ var deployControl = stage == 'control' || stage == 'all'
 var deployIdentity = enableIdentity && (stage == 'identity' || stage == 'all')
 var deployWorkload = stage == 'workload' || stage == 'all'
 
+module placementEngine 'modules/logic/placement-engine.bicep' = {
+  name: '${prefix}-placement-engine'
+
+  params: {
+    vmCounts: vmCounts
+
+    existingVmPlacements: existingVmPlacements
+
+    regionIndexMap: regionIndexMap
+    regionCount: regionCount
+    maxVmsPerRegion: maxVmsPerRegion
+
+    existingRegions: existingRegions
+
+    prefix: prefix
+
+    useDedicatedFileServer: useDedicatedFileServer
+  }
+}
+
+// ========================================
+// PLACEMENT ENGINE
+//
+// V2.4 Refactor Candidate
+//
+// Future home:
+// modules/logic/placement-engine.bicep
+//
+// Responsibilities:
+// - VM model building
+// - Brownfield reconciliation
+// - Region ordering
+// - Hub modelling
+// - Capacity calculations
+// - VM placement
+// - Placement-derived objects
+//
+// Public contract:
+// regionKeys
+// primaryRegion
+// hubRegion
+// invalidExistingRegions
+// invalidExistingVmPlacements
+// hasTooManyDcs
+// finalVmPlacements
+// primaryDc
+// replicaDcList
+// fileServerVm
+// fileServerName
+// ========================================
+
 // ========================================
 // VM MODEL BUILDING
 // Constructs unified list of all VMs from role-based counts
