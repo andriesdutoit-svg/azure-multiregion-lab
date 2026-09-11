@@ -511,6 +511,18 @@ var jumpboxSubnets = [
   for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
 ]
 
+// Future V2.4 stage contract:
+//
+// subnetMap = [
+//   {
+//     regionKey: region
+//     dcSubnetId: ...
+//     jumpboxSubnetId: ...
+//     serverSubnetId: ...
+//     clientSubnetId: ...
+//   }
+// ]
+
 //
 // ========================================
 // VALIDATION ENGINE
@@ -547,6 +559,28 @@ module validationEngine 'modules/logic/validation.bicep' = {
     useDedicatedFileServer: useDedicatedFileServer
     enableFileServices: enableFileServices
     fileServerVmAvailable: length(fileServerVmList) > 0
+  }
+}
+
+module networkStage 'modules/orchestration/network-stage.bicep' = {
+  name: '${prefix}-network-stage'
+  params: {
+    prefix: prefix
+    regionKeys: regionKeys
+    hubRegion: hubRegion
+
+    deployNetwork: deployNetwork
+
+    tags: tags
+
+    existingRegions: existingRegions
+
+    addressPrefixes: addressPrefixes
+    subnetPrefixesArray: subnetPrefixesArray
+
+    dnsServers: dnsServers
+    jumpboxSubnets: jumpboxSubnets
+    jumpboxAllowedSources: jumpboxAllowedSources
   }
 }
 
@@ -599,7 +633,7 @@ module vnets 'modules/networking/vnet.bicep' = [
 // DEPLOYMENT STAGE 3: VNET PEERING
 // ========================================
 
-module peerings 'modules/peering/peering.bicep' = [
+module peerings 'modules/networking/peering.bicep' = [
   for source in regionKeys: if (deployNetwork) {
     name: '${prefix}-peerings-${source}'
     scope: resourceGroup('${prefix}-rg-${source}')
