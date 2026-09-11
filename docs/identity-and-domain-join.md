@@ -14,6 +14,8 @@ Replica DC promotion
 Directory population
         ->
 Windows and Linux domain join
+        ->
+Departmental share provisioning (when enabled)
 ```
 
 The primary DC and replica DCs must already exist before a standalone `identity` stage can complete. Missing workload VMs may be created during the identity stage so they are available for domain joining.
@@ -28,7 +30,8 @@ flowchart LR
   E --> F[Promote replica DCs]
   F --> G[Populate OU, groups, and users]
   G --> H[Domain join Windows and Linux]
-  H --> I[Safe re-run keeps state idempotent]
+        H --> I[Provision departmental shares when enabled]
+        I --> J[Safe re-run keeps state idempotent]
 ```
 
 ## Directory Model
@@ -57,6 +60,14 @@ The directory model is not parameterised; it represents a stable architectural d
 - **Department removal**: removing a department from `additionalDepartments` does not delete its OU or users; the OU becomes unmanaged rather than deleted.
 
 This reflects the non-destructive design: existing compliant objects are preserved, and only missing required objects are restored.
+
+## Departmental File Services
+
+When `enableFileServices=true`, directory population also creates each department's `Share_RW` and `Share_RO` domain-local groups and nests the manager and user groups into them. Share directories are no longer created by `Populate-AD.ps1` on the primary DC.
+
+After Windows domain join completes, `Populate-Shares.ps1` runs on the selected file server. It creates `C:\Shares`, creates one SMB share per selected department, and applies the domain-local groups as NTFS Modify and Read-and-Execute permissions. The script retains existing directories and SMB shares and reapplies the expected ACL rules on reconciliation.
+
+With `useDedicatedFileServer=false`, the selected host is the primary DC. With `useDedicatedFileServer=true`, it is the first `srvwin` VM in the final placement model. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion) before changing this setting in an existing environment.
 
 ## Reconciliation
 

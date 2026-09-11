@@ -86,6 +86,10 @@
       "value": false
     },
 
+    "enableFileServices": {
+      "value": false
+    },
+
     "useDedicatedFileServer": {
       "value": false
     },

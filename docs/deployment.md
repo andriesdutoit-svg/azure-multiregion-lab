@@ -58,7 +58,7 @@ This branch completes the firewall egress control update.
 |---|---|
 | `network` | Creates or reuses regional networking and peerings. |
 | `control` | Creates missing DCs and jumpboxes. |
-| `identity` | Runs AD bootstrap, replica promotion, directory population, and domain join automation. It may also create missing workload VMs needed by the identity flow. Existing control-plane DCs are required. |
+| `identity` | Runs AD bootstrap, replica promotion, directory population, domain join automation, and optional departmental file-service provisioning. It may also create missing workload VMs needed by the identity flow. Existing control-plane DCs are required. |
 | `workload` | Creates missing workload VMs. |
 | `all` | Runs the complete workflow. |
 
@@ -79,6 +79,13 @@ flowchart LR
 ```
 
 Use a new deployment name when rerunning identity automation so Azure reapplies the VM Run Command resources.
+
+When enabling departmental file services:
+
+- Set `enableIdentity=true` and `enableFileServices=true`.
+- Leave `useDedicatedFileServer=false` to host shares on the primary DC.
+- Set `useDedicatedFileServer=true` and request or inventory at least one `srvwin` VM to host shares on the first Windows server in the final placement model.
+- Run `stage=identity` or `stage=all`; file-service provisioning does not run during the other stages.
 
 ## Supported Deployment Models
 

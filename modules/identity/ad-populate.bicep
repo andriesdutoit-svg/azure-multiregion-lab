@@ -19,6 +19,7 @@ param departmentCount int
 @secure()
 param clientAdminPassword string
 param directoryModel string
+param enableFileServices bool
 
 param reconciliationToken string
 
@@ -89,6 +90,10 @@ resource populateDirectory 'Microsoft.Compute/virtualMachines/runCommands@2023-0
       {
         name: 'UsersPerDepartment'
         value: string(usersPerDepartment)
+      }
+      {
+        name: 'EnableFileServices'
+        value: string(enableFileServices)
       }
       {
         name: 'ReconciliationToken'

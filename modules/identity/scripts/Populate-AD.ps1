@@ -36,7 +36,11 @@ param(
     [ValidateRange(0, 10000)]
     [int]$UsersPerDepartment,
 
-    [string]$ReconciliationToken
+    [Parameter(Mandatory = $false)]
+    [string]$ReconciliationToken,
+
+    [Parameter(Mandatory = $false)]
+    [string]$EnableFileServices
 )
 
 Write-Host "Starting AMRL Directory Population"
@@ -532,11 +536,18 @@ function Invoke-Phase2DepartmentOus {
     return $usersOU
 }
 
+$fileServicesEnabled =
+    [System.Convert]::ToBoolean($EnableFileServices)
+
+Write-Host "EnableFileServices raw value = [$EnableFileServices]"
+Write-Host "EnableFileServices converted value = [$fileServicesEnabled]"
+
 function Invoke-Phase3DepartmentSecurityGroups {
     param(
         [object[]]$SelectedDepartments,
         [string]$RootOuDn,
-        [object]$PopulationModel
+        [object]$PopulationModel,
+        [bool]$EnableFileServices
     )
 
     $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
@@ -601,19 +612,27 @@ function Invoke-Phase3DepartmentSecurityGroups {
             -Path $ggsOU.DistinguishedName `
             -GroupCategory Security `
             -GroupScope Global
+           
+        Write-Host "Phase 3 EnableFileServices value = [$EnableFileServices]"
 
-        # Share_RW/Share_RO are AD groups only; the file server (Populate-Shares.ps1) references them by name for NTFS ACLs.
-        Ensure-ADGroup `
-            -Name "${dlgsPrefix}_${code}_Share_RW" `
-            -Path $dlgsOU.DistinguishedName `
-            -GroupCategory Security `
-            -GroupScope DomainLocal
+        if ($EnableFileServices) {
 
-        Ensure-ADGroup `
-            -Name "${dlgsPrefix}_${code}_Share_RO" `
-            -Path $dlgsOU.DistinguishedName `
-            -GroupCategory Security `
-            -GroupScope DomainLocal
+            # Share_RW/Share_RO are AD groups only; 
+            # The file server (Populate-Shares.ps1) references them by name for NTFS ACLs.
+            
+            Ensure-ADGroup `
+                -Name "${dlgsPrefix}_${code}_Share_RW" `
+                -Path $dlgsOU.DistinguishedName `
+                -GroupCategory Security `
+                -GroupScope DomainLocal
+
+            Ensure-ADGroup `
+                -Name "${dlgsPrefix}_${code}_Share_RO" `
+                -Path $dlgsOU.DistinguishedName `
+                -GroupCategory Security `
+                -GroupScope DomainLocal
+
+        }
     }
 
     Write-Host "[i] Department security group generation completed"
@@ -622,7 +641,8 @@ function Invoke-Phase3DepartmentSecurityGroups {
 function Invoke-Phase4DepartmentGroupNesting {
     param(
         [object[]]$SelectedDepartments,
-        [object]$PopulationModel
+        [object]$PopulationModel,
+        [bool]$EnableFileServices
     )
 
     $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
@@ -663,17 +683,22 @@ function Invoke-Phase4DepartmentGroupNesting {
         )
     }
 
-    foreach ($department in $SelectedDepartments) {
+    Write-Host "Phase 4 EnableFileServices value = [$EnableFileServices]"
 
-        $code = $department.Value
+    if ($EnableFileServices) {
 
-        Ensure-ADGroupMember `
-            -GroupName "${dlgsPrefix}_${code}_Share_RW" `
-            -MemberName "${ggsPrefix}_${code}_Managers"
+        foreach ($department in $SelectedDepartments) {
 
-        Ensure-ADGroupMember `
-            -GroupName "${dlgsPrefix}_${code}_Share_RO" `
-            -MemberName "${ggsPrefix}_${code}_Users"
+            $code = $department.Value
+
+            Ensure-ADGroupMember `
+                -GroupName "${dlgsPrefix}_${code}_Share_RW" `
+                -MemberName "${ggsPrefix}_${code}_Managers"
+
+            Ensure-ADGroupMember `
+                -GroupName "${dlgsPrefix}_${code}_Share_RO" `
+                -MemberName "${ggsPrefix}_${code}_Users"
+        }
     }
 
     Write-Host "[i] Department group nesting completed"
@@ -1507,11 +1532,13 @@ $usersOU = Invoke-Phase2DepartmentOus `
 Invoke-Phase3DepartmentSecurityGroups `
     -SelectedDepartments $departments `
     -RootOuDn $rootOUdn `
-    -PopulationModel $model
+    -PopulationModel $model `
+    -EnableFileServices $fileServicesEnabled
 
 Invoke-Phase4DepartmentGroupNesting `
     -SelectedDepartments $departments `
-    -PopulationModel $model
+    -PopulationModel $model `
+    -EnableFileServices $fileServicesEnabled
 
 Write-Host "[i] User generation starting"
 

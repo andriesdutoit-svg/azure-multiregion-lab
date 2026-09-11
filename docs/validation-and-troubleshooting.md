@@ -27,7 +27,8 @@ It checks:
 - Existing region coverage for staged brownfield deployments.
 - Remaining workload capacity after existing and new control-plane placement.
 - Department and identity configuration.
-- Dedicated file server availability when `useDedicatedFileServer` is `true`. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
+- File services requiring identity automation.
+- Dedicated file-server mode requiring enabled file services and an available `srvwin` VM. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
 
 ## Useful Outputs
 
@@ -59,7 +60,9 @@ A healthy result has `validationSummary` set to `Validation passed.` and `capaci
 - `hasRegionOverflow`: A region, including the hub, exceeds `maxVmsPerRegion`.
 - `hasNonControlInHub`: A workload VM was placed in the hub.
 - `hasInsufficientWorkloadCapacity`: Control-plane placement left too few spoke slots for workloads.
-- `missingDedicatedFileServer`: `useDedicatedFileServer` is `true` but no `srvwin` VM exists. File services silently fall back to the DC when this is `true`; it does not block deployment.
+- `missingDedicatedFileServer`: `useDedicatedFileServer` is `true` but no `srvwin` VM exists. Target selection falls back to the primary DC so template evaluation can continue, but the configuration is invalid and should be corrected.
+- `invalidDedicatedFileServerConfiguration`: `useDedicatedFileServer` is `true` while `enableFileServices` is `false`.
+- `invalidFileServicesIdentityConfiguration`: `enableFileServices` or `useDedicatedFileServer` is `true` while `enableIdentity` is `false`.
 
 Validation outputs describe the calculated result; they do not by themselves change or roll back resources. Also inspect VM Run Command results separately.
 

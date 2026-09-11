@@ -80,14 +80,16 @@ Before each brownfield expansion, update:
 The `useDedicatedFileServer` parameter controls the file server target:
 
 - `false` — file services always run on the primary DC.
-- `true` — file services run on the first `srvwin` VM if one exists in `finalVmPlacements`. If no `srvwin` VM exists, it silently falls back to the primary DC instead of failing the deployment; `modules/logic/validation.bicep` flags this as `validationFlags.missingDedicatedFileServer` with a matching `validationMessage`, but this is advisory only and does not block the deployment. See [Deployment Results and Troubleshooting](validation-and-troubleshooting.md) for reviewing validation outputs.
+- `true` — file services run on the first `srvwin` VM in `finalVmPlacements`. If none exists, target selection falls back to the primary DC so template evaluation can continue, while `validationFlags.missingDedicatedFileServer` and `validationMessage` report the invalid configuration. Add a Windows server or disable dedicated mode before relying on the result. See [Deployment Results and Troubleshooting](validation-and-troubleshooting.md) for reviewing validation outputs.
+
+File services are provisioned only when `enableFileServices=true` during an `identity` or `all` stage. Dedicated mode also requires `enableIdentity=true`; the validation module reports unsupported combinations.
 
 The file server target is recomputed on every deployment. If a greenfield deployment has no Windows server (file services run on the DC) and a later brownfield deployment adds one, the file server target switches to the new Windows server on that run.
 
 This switch is a target change only, not a migration:
 
 - The new Windows server gets freshly created, empty department shares. Nothing is copied from the DC.
-- The DC's existing `C:\Shares` folder, its SMB shares, and its `populate-shares` Run Command resource are left in place; nothing in the template removes or updates them, since the module's resource-group scope now points at the new server's resource group instead.
+- The DC's existing `C:\Shares` folder, its SMB shares, and its `populate-shares` Run Command resource are left in place; nothing in the template removes them, since the module's resource-group scope now points at the new server's resource group instead.
 - Any data or share permissions that existed on the DC must be migrated manually (e.g. via Robocopy) if continuity is required.
 
 [Back to README](../README.md)

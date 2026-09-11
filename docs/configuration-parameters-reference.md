@@ -155,6 +155,18 @@ All credentials are stored in Azure Key Vault and referenced by name, not embedd
 
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
-| `useDedicatedFileServer` | boolean | Run departmental file shares on the first `srvwin` VM instead of the primary DC. Falls back to the DC (with an advisory validation warning) if no `srvwin` VM exists. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion). | `true` |
+| `enableFileServices` | boolean | Create departmental share groups and memberships, then provision the `C:\Shares` directory, departmental SMB shares, and NTFS permissions during the identity stage. Requires `enableIdentity=true`. | `true` |
+| `useDedicatedFileServer` | boolean | When file services are enabled, target the first `srvwin` VM in the final placement model instead of the primary DC. Requires `enableFileServices=true`, `enableIdentity=true`, and at least one `srvwin` VM. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion). | `true` |
+
+Supported combinations:
+
+| `enableIdentity` | `enableFileServices` | `useDedicatedFileServer` | Result |
+|---|---|---|---|
+| `false` | `false` | `false` | Identity and file services are disabled. |
+| `true` | `false` | `false` | AD is populated without share groups, SMB shares, or file-system permissions. |
+| `true` | `true` | `false` | File services are provisioned on the primary DC. |
+| `true` | `true` | `true` | File services are provisioned on the first `srvwin` VM. |
+
+Other combinations produce validation flags. If dedicated mode has no `srvwin` placement, target selection falls back to the primary DC so template evaluation can continue, but `missingDedicatedFileServer` is reported and the configuration should be corrected. Changing the target does not move existing share data or remove shares from the former host.
 
 [Back to README](../README.md)

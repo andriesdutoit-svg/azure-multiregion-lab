@@ -34,7 +34,7 @@ The root [main.bicep](../main.bicep) orchestrates the deployment. Reusable modul
 - `modules/networking` owns VNets, subnets, NSGs, firewalls, and route tables.
 - `modules/peering` owns hub-to-spoke and spoke-to-hub peering.
 - `modules/compute` owns Windows and Linux VM resources.
-- `modules/identity` owns AD automation and domain joining.
+- `modules/identity` owns AD automation, domain joining, and departmental file-service provisioning.
 - `modules/logic` owns configuration and capacity validation.
 
 ## Resource Scope
@@ -131,5 +131,11 @@ This is a controlled-egress design rather than a block-all design: outbound conn
 The template combines the desired VM model with `existingVmPlacements`. Existing VM identities are retained, missing VM identities are created, and the combined placement model is used for validation, DNS generation, capacity calculations, and identity targeting.
 
 The template does not discover live Azure VM inventory. Brownfield users must maintain `existingVmPlacements` in the parameter file.
+
+## File Services
+
+File services are part of the identity workflow and are controlled independently by `enableFileServices`. Directory population runs on the primary DC and, when file services are enabled, creates the domain-local share groups and nests department manager/user groups into them. The separate `file-services.bicep` module then runs `Populate-Shares.ps1` on the selected host to create `C:\Shares`, one SMB share per selected department, and the corresponding NTFS access rules.
+
+By default, the selected host is the primary DC. When `useDedicatedFileServer=true`, the first `srvwin` entry in `finalVmPlacements` is selected. The file-services module is scoped to that VM's resource group and depends on both AD population and Windows domain join, ensuring a dedicated server joins the domain before its AD-backed ACLs are applied.
 
 [Back to README](../README.md)
