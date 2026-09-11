@@ -9,3 +9,6 @@ main.parameters.test.json
 
 # VS Code workspace settings
 .vscode/
+
+# Personal GitHub Copilot agents
+/.github/agents/

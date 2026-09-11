@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.3.5
+# Azure Multi-Region Lab (AMRL) v2.3.6
 
 AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, hub-and-spoke networking, capacity-aware VM placement, and idempotent Active Directory automation.
 
@@ -11,6 +11,7 @@ AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates m
 - Brownfield reconciliation using existing region and VM inventories.
 - Staged deployment of networking, compute, identity, and workloads.
 - Idempotent AD forest, replica, directory population, and domain-join automation.
+- Optional departmental file services on the primary DC or the first Windows server.
 - Validation outputs that explain template decisions and configuration problems.
 - Secure credential and SSH-key references through Azure Key Vault.
 - Controlled egress via Azure Firewall for workload subnets, with Internet access routed through the firewall rather than direct outbound access.
@@ -57,7 +58,7 @@ az deployment sub create `
   --parameters <parameters-file>.json
 ```
 
-For Key Vault setup and parameter details, see [Deployment Guide](docs/deployment.md).
+For Key Vault setup and parameter details, see [Deployment Guide](docs/deployment.md) and [Configuration Parameters Reference](docs/configuration-parameters-reference.md).
 
 ## Quick Start: Brownfield
 
@@ -113,13 +114,15 @@ Replica DC promotion
 Directory population
         ->
 Windows and Linux domain join
+        ->
+Departmental share provisioning (when enabled)
 ```
 
 The scripts inspect current state before applying changes. Existing forests, domain controllers, and domain memberships are retained. Missing or incomplete configuration is repaired where supported.
 
 See [Identity and Domain Join](docs/identity-and-domain-join.md) for Windows and Linux behavior, healing, troubleshooting, and Run Command inspection.
 
-See [Access and Administration](docs/access-and-administration.md) for RDP, SSH, Key Vault key setup, and AD access.
+See [Access and Administration](docs/access-and-administration.md) for RDP, SSH, Key Vault setup and recreation, and AD access.
 
 See [CI/CD Workflow and Local Checks](docs/ci-cd-validation.md) for GitHub Actions and Azure authentication guidance.
 
@@ -172,6 +175,7 @@ See the detailed guides for implementation boundaries and operational guidance.
 
 - [Architecture](docs/architecture.md)
 - [Deployment Guide](docs/deployment.md)
+- [Configuration Parameters Reference](docs/configuration-parameters-reference.md)
 - [Placement and Reconciliation](docs/placement-and-reconciliation.md)
 - [Identity and Domain Join](docs/identity-and-domain-join.md)
 - [Access and Administration](docs/access-and-administration.md)
@@ -181,4 +185,4 @@ See the detailed guides for implementation boundaries and operational guidance.
 
 ## Release
 
-**v2.3.5** completes placement remediation: brownfield VM placements are validated against the active region set, and validation outputs provide clearer placement and capacity diagnostics.
+**v2.3.6** separates departmental share provisioning from AD population and can place file services on the first Windows server. File services remain optional, and validation reports invalid identity, file-service, or dedicated-server combinations.

@@ -35,6 +35,11 @@ param deployWorkload bool
 param existingRegions array = []
 // Existing VM inventory used for brownfield capacity validation.
 param existingVmPlacements array = []
+// Dedicated file server mode: requires at least one srvwin VM to exist.
+param enableIdentity bool
+param useDedicatedFileServer bool
+param enableFileServices bool
+param fileServerVmAvailable bool
 
 // ========================================
 // PLACEMENT & CAPACITY VALIDATION
@@ -141,6 +146,11 @@ var spokeRegionsCovered = empty(spokesNotCovered)
 
 var hasMixedCreationMode = deployNetwork && length(existingRegions) > 0 && length(existingRegions) < regionCount
 
+var missingDedicatedFileServer = useDedicatedFileServer && !fileServerVmAvailable
+
+var invalidDedicatedFileServerConfiguration = !enableFileServices && useDedicatedFileServer
+var invalidFileServicesIdentityConfiguration = !enableIdentity && (enableFileServices || useDedicatedFileServer)
+
 // ========================================
 // WORKLOAD CAPACITY VALIDATION
 // Confirms that spokes have remaining workload slots after control-plane placement
@@ -228,6 +238,9 @@ var validationFlags = {
   hubRequiredButMissing: hubRequiredButMissing
   spokeRegionsCovered: !spokeRegionsCovered
   hasMixedCreationMode: hasMixedCreationMode
+  missingDedicatedFileServer: missingDedicatedFileServer
+  invalidDedicatedFileServerConfiguration: invalidDedicatedFileServerConfiguration
+  invalidFileServicesIdentityConfiguration: invalidFileServicesIdentityConfiguration
 }
 
 // ========================================
@@ -282,8 +295,17 @@ var msg22 = !spokeRegionsCovered
 var msg23 = hasMixedCreationMode
   ? 'Mixing greenfield (create) and brownfield (reuse) regions in same deployment. Ensure consistent creation mode across all regions.'
   : ''
+var msg24 = missingDedicatedFileServer
+  ? 'useDedicatedFileServer is true but no srvwin virtual machine exists. Add a Windows server (vmCounts.windowsServer) or set useDedicatedFileServer to false.'
+  : ''
+var msg25 = invalidDedicatedFileServerConfiguration
+    ? 'useDedicatedFileServer cannot be true when enableFileServices is false.'
+    : ''
+var msg26 = invalidFileServicesIdentityConfiguration
+  ? 'enableIdentity must be true when enableFileServices or useDedicatedFileServer is true. File services depend on Active Directory users and groups.'
+  : ''
 
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : msg23 != '' ? msg23 : 'All validation checks passed.'
+var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : msg23 != '' ? msg23 : msg24 != '' ? msg24 : msg25 != '' ? msg25 : msg26 != '' ? msg26 : 'All validation checks passed.'
 
 // ========================================
 // OUTPUTS

@@ -75,6 +75,12 @@ param additionalDepartments object
 param departmentCount int
 param usersPerDepartment int
 
+@description('Enable departmental file shares, SMB shares, and share permissions.')
+param enableFileServices bool
+
+@description('Use a dedicated Windows server for departmental file shares.')
+param useDedicatedFileServer bool
+
 // ----
 // Tagging & Resource Identification
 // ----
@@ -387,6 +393,18 @@ var replicaDcList = filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index > 0
 )
 
+var fileServerVmList = filter(finalVmPlacements, vm =>
+  vm.type == 'srvwin'
+)
+
+var fileServerVm = useDedicatedFileServer && length(fileServerVmList) > 0
+  ? fileServerVmList[0]
+  : primaryDc!
+
+var fileServerName = useDedicatedFileServer
+  ? fileServerVm.name
+  : primaryDc!.name
+
 // ========================================
 // VM GROUPING + SUPPORT VARIABLES
 // ========================================
@@ -525,6 +543,10 @@ module validationEngine 'modules/logic/validation.bicep' = {
     deployWorkload: deployWorkload
     existingRegions: existingRegions
     existingVmPlacements: existingVmPlacements
+    enableIdentity: enableIdentity
+    useDedicatedFileServer: useDedicatedFileServer
+    enableFileServices: enableFileServices
+    fileServerVmAvailable: length(fileServerVmList) > 0
   }
 }
 
@@ -827,6 +849,7 @@ var directoryModel = {
     root: {
       name: 'Shares'
       path: 'C:\\Shares'
+      host: fileServerName
     }
   }
 
@@ -892,6 +915,27 @@ module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
     clientAdminPassword: clientAdminPassword
     departmentCount: departmentCount
     directoryModel: string(directoryModel)
+    enableFileServices: enableFileServices
+    reconciliationToken: reconciliationToken
+  }
+}
+
+module fileServices 'modules/identity/file-services.bicep' = if (deployIdentity && enableFileServices) {
+  name: '${prefix}-file-services'
+
+  scope: resourceGroup('${prefix}-rg-${fileServerVm.regionKey}')
+
+  dependsOn: [
+    adPopulate
+    domainJoinWindows
+  ]
+
+  params: {
+    fileServerVmName: fileServerName
+    directoryModel: string(directoryModel)
+    sysAdminDepartment: sysAdminDepartment
+    additionalDepartments: additionalDepartments
+    departmentCount: departmentCount
     reconciliationToken: reconciliationToken
   }
 }

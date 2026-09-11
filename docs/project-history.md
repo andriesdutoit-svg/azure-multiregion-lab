@@ -48,4 +48,18 @@ Validation outputs and Run Command instance views expose placement decisions, ca
 - Region indexes determine VNet address spaces and must be treated as part of the deployed network contract.
 - Identity scripts are idempotent, but guest networking, DNS, Kerberos, LDAP, and Azure VM Agent health can still affect execution.
 
+## Third-Party Components
+
+AMRL incorporates concepts and architectural inspiration from [Set-DummyAD](https://github.com/BOAScripts/Set-DummyAD) (MIT License). AMRL does not execute the original Set-DummyAD solution directly; it has been substantially adapted and integrated into this deployment framework.
+
+Concepts derived from or inspired by Set-DummyAD include AD OU generation, department modelling, security group generation, AGDLP group nesting, file share creation, NTFS permission assignment, and manager/user population workflows.
+
+Files containing logic derived from or inspired by Set-DummyAD:
+
+- `modules/identity/scripts/Install-Forest.ps1`
+- `modules/identity/scripts/Promote-ReplicaDC.ps1`
+- `modules/identity/scripts/Populate-AD.ps1`
+
+AMRL follows a non-destructive deployment model: re-execution of the identity stage creates missing objects and repairs selected attributes rather than enforcing an exact directory state.
+
 [Back to README](../README.md)
