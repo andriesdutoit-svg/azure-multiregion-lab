@@ -102,26 +102,6 @@ var deployControl = stage == 'control' || stage == 'all'
 var deployIdentity = enableIdentity && (stage == 'identity' || stage == 'all')
 var deployWorkload = stage == 'workload' || stage == 'all'
 
-module placementEngine 'modules/logic/placement-engine.bicep' = {
-  name: '${prefix}-placement-engine'
-
-  params: {
-    vmCounts: vmCounts
-
-    existingVmPlacements: existingVmPlacements
-
-    regionIndexMap: regionIndexMap
-    regionCount: regionCount
-    maxVmsPerRegion: maxVmsPerRegion
-
-    existingRegions: existingRegions
-
-    prefix: prefix
-
-    useDedicatedFileServer: useDedicatedFileServer
-  }
-}
-
 // ========================================
 // PLACEMENT ENGINE
 //
@@ -438,7 +418,7 @@ var finalVmPlacements = concat(
 
 var primaryDc = first(filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index == 0
-))
+))!
 
 var replicaDcList = filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index > 0
@@ -450,7 +430,7 @@ var fileServerVmList = filter(finalVmPlacements, vm =>
 
 var fileServerVm = useDedicatedFileServer && length(fileServerVmList) > 0
   ? fileServerVmList[0]
-  : primaryDc!
+  : primaryDc
 
 var fileServerName = useDedicatedFileServer
   ? fileServerVm.name
@@ -613,8 +593,30 @@ module validationEngine 'modules/logic/validation.bicep' = {
   }
 }
 
-module networkStage 'modules/orchestration/network-stage.bicep' = {
+// ========================================
+// FUTURE STAGE CUTOVER
+//
+// module networkStage
+//
+// Replaces:
+// - rgs
+// - vnets
+// - peerings
+// - firewall
+// - routeTables
+// - workloadSubnets
+//
+// Outputs:
+// - subnetMap
+// ========================================
+
+// ========================================
+// DEPLOYMENT STAGE 1: RESOURCE GROUPS
+// ========================================
+
+module networkStage 'modules/stages/network-stage.bicep' = {
   name: '${prefix}-network-stage'
+
   params: {
     prefix: prefix
     regionKeys: regionKeys
@@ -622,7 +624,7 @@ module networkStage 'modules/orchestration/network-stage.bicep' = {
 
     deployNetwork: deployNetwork
 
-    tags: tags
+    tags: finalTags
 
     existingRegions: existingRegions
 
@@ -630,14 +632,11 @@ module networkStage 'modules/orchestration/network-stage.bicep' = {
     subnetPrefixesArray: subnetPrefixesArray
 
     dnsServers: dnsServers
+
     jumpboxSubnets: jumpboxSubnets
     jumpboxAllowedSources: jumpboxAllowedSources
   }
 }
-
-// ========================================
-// DEPLOYMENT STAGE 1: RESOURCE GROUPS
-// ========================================
 
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
@@ -785,6 +784,48 @@ module workloadSubnets 'modules/networking/workloadSubnets.bicep' = [
   }
 ]
 
+module computeStage 'modules/stages/compute-stage.bicep' = {
+  name: '${prefix}-compute-stage'
+
+  params: {
+    prefix: prefix
+
+    reconciliationToken: reconciliationToken
+
+    deployControl: deployControl
+    deployWorkload: deployWorkload
+    deployIdentity: deployIdentity
+
+    windowsVMList: windowsVMList
+    linuxVMList: linuxVMList
+
+    hasLinuxVMs: hasLinuxVMs
+
+    roleSizingMap: roleSizingMap
+    finalTags: finalTags
+
+    windowsServerImage: windowsServerImage
+    windowsClientImage: windowsClientImage
+    ubuntuImage: ubuntuImage
+
+    vmAutoDeleteOptions: vmAutoDeleteOptions
+
+    jumpboxAdminUsername: jumpboxAdminUsername
+    jumpboxAdminPassword: jumpboxAdminPassword
+
+    serverAdminUsername: serverAdminUsername
+    serverAdminPassword: serverAdminPassword
+
+    clientAdminUsername: clientAdminUsername
+    clientAdminPassword: clientAdminPassword
+
+    sshPublicKey: sshPublicKey
+    sshPrivateKey: sshPrivateKey
+
+    subnetMap: networkStage.outputs.subnetMap
+  }
+}
+
 // ========================================
 // DEPLOYMENT STAGE 6: WINDOWS VMS
 // ========================================
@@ -884,6 +925,45 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
     }
   }
 ]
+
+module identityStage 'modules/stages/identity-stage.bicep' = {
+  name: '${prefix}-identity-stage'
+
+  dependsOn: [
+    computeStage
+  ]
+
+  params: {
+    prefix: prefix
+
+    deployIdentity: deployIdentity
+
+    reconciliationToken: reconciliationToken
+
+    primaryDc: primaryDc
+    replicaDcList: replicaDcList
+
+    fileServerVm: fileServerVm
+    fileServerName: fileServerName
+
+    finalVmPlacements: finalVmPlacements
+
+    domainName: domainName
+
+    usersPerDepartment: usersPerDepartment
+    departmentCount: departmentCount
+
+    sysAdminDepartment: sysAdminDepartment
+    additionalDepartments: additionalDepartments
+
+    enableFileServices: enableFileServices
+
+    serverAdminUsername: serverAdminUsername
+    serverAdminPassword: serverAdminPassword
+
+    clientAdminPassword: clientAdminPassword
+  }
+}
 
 // ========================================
 // DEPLOYMENT STAGE 7: IDENTITY BOOTSTRAP (PRIMARY DC)
@@ -1114,7 +1194,7 @@ var jumpboxLinuxSshKeyVMs = hasLinuxVMs ? filter(controlWindowsVMs, item => item
 
 // Deploys the SSH private key onto jumpboxes only, so admins can hop from a jumpbox to Linux VMs
 // without distributing the private key to every workload VM.
-module installJumpboxSshKey 'modules/identity/ssh-key.bicep' = [
+module installJumpboxSshKey 'modules/compute/ssh-key.bicep' = [
   for vm in jumpboxLinuxSshKeyVMs: {
     name: '${prefix}-sshkey-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 

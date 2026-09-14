@@ -1,20 +1,29 @@
 targetScope = 'subscription'
 
-// NOTE:
-// Stage module under construction.
-// Not yet wired into deployment execution.
-// Networking resources remain in main.bicep until
-// compute-stage dependencies are refactored.
+// ========================================
+// NETWORK STAGE
+//
+// Responsibilities:
+// - Resource Groups
+// - VNets
+// - Peerings
+// - Azure Firewall
+// - Route Tables
+// - Workload Subnets
+//
+// Provides:
+// - subnetMap
+//
+// Consumed by:
+// - compute-stage
+// ========================================
 
-// ========================================
-// NETWORK STAGE ORCHESTRATION
-// Resource Groups
-// VNets
-// Peerings
-// Firewall
-// Route Tables
-// Workload Subnets
-// ========================================
+// Outputs:
+//
+// subnetMap
+//
+// Consumed by:
+// compute-stage.bicep
 
 param prefix string
 param regionKeys array
@@ -163,6 +172,67 @@ module workloadSubnets '../networking/workloadSubnets.bicep' = [
   }
 ]
 
-output resourceGroupNames array = [
-  for region in regionKeys: '${prefix}-rg-${region}'
+// ========================================
+// NETWORK STAGE OUTPUT CONTRACT
+// ========================================
+//
+// Future outputs:
+//
+// subnetMap
+//
+// Consumed by:
+// - compute-stage
+//
+// Contract:
+//
+// [
+//   {
+//     regionKey: 'westeurope'
+//
+//     subnets: {
+//       dc: {
+//         id: '...'
+//       }
+//
+//       jumpbox: {
+//         id: '...'
+//       }
+//
+//       server: {
+//         id: '...'
+//       }
+//
+//       client: {
+//         id: '...'
+//       }
+//     }
+//   }
+// ]
+
+output subnetMap array = [
+  for (region, i) in regionKeys: {
+    regionKey: region
+
+    subnets: {
+      dc: {
+        #disable-next-line BCP318
+        id: vnets[i].outputs.subnets.dc.id
+      }
+
+      jumpbox: {
+        #disable-next-line BCP318
+        id: vnets[i].outputs.subnets.jumpbox.id
+      }
+
+      server: {
+        #disable-next-line BCP318
+        id: vnets[i].outputs.subnets.server.id
+      }
+
+      client: {
+        #disable-next-line BCP318
+        id: vnets[i].outputs.subnets.client.id
+      }
+    }
+  }
 ]
