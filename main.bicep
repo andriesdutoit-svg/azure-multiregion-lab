@@ -503,6 +503,24 @@ var subnetPrefixesArray = [
   }
 ]
 
+var reservedSubnetKeys = [
+  'firewall'
+  'jumpbox'
+  'dc'
+  'server'
+  'client'
+]
+
+var additionalSubnetKeys = map(
+  filter(items(subnetIndexMap), item => !contains(reservedSubnetKeys, item.key)),
+  item => item.key
+)
+
+var additionalSubnetsByRegion = map(regionKeys, region => map(additionalSubnetKeys, subnetKey => {
+  name: '${prefix}-vnet-${region}-subnet-${subnetKey}'
+  addressPrefix: '10.${regionIndexMap[region]}.${subnetIndexMap[subnetKey]}.0/24'
+}))
+
 // ========================================
 // DNS CONFIGURATION: DYNAMIC FROM DC PLACEMENTS
 // DNS servers are dynamically derived from actual DC placement positions,
@@ -607,6 +625,7 @@ module networkStage 'modules/stages/network-stage.bicep' = {
 
     jumpboxSubnets: jumpboxSubnets
     jumpboxAllowedSources: jumpboxAllowedSources
+    additionalSubnetsByRegion: additionalSubnetsByRegion
   }
 }
 /*

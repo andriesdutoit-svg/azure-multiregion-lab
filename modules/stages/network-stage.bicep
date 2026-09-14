@@ -41,6 +41,7 @@ param subnetPrefixesArray array
 param dnsServers array
 param jumpboxSubnets array
 param jumpboxAllowedSources array
+param additionalSubnetsByRegion array
 
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
@@ -174,6 +175,22 @@ module workloadSubnets '../networking/workloadSubnets.bicep' = [
       serverRouteTableId: routeTables[i].outputs.serverRouteTableId
       #disable-next-line BCP318
       clientRouteTableId: routeTables[i].outputs.clientRouteTableId
+    }
+  }
+]
+
+module additionalSubnets '../networking/additionalSubnets.bicep' = [
+  for (region, i) in regionKeys: if (deployNetwork && !empty(additionalSubnetsByRegion[i])) {
+    name: '${prefix}-additional-subnets-${region}'
+    scope: resourceGroup('${prefix}-rg-${region}')
+    dependsOn: [
+      vnets
+      workloadSubnets
+    ]
+    params: {
+      #disable-next-line BCP318
+      vnetName: vnets[i].outputs.vnetName
+      subnets: additionalSubnetsByRegion[i]
     }
   }
 ]
