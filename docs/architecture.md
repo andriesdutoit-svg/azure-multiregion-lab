@@ -122,7 +122,7 @@ All VMs (`modules/compute/vm-windows.bicep`, `modules/compute/vm-linux.bicep`) s
 
 ## Controlled Egress
 
-The workload subnets no longer use direct outbound Internet access. Route tables for the server and client subnets send `0.0.0.0/0` to the Azure Firewall private IP, so all egress from those subnets is forced through the hub firewall. This creates a centralized inspection and policy-enforcement point while preserving internal communication and allowed outbound HTTP/HTTPS flows.
+Server and client subnets send both `10.0.0.0/8` and `0.0.0.0/0` to the Azure Firewall private IP, forcing internal cross-spoke traffic and Internet egress through the hub firewall. Spoke DC and jumpbox subnets send only `10.0.0.0/8` through the firewall, preserving direct Internet access while enabling cross-spoke directory services and administration. Hub DC and jumpbox subnets do not receive these route tables because the hub is directly peered with every spoke.
 
 This is a controlled-egress design rather than a block-all design: outbound connectivity is still allowed where required, but it is centralized and inspectable at the firewall instead of being direct from the workload subnets.
 

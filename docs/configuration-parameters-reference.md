@@ -29,6 +29,8 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 
 ## Virtual Machine Configuration
 
+Reserved subnet keys have known platform roles. AMRL generates role-specific NSGs, internal route tables for spoke DCs and jumpboxes, and firewall route tables for server and client subnets. Additional subnet keys are policy-neutral and receive no inferred NSG or route table.
+
 **VM Scale**:
 
 | Parameter | Type | Purpose | Example |

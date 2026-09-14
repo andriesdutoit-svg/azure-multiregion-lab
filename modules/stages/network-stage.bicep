@@ -131,6 +131,8 @@ module routeTables '../networking/routeTable.bicep' = [
     params: {
       location: region
 
+      dcSubnetName: '${prefix}-vnet-${region}-subnet-dc'
+      jumpboxSubnetName: '${prefix}-vnet-${region}-subnet-jumpbox'
       serverSubnetName: '${prefix}-vnet-${region}-subnet-server'
 
       clientSubnetName: '${prefix}-vnet-${region}-subnet-client'
@@ -165,6 +167,10 @@ module workloadSubnets '../networking/workloadSubnets.bicep' = [
       nsgIds: vnets[i].outputs.nsgIds
 
       #disable-next-line BCP318
+      dcRouteTableId: routeTables[i].outputs.dcRouteTableId
+      #disable-next-line BCP318
+      jumpboxRouteTableId: routeTables[i].outputs.jumpboxRouteTableId
+      #disable-next-line BCP318
       serverRouteTableId: routeTables[i].outputs.serverRouteTableId
       #disable-next-line BCP318
       clientRouteTableId: routeTables[i].outputs.clientRouteTableId
@@ -176,14 +182,7 @@ module workloadSubnets '../networking/workloadSubnets.bicep' = [
 // NETWORK STAGE OUTPUT CONTRACT
 // ========================================
 //
-// Future outputs:
-//
-// subnetMap
-//
-// Consumed by:
-// - compute-stage
-//
-// Contract:
+// Output contract consumed by compute-stage:
 //
 // [
 //   {
