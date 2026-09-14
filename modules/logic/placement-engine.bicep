@@ -14,10 +14,10 @@ targetScope = 'subscription'
 // ========================================
 
 // NOTE:
-// Placement engine logic has been migrated here as part of V2.4 analysis.
-// This module is not currently consumable via module outputs because
-// placement results are required at deployment-start for resource counts,
-// loops, scopes, conditions and names.
+// This file is a reference implementation of the placement logic.
+// The subscription-scope root keeps the executable logic because placement
+// results are required for deployment-time counts, loops, scopes, conditions,
+// and names.
 //
 // Future options:
 // - User-defined functions (if suitable)
@@ -84,9 +84,6 @@ param useDedicatedFileServer bool
 //
 // fileServerVm
 // fileServerName
-
-// TODO: V2.4
-// Outputs to be implemented after placement logic is migrated.
 
 var regionPairs = [
   for r in items(regionIndexMap): {

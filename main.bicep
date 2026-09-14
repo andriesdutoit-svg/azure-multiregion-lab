@@ -105,10 +105,8 @@ var deployWorkload = stage == 'workload' || stage == 'all'
 // ========================================
 // PLACEMENT ENGINE
 //
-// V2.4 Refactor Candidate
-//
-// Future home:
-// modules/logic/placement-engine.bicep
+// The placement engine remains in the subscription-scope composition root
+// because its results drive deployment-time loops, scopes, names, and conditions.
 //
 // Responsibilities:
 // - VM model building
@@ -542,17 +540,8 @@ var jumpboxSubnets = [
   for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
 ]
 
-// Future V2.4 stage contract:
-//
-// subnetMap = [
-//   {
-//     regionKey: region
-//     dcSubnetId: ...
-//     jumpboxSubnetId: ...
-//     serverSubnetId: ...
-//     clientSubnetId: ...
-//   }
-// ]
+// The network stage exposes subnetMap with one entry per selected region.
+// The compute stage consumes that contract for managed VM placement.
 
 //
 // ========================================
@@ -592,23 +581,6 @@ module validationEngine 'modules/logic/validation.bicep' = {
     fileServerVmAvailable: length(fileServerVmList) > 0
   }
 }
-
-// ========================================
-// FUTURE STAGE CUTOVER
-//
-// module networkStage
-//
-// Replaces:
-// - rgs
-// - vnets
-// - peerings
-// - firewall
-// - routeTables
-// - workloadSubnets
-//
-// Outputs:
-// - subnetMap
-// ========================================
 
 // ========================================
 // DEPLOYMENT STAGE 1: RESOURCE GROUPS
