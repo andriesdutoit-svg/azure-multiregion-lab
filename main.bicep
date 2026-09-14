@@ -103,6 +103,35 @@ var deployIdentity = enableIdentity && (stage == 'identity' || stage == 'all')
 var deployWorkload = stage == 'workload' || stage == 'all'
 
 // ========================================
+// PLACEMENT ENGINE
+//
+// The placement engine remains in the subscription-scope composition root
+// because its results drive deployment-time loops, scopes, names, and conditions.
+//
+// Responsibilities:
+// - VM model building
+// - Brownfield reconciliation
+// - Region ordering
+// - Hub modelling
+// - Capacity calculations
+// - VM placement
+// - Placement-derived objects
+//
+// Public contract:
+// regionKeys
+// primaryRegion
+// hubRegion
+// invalidExistingRegions
+// invalidExistingVmPlacements
+// hasTooManyDcs
+// finalVmPlacements
+// primaryDc
+// replicaDcList
+// fileServerVm
+// fileServerName
+// ========================================
+
+// ========================================
 // VM MODEL BUILDING
 // Constructs unified list of all VMs from role-based counts
 // ========================================
@@ -387,7 +416,7 @@ var finalVmPlacements = concat(
 
 var primaryDc = first(filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index == 0
-))
+))!
 
 var replicaDcList = filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index > 0
@@ -399,7 +428,7 @@ var fileServerVmList = filter(finalVmPlacements, vm =>
 
 var fileServerVm = useDedicatedFileServer && length(fileServerVmList) > 0
   ? fileServerVmList[0]
-  : primaryDc!
+  : primaryDc
 
 var fileServerName = useDedicatedFileServer
   ? fileServerVm.name
@@ -511,6 +540,9 @@ var jumpboxSubnets = [
   for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
 ]
 
+// The network stage exposes subnetMap with one entry per selected region.
+// The compute stage consumes that contract for managed VM placement.
+
 //
 // ========================================
 // VALIDATION ENGINE
@@ -554,6 +586,30 @@ module validationEngine 'modules/logic/validation.bicep' = {
 // DEPLOYMENT STAGE 1: RESOURCE GROUPS
 // ========================================
 
+module networkStage 'modules/stages/network-stage.bicep' = {
+  name: '${prefix}-network-stage'
+
+  params: {
+    prefix: prefix
+    regionKeys: regionKeys
+    hubRegion: hubRegion
+
+    deployNetwork: deployNetwork
+
+    tags: finalTags
+
+    existingRegions: existingRegions
+
+    addressPrefixes: addressPrefixes
+    subnetPrefixesArray: subnetPrefixesArray
+
+    dnsServers: dnsServers
+
+    jumpboxSubnets: jumpboxSubnets
+    jumpboxAllowedSources: jumpboxAllowedSources
+  }
+}
+/*
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
     name: '${prefix}-rg-${region}'
@@ -599,7 +655,7 @@ module vnets 'modules/networking/vnet.bicep' = [
 // DEPLOYMENT STAGE 3: VNET PEERING
 // ========================================
 
-module peerings 'modules/peering/peering.bicep' = [
+module peerings 'modules/networking/peering.bicep' = [
   for source in regionKeys: if (deployNetwork) {
     name: '${prefix}-peerings-${source}'
     scope: resourceGroup('${prefix}-rg-${source}')
@@ -699,6 +755,49 @@ module workloadSubnets 'modules/networking/workloadSubnets.bicep' = [
     }
   }
 ]
+*/
+
+module computeStage 'modules/stages/compute-stage.bicep' = {
+  name: '${prefix}-compute-stage'
+
+  params: {
+    prefix: prefix
+
+    reconciliationToken: reconciliationToken
+
+    deployControl: deployControl
+    deployWorkload: deployWorkload
+    deployIdentity: deployIdentity
+
+    windowsVMList: windowsVMList
+    linuxVMList: linuxVMList
+
+    hasLinuxVMs: hasLinuxVMs
+
+    roleSizingMap: roleSizingMap
+    finalTags: finalTags
+
+    windowsServerImage: windowsServerImage
+    windowsClientImage: windowsClientImage
+    ubuntuImage: ubuntuImage
+
+    vmAutoDeleteOptions: vmAutoDeleteOptions
+
+    jumpboxAdminUsername: jumpboxAdminUsername
+    jumpboxAdminPassword: jumpboxAdminPassword
+
+    serverAdminUsername: serverAdminUsername
+    serverAdminPassword: serverAdminPassword
+
+    clientAdminUsername: clientAdminUsername
+    clientAdminPassword: clientAdminPassword
+
+    sshPublicKey: sshPublicKey
+    sshPrivateKey: sshPrivateKey
+
+    subnetMap: networkStage.outputs.subnetMap
+  }
+}
 
 // ========================================
 // DEPLOYMENT STAGE 6: WINDOWS VMS
@@ -710,27 +809,14 @@ module workloadSubnets 'modules/networking/workloadSubnets.bicep' = [
 // Stage-based filtering
 // ------------------------------
 
-var controlWindowsVMs = filter(windowsVMList, vm =>
-  vm.type == 'dc' || vm.type == 'jmp'
-)
-
-var workloadWindowsVMs = filter(windowsVMList, vm =>
-  vm.type == 'srvwin' || vm.type == 'cliwin'
-)
-
-var deployIdentityTargets = deployWorkload || deployIdentity
-
 // Workload VMs (non-DC/jumpbox) must exist for the identity stage to domain-join them,
 // so the identity stage also creates any workload VMs that are still missing.
-var activeWindowsVMs = concat(
-  deployControl ? controlWindowsVMs : [],
-  deployIdentityTargets ? workloadWindowsVMs : []
-)
 
 // ------------------------------
 // Windows VM Module Deployment
 // ------------------------------
 
+/*
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
   for (vm, i) in activeWindowsVMs: {
     name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
@@ -799,6 +885,46 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
     }
   }
 ]
+*/
+
+module identityStage 'modules/stages/identity-stage.bicep' = {
+  name: '${prefix}-identity-stage'
+
+  dependsOn: [
+    computeStage
+  ]
+
+  params: {
+    prefix: prefix
+
+    deployIdentity: deployIdentity
+
+    reconciliationToken: reconciliationToken
+
+    primaryDc: primaryDc
+    replicaDcList: replicaDcList
+
+    fileServerVm: fileServerVm
+    fileServerName: fileServerName
+
+    finalVmPlacements: finalVmPlacements
+
+    domainName: domainName
+
+    usersPerDepartment: usersPerDepartment
+    departmentCount: departmentCount
+
+    sysAdminDepartment: sysAdminDepartment
+    additionalDepartments: additionalDepartments
+
+    enableFileServices: enableFileServices
+
+    serverAdminUsername: serverAdminUsername
+    serverAdminPassword: serverAdminPassword
+
+    clientAdminPassword: clientAdminPassword
+  }
+}
 
 // ========================================
 // DEPLOYMENT STAGE 7: IDENTITY BOOTSTRAP (PRIMARY DC)
@@ -806,58 +932,9 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
 
 // Directory shape passed (as a JSON string) to every identity Run Command script.
 // It centralizes OU paths, group naming, and admin group names so scripts never hardcode AD structure.
-var directoryModel = {
-  preventOuDeletion: false
 
-  rootOuName: '_ROOT'
 
-  customOus: [
-    'Computers'
-    'Computers/Servers'
-    'Computers/Clients'
-    'Groups'
-    'Groups/GGS'
-    'Groups/DLGS'
-    'Users'
-    'Users/Disabled'
-  ]
-
-  computerOuMapping: {
-    srvwin: 'Computers/Servers'
-    srvlin: 'Computers/Servers'
-    cliwin: 'Computers/Clients'
-    clilin: 'Computers/Clients'
-  }
-
-  groupOuMapping: {
-    globalSecurity: 'Groups/GGS'
-    domainLocalSecurity: 'Groups/DLGS'
-  }
-
-  groupNaming: {
-    globalSecurityPrefix: 'GGS'
-    domainLocalSecurityPrefix: 'DLGS'
-  }
-
-  platformAdminGroups: {
-    windowsAdmins: 'Windows_Admins'
-    linuxAdmins: 'Linux_Admins'
-    sourceDepartmentCode: first(items(sysAdminDepartment))!.value
-  }
-
-  shares: {
-    root: {
-      name: 'Shares'
-      path: 'C:\\Shares'
-      host: fileServerName
-    }
-  }
-
-  coreOuMapping: {
-    users: 'Users'
-    groups: 'Groups'
-  }
-}
+/*
 
 module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
   name: '${prefix}-ad-forest'
@@ -968,16 +1045,15 @@ module domainJoinWindows 'modules/identity/domain-join.bicep' = [
   }
 ]
 
+*/
+
 // ========================================
 // DEPLOYMENT STAGE 8: LINUX VMS
 // ========================================
 
 // Same ordering guarantee as Windows VMs: network pathing is established first.
 
-var activeLinuxVMs = deployIdentityTargets
-  ? linuxVMList
-  : []
-
+  /*
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
   for vm in activeLinuxVMs: {
     name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
@@ -1022,14 +1098,13 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
     }
   }
 ]
-
+*/
 var hasLinuxVMs = vmCounts.linuxServer > 0 || vmCounts.linuxClient > 0
-
-var jumpboxLinuxSshKeyVMs = hasLinuxVMs ? filter(controlWindowsVMs, item => item.type == 'jmp') : []
 
 // Deploys the SSH private key onto jumpboxes only, so admins can hop from a jumpbox to Linux VMs
 // without distributing the private key to every workload VM.
-module installJumpboxSshKey 'modules/identity/ssh-key.bicep' = [
+/*
+module installJumpboxSshKey 'modules/compute/ssh-key.bicep' = [
   for vm in jumpboxLinuxSshKeyVMs: {
     name: '${prefix}-sshkey-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
 
@@ -1051,6 +1126,7 @@ module installJumpboxSshKey 'modules/identity/ssh-key.bicep' = [
     }
   }
 ]
+
 
 module linuxDesktop 'modules/compute/linux-desktop.bicep' = [
   for vm in filter(finalVmPlacements, vm => vm.type == 'clilin'): if (deployIdentity) {
@@ -1100,6 +1176,8 @@ module domainJoinLinux 'modules/identity/domain-join-linux.bicep' = [
     }
   }
 ]
+
+*/
 
 // ========================================
 // OUTPUTS: PLACEMENT, VALIDATION, CAPACITY, REGIONAL SUMMARY

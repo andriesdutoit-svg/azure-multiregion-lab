@@ -12,3 +12,6 @@ main.parameters.test.json
 
 # Personal GitHub Copilot agents
 /.github/agents/
+
+# Documentation working notes
+/docs/working-notes/
