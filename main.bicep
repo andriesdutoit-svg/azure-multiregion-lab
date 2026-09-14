@@ -637,7 +637,7 @@ module networkStage 'modules/stages/network-stage.bicep' = {
     jumpboxAllowedSources: jumpboxAllowedSources
   }
 }
-
+/*
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
     name: '${prefix}-rg-${region}'
@@ -783,6 +783,7 @@ module workloadSubnets 'modules/networking/workloadSubnets.bicep' = [
     }
   }
 ]
+*/
 
 module computeStage 'modules/stages/compute-stage.bicep' = {
   name: '${prefix}-compute-stage'
@@ -836,27 +837,14 @@ module computeStage 'modules/stages/compute-stage.bicep' = {
 // Stage-based filtering
 // ------------------------------
 
-var controlWindowsVMs = filter(windowsVMList, vm =>
-  vm.type == 'dc' || vm.type == 'jmp'
-)
-
-var workloadWindowsVMs = filter(windowsVMList, vm =>
-  vm.type == 'srvwin' || vm.type == 'cliwin'
-)
-
-var deployIdentityTargets = deployWorkload || deployIdentity
-
 // Workload VMs (non-DC/jumpbox) must exist for the identity stage to domain-join them,
 // so the identity stage also creates any workload VMs that are still missing.
-var activeWindowsVMs = concat(
-  deployControl ? controlWindowsVMs : [],
-  deployIdentityTargets ? workloadWindowsVMs : []
-)
 
 // ------------------------------
 // Windows VM Module Deployment
 // ------------------------------
 
+/*
 module windowsVMs 'modules/compute/vm-windows.bicep' = [
   for (vm, i) in activeWindowsVMs: {
     name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
@@ -925,6 +913,7 @@ module windowsVMs 'modules/compute/vm-windows.bicep' = [
     }
   }
 ]
+*/
 
 module identityStage 'modules/stages/identity-stage.bicep' = {
   name: '${prefix}-identity-stage'
@@ -971,58 +960,9 @@ module identityStage 'modules/stages/identity-stage.bicep' = {
 
 // Directory shape passed (as a JSON string) to every identity Run Command script.
 // It centralizes OU paths, group naming, and admin group names so scripts never hardcode AD structure.
-var directoryModel = {
-  preventOuDeletion: false
 
-  rootOuName: '_ROOT'
 
-  customOus: [
-    'Computers'
-    'Computers/Servers'
-    'Computers/Clients'
-    'Groups'
-    'Groups/GGS'
-    'Groups/DLGS'
-    'Users'
-    'Users/Disabled'
-  ]
-
-  computerOuMapping: {
-    srvwin: 'Computers/Servers'
-    srvlin: 'Computers/Servers'
-    cliwin: 'Computers/Clients'
-    clilin: 'Computers/Clients'
-  }
-
-  groupOuMapping: {
-    globalSecurity: 'Groups/GGS'
-    domainLocalSecurity: 'Groups/DLGS'
-  }
-
-  groupNaming: {
-    globalSecurityPrefix: 'GGS'
-    domainLocalSecurityPrefix: 'DLGS'
-  }
-
-  platformAdminGroups: {
-    windowsAdmins: 'Windows_Admins'
-    linuxAdmins: 'Linux_Admins'
-    sourceDepartmentCode: first(items(sysAdminDepartment))!.value
-  }
-
-  shares: {
-    root: {
-      name: 'Shares'
-      path: 'C:\\Shares'
-      host: fileServerName
-    }
-  }
-
-  coreOuMapping: {
-    users: 'Users'
-    groups: 'Groups'
-  }
-}
+/*
 
 module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
   name: '${prefix}-ad-forest'
@@ -1133,16 +1073,15 @@ module domainJoinWindows 'modules/identity/domain-join.bicep' = [
   }
 ]
 
+*/
+
 // ========================================
 // DEPLOYMENT STAGE 8: LINUX VMS
 // ========================================
 
 // Same ordering guarantee as Windows VMs: network pathing is established first.
 
-var activeLinuxVMs = deployIdentityTargets
-  ? linuxVMList
-  : []
-
+  /*
 module linuxVMs 'modules/compute/vm-linux.bicep' = [
   for vm in activeLinuxVMs: {
     name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
@@ -1187,13 +1126,12 @@ module linuxVMs 'modules/compute/vm-linux.bicep' = [
     }
   }
 ]
-
+*/
 var hasLinuxVMs = vmCounts.linuxServer > 0 || vmCounts.linuxClient > 0
-
-var jumpboxLinuxSshKeyVMs = hasLinuxVMs ? filter(controlWindowsVMs, item => item.type == 'jmp') : []
 
 // Deploys the SSH private key onto jumpboxes only, so admins can hop from a jumpbox to Linux VMs
 // without distributing the private key to every workload VM.
+/*
 module installJumpboxSshKey 'modules/compute/ssh-key.bicep' = [
   for vm in jumpboxLinuxSshKeyVMs: {
     name: '${prefix}-sshkey-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
@@ -1216,6 +1154,7 @@ module installJumpboxSshKey 'modules/compute/ssh-key.bicep' = [
     }
   }
 ]
+
 
 module linuxDesktop 'modules/compute/linux-desktop.bicep' = [
   for vm in filter(finalVmPlacements, vm => vm.type == 'clilin'): if (deployIdentity) {
@@ -1265,6 +1204,8 @@ module domainJoinLinux 'modules/identity/domain-join-linux.bicep' = [
     }
   }
 ]
+
+*/
 
 // ========================================
 // OUTPUTS: PLACEMENT, VALIDATION, CAPACITY, REGIONAL SUMMARY
