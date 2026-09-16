@@ -284,7 +284,7 @@ var msg19 = hasInvalidExistingVmPlacements
   ? 'existingVmPlacements contains one or more regionKey values that are not present in the active regionKeys set. Remove stale inventory entries or include the missing regions in regionIndexMap.'
   : ''
 var msg20 = insufficientBrownfieldForStage
-  ? 'Stage deployment (control/workload/identity) requires either stage=network or existingRegions to include all deployed regions.'
+  ? 'Stage deployment (compute/identity) requires either stage=network or existingRegions to include all deployed regions.'
   : ''
 var msg21 = hubRequiredButMissing
   ? 'Hub region is required but not available. Either deploy stage=network or add hub region to existingRegions.'

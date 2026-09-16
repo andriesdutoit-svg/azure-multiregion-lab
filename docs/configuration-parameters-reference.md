@@ -9,7 +9,7 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
 | `prefix` | string | Resource naming prefix | `"AMRL"` |
-| `stage` | string | Deployment stage: `network`, `control`, `identity`, `workload`, or `all`. See [Deployment Guide](deployment.md#stages). | `"all"` |
+| `stage` | string | Deployment stage: `network`, `compute`, `identity`, or `all`. See [Deployment Guide](deployment.md#stages). | `"all"` |
 | `tags` | object | Resource tags for organisation and billing | `{"environment": "lab"}` |
 | `regionCount` | integer | Number of regions to deploy across | `2` |
 | `maxVmsPerRegion` | integer | Maximum VMs allowed per region | `2` |
@@ -28,6 +28,8 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 - **Brownfield (mixed)**: `"existingRegions": ["westeurope"]` (reuses westeurope, creates additional regions)
 
 ## Virtual Machine Configuration
+
+Reserved subnet keys have known platform roles. AMRL generates role-specific NSGs, internal route tables for spoke DCs and jumpboxes, and firewall route tables for server and client subnets. Additional subnet keys are policy-neutral and receive no inferred NSG or route table.
 
 **VM Scale**:
 

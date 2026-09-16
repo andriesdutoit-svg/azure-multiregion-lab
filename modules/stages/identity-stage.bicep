@@ -48,9 +48,7 @@ targetScope = 'subscription'
 // - finalVmPlacements
 
 // Compute-stage:
-// - VM availability
-
-// Identity-stage
+// - VM availability before domain-join and file-service commands run
 
 // Inputs:
 //
@@ -85,13 +83,14 @@ targetScope = 'subscription'
 // IDENTITY STAGE OUTPUT CONTRACT
 // ========================================
 //
-// No stage outputs currently required.
+// This stage has no outputs consumed by downstream modules.
 //
 // Consumed by:
 // - main.bicep
 
 // ========================================
 // STAGE CONTROL
+// Identity resources and Run Commands are activated only when deployIdentity is true.
 // ========================================
 
 param prefix string

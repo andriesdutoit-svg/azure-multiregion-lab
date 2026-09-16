@@ -13,13 +13,6 @@ param vnetName string
 param publicIpName string
 
 // ========================================
-// DERIVED VALUES
-// ========================================
-
-// Internal address space used by lab VNets and firewall east-west allow rule.
-var internalRange = '10.0.0.0/8'
-
-// ========================================
 // RESOURCE CREATED: PUBLIC IP
 // Required for Azure Firewall deployment in VNet mode.
 // ========================================
@@ -51,16 +44,15 @@ resource firewallSubnet 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' e
 
 // ========================================
 // RESOURCE CREATED: FIREWALL POLICY
-// Modern control plane for firewall rules.
+// Deploy policy resources through a nested module so Azure completes policy evaluation
+// before the firewall instance references the policy.
 // ========================================
 
-resource firewallPolicy 'Microsoft.Network/firewallPolicies@2023-02-01' = {
-  name: '${firewallName}-policy'
-  location: location
-  properties: {
-    sku: {
-      tier: 'Standard'
-    }
+module firewallPolicy 'firewall-policy.bicep' = {
+  name: '${firewallName}-policy-deployment'
+  params: {
+    location: location
+    firewallPolicyName: '${firewallName}-policy'
   }
 }
 
@@ -79,7 +71,7 @@ resource firewall 'Microsoft.Network/azureFirewalls@2023-02-01' = {
     }
 
     firewallPolicy: {
-      id: firewallPolicy.id
+      id: firewallPolicy.outputs.firewallPolicyId
     }
 
     ipConfigurations: [
@@ -93,76 +85,6 @@ resource firewall 'Microsoft.Network/azureFirewalls@2023-02-01' = {
             id: publicIp.id
           }
         }
-      }
-    ]
-  }
-}
-
-// ========================================
-// POLICY RULES
-// Allow east-west internal traffic across 10.0.0.0/8.
-// The firewall also serves as the centralized egress control point for workload subnets.
-// Any required outbound connectivity must be permitted here; otherwise default Internet egress is not available.
-// ========================================
-
-resource policyRuleCollectionGroup 'Microsoft.Network/firewallPolicies/ruleCollectionGroups@2023-02-01' = {
-  name: 'default-network-rules'
-  parent: firewallPolicy
-  properties: {
-    priority: 100
-    ruleCollections: [
-      {
-        name: 'allow-internal-traffic'
-        priority: 100
-        ruleCollectionType: 'FirewallPolicyFilterRuleCollection'
-        action: {
-          type: 'Allow'
-        }
-        rules: [
-          {
-            ruleType: 'NetworkRule'
-            name: 'allow-all-internal'
-            ipProtocols: [
-              'Any'
-            ]
-            sourceAddresses: [
-              internalRange
-            ]
-            destinationAddresses: [
-              internalRange
-            ]
-            destinationPorts: [
-              '*'
-            ]
-          }
-        ]
-      }
-      {
-        name: 'outbound-internet'
-        priority: 200
-        ruleCollectionType: 'FirewallPolicyFilterRuleCollection'
-        action: {
-          type: 'Allow'
-        }
-        rules: [
-          {
-            ruleType: 'NetworkRule'
-            name: 'allow-http-https-outbound'
-            ipProtocols: [
-              'TCP'
-            ]
-            sourceAddresses: [
-              internalRange
-            ]
-            destinationAddresses: [
-              '*'
-            ]
-            destinationPorts: [
-              '80'
-              '443'
-            ]
-          }
-        ]
       }
     ]
   }

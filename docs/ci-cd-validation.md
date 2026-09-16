@@ -23,13 +23,13 @@ Pull-request workflows use the separate Entra federated credential subject `repo
 
 ## Release Workflow
 
-The workflow at `.github/workflows/release.yml` runs when a tag matching `v*` is pushed (for example, `v2.3.6`). It requires `contents: write` permission and uses `softprops/action-gh-release@v2` with generated release notes enabled.
+The workflow at `.github/workflows/release.yml` runs when a tag matching `v*` is pushed (for example, `v2.4.1`). It requires `contents: write` permission and uses `softprops/action-gh-release@v2` with generated release notes enabled.
 
 Typical release flow:
 
 ```powershell
-git tag v2.3.6
-git push origin v2.3.6
+git tag v2.4.1
+git push origin v2.4.1
 ```
 
 ## Bootstrapping OIDC for a New Subscription or Tenant

@@ -242,7 +242,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = if (!isExistingRe
 // 3) Subnets per role with NSG association
 // ========================================
 
-module nsgDc 'nsg.bicep' = if (createSubnets) {
+module nsgDc 'nsg.bicep' = {
   name: '${vnetName}-nsg-dc'
   params: {
     nsgName: '${vnetName}-nsg-dc'
@@ -254,7 +254,7 @@ module nsgDc 'nsg.bicep' = if (createSubnets) {
   }
 }
 
-module nsgJumpbox 'nsg.bicep' = if (createSubnets) {
+module nsgJumpbox 'nsg.bicep' = {
   name: '${vnetName}-nsg-jumpbox'
   params: {
     nsgName: '${vnetName}-nsg-jumpbox'
@@ -266,7 +266,7 @@ module nsgJumpbox 'nsg.bicep' = if (createSubnets) {
   }
 }
 
-module nsgServer 'nsg.bicep' = if (createSubnets) {
+module nsgServer 'nsg.bicep' = {
   name: '${vnetName}-nsg-server'
   params: {
     nsgName: '${vnetName}-nsg-server'
@@ -278,7 +278,7 @@ module nsgServer 'nsg.bicep' = if (createSubnets) {
   }
 }
 
-module nsgClient 'nsg.bicep' = if (createSubnets) {
+module nsgClient 'nsg.bicep' = {
   name: '${vnetName}-nsg-client'
   params: {
     nsgName: '${vnetName}-nsg-client'
@@ -290,7 +290,7 @@ module nsgClient 'nsg.bicep' = if (createSubnets) {
   }
 }
 
-module subnetDc 'subnet.bicep' = if (createSubnets) {
+module subnetDc 'subnet.bicep' = if (createSubnets && isHub) {
   name: '${vnetName}-subnet-dc'
   dependsOn: [
     vnet
@@ -303,7 +303,7 @@ module subnetDc 'subnet.bicep' = if (createSubnets) {
   }
 }
 
-module subnetJumpbox 'subnet.bicep' = if (createSubnets) {
+module subnetJumpbox 'subnet.bicep' = if (createSubnets && isHub) {
   name: '${vnetName}-subnet-jumpbox'
   dependsOn: [
     subnetDc
@@ -316,7 +316,7 @@ module subnetJumpbox 'subnet.bicep' = if (createSubnets) {
   }
 }
 
-// Server and client subnet creation moved to main.bicep
+// Spoke standard subnet reconciliation is handled by roleSubnets.bicep.
 
 module subnetHub 'subnet.bicep' = if (isHub && createSubnets) {
   name: 'AzureFirewallSubnet'

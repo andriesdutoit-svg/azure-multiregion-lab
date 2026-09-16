@@ -18,7 +18,8 @@
 - **v2.3.3**: Controlled egress through Azure Firewall for workload subnets.
 - **v2.3.4**: Linux client GUI desktop with RDP access, and dynamic DNS registration for FQDN reachability.
 - **v2.3.5**: Brownfield placement validation and clearer deployment diagnostics.
-- **v2.4**: Main Bicep decomposition into staged network, compute, and identity orchestration with explicit module contracts.
+- **v2.4**: Main Bicep decomposition into staged modules.
+- **v2.4.1**: Brownfield networking and cross-spoke routing fixes.
 
 ## Learning Outcomes Demonstrated
 

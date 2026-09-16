@@ -8,8 +8,8 @@ targetScope = 'subscription'
 // - VNets
 // - Peerings
 // - Azure Firewall
-// - Route Tables
-// - Workload Subnets
+// - Route tables
+// - Role subnets and additional policy-neutral subnets
 //
 // Provides:
 // - subnetMap
@@ -41,6 +41,7 @@ param subnetPrefixesArray array
 param dnsServers array
 param jumpboxSubnets array
 param jumpboxAllowedSources array
+param additionalSubnetsByRegion array
 
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
@@ -131,6 +132,8 @@ module routeTables '../networking/routeTable.bicep' = [
     params: {
       location: region
 
+      dcSubnetName: '${prefix}-vnet-${region}-subnet-dc'
+      jumpboxSubnetName: '${prefix}-vnet-${region}-subnet-jumpbox'
       serverSubnetName: '${prefix}-vnet-${region}-subnet-server'
 
       clientSubnetName: '${prefix}-vnet-${region}-subnet-client'
@@ -141,9 +144,9 @@ module routeTables '../networking/routeTable.bicep' = [
   }
 ]
 
-module workloadSubnets '../networking/workloadSubnets.bicep' = [
+module roleSubnets '../networking/roleSubnets.bicep' = [
   for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
-    name: '${prefix}-workload-subnets-${region}'
+    name: '${prefix}-role-subnets-${region}'
 
     scope: resourceGroup('${prefix}-rg-${region}')
 
@@ -165,9 +168,29 @@ module workloadSubnets '../networking/workloadSubnets.bicep' = [
       nsgIds: vnets[i].outputs.nsgIds
 
       #disable-next-line BCP318
+      dcRouteTableId: routeTables[i].outputs.dcRouteTableId
+      #disable-next-line BCP318
+      jumpboxRouteTableId: routeTables[i].outputs.jumpboxRouteTableId
+      #disable-next-line BCP318
       serverRouteTableId: routeTables[i].outputs.serverRouteTableId
       #disable-next-line BCP318
       clientRouteTableId: routeTables[i].outputs.clientRouteTableId
+    }
+  }
+]
+
+module additionalSubnets '../networking/additionalSubnets.bicep' = [
+  for (region, i) in regionKeys: if (deployNetwork && !empty(additionalSubnetsByRegion[i])) {
+    name: '${prefix}-additional-subnets-${region}'
+    scope: resourceGroup('${prefix}-rg-${region}')
+    dependsOn: [
+      vnets
+      roleSubnets
+    ]
+    params: {
+      #disable-next-line BCP318
+      vnetName: vnets[i].outputs.vnetName
+      subnets: additionalSubnetsByRegion[i]
     }
   }
 ]
@@ -176,14 +199,7 @@ module workloadSubnets '../networking/workloadSubnets.bicep' = [
 // NETWORK STAGE OUTPUT CONTRACT
 // ========================================
 //
-// Future outputs:
-//
-// subnetMap
-//
-// Consumed by:
-// - compute-stage
-//
-// Contract:
+// Output contract consumed by compute-stage:
 //
 // [
 //   {
