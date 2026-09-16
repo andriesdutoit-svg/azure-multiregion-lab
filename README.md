@@ -91,15 +91,14 @@ See [Placement and Reconciliation](docs/placement-and-reconciliation.md) for the
 | Stage | Behavior |
 |---|---|
 | `network` | Creates or reuses regional networking and peerings. |
-| `control` | Creates missing domain controllers and jumpboxes. |
+| `compute` | Creates missing domain controllers, jumpboxes, and workload VMs. |
 | `identity` | Runs AD bootstrap, replica promotion, directory population, and domain joins. Missing workload VMs needed by the identity flow may also be created. Existing control-plane DCs are required. |
-| `workload` | Creates missing workload VMs. |
 | `all` | Runs the complete workflow. |
 
 Typical staged order:
 
 ```text
-network -> control -> identity -> workload
+network -> compute -> identity
 ```
 
 See [Deployment Guide](docs/deployment.md) for stage prerequisites and brownfield examples.
@@ -155,7 +154,7 @@ See [CI/CD Workflow and Local Checks](docs/ci-cd-validation.md) for GitHub Actio
 main.bicep                         Subscription-scope orchestrator
 main.parameters.*.json             Deployment parameter examples
 modules/networking                 VNets, subnets, NSGs, firewall, routes
-modules/peering                    Hub-to-spoke peering
+modules/networking/peering.bicep   Hub-to-spoke peering
 modules/compute                    Windows and Linux VM resources
 modules/identity                   AD and domain-join automation
 modules/logic                      Placement and configuration validation
@@ -187,4 +186,4 @@ See the detailed guides for implementation boundaries and operational guidance.
 
 ## Release
 
-**v2.3.6** separates departmental share provisioning from AD population and can place file services on the first Windows server. File services remain optional, and validation reports invalid identity, file-service, or dedicated-server combinations.
+**v2.4.1** completes the staged deployment decomposition and network configuration fixes, including brownfield NSG reconciliation, spoke DC and jumpbox routing, serialized firewall policy deployment, and policy-neutral additional subnets.

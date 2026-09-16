@@ -10,7 +10,7 @@ targetScope = 'subscription'
 //
 // Consumes:
 // - Placement results
-// - Deployment flags
+// - Deployment-stage flags
 // - Compute configuration
 // - subnetMap (from network-stage)
 //
@@ -20,8 +20,8 @@ targetScope = 'subscription'
 
 // Stage inputs:
 //
-// deployControl
-// deployWorkload
+// deployControl and deployWorkload select the VM groups created by the public compute stage.
+// deployIdentity allows identity-stage runs to create workload VMs needed for domain join.
 // deployIdentity
 //
 // windowsVMList
@@ -161,8 +161,8 @@ var workloadWindowsVMs = filter(windowsVMList, vm =>
 
 var deployIdentityTargets = deployWorkload || deployIdentity
 
-// Workload VMs (non-DC/jumpbox) must exist for the identity stage to domain-join them,
-// so the identity stage also creates any workload VMs that are still missing.
+// Workload VMs must exist before identity automation can domain-join them. For that reason,
+// an identity-stage deployment activates missing workload VMs even when compute ran earlier.
 var activeWindowsVMs = concat(
   deployControl ? controlWindowsVMs : [],
   deployIdentityTargets ? workloadWindowsVMs : []
@@ -172,7 +172,7 @@ var activeLinuxVMs = deployIdentityTargets
   ? linuxVMList
   : []
 
-var jumpboxLinuxSshKeyVMs = hasLinuxVMs
+var jumpboxLinuxSshKeyVMs = (deployControl || deployWorkload || deployIdentity) && hasLinuxVMs
   ? filter(controlWindowsVMs, item => item.type == 'jmp')
   : []
 
@@ -188,7 +188,7 @@ func getSubnetId(vm object) string =>
         : subnetMapByRegion[vm.regionKey].client.id
 
 // ------------------------------
-// Windows VM Module Deployment
+// Windows VM deployment
 // ------------------------------
 
 module windowsVMs '../compute/vm-windows.bicep' = [
@@ -248,10 +248,10 @@ module windowsVMs '../compute/vm-windows.bicep' = [
 ]
 
 // ========================================
-// DEPLOYMENT STAGE 8: LINUX VMS
+// LINUX VM deployment
 // ========================================
 
-// Same ordering guarantee as Windows VMs: network pathing is established first.
+// Network-stage outputs establish subnet pathing before this stage provisions VMs.
 
 module linuxVMs '../compute/vm-linux.bicep' = [
   for vm in activeLinuxVMs: {
@@ -320,10 +320,6 @@ module installJumpboxSshKey '../compute/ssh-key.bicep' = [
 // COMPUTE STAGE OUTPUT CONTRACT
 // ========================================
 //
-// Future outputs:
-//
-// windowsVmNames array
-// linuxVmNames array
-//
-// Consumed by:
-// - identity-stage
+// This stage has no outputs consumed by downstream modules.
+// Identity-stage receives VM placement data from main.bicep and depends on
+// compute-stage completion before running identity operations.

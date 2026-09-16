@@ -1,10 +1,6 @@
 targetScope = 'resourceGroup'
 
-// ========================================
-// MODULE PURPOSE
-// Reconciles the DC, jumpbox, server, and client subnets for a spoke region and attaches their
-// pre-created route tables so workload traffic is forced through the hub firewall.
-// ========================================
+// Reconciles the standard role subnets for a spoke and attaches their route tables.
 
 param vnetName string
 param subnetNames object
@@ -45,7 +41,6 @@ module subnetServer 'subnet.bicep' = {
   dependsOn: [
     subnetJumpbox
   ]
-
   params: {
     vnetName: vnetName
     subnetName: subnetNames.server
@@ -57,11 +52,9 @@ module subnetServer 'subnet.bicep' = {
 
 module subnetClient 'subnet.bicep' = {
   name: '${vnetName}-subnet-client'
-
   dependsOn: [
     subnetServer
   ]
-
   params: {
     vnetName: vnetName
     subnetName: subnetNames.client
@@ -74,5 +67,4 @@ module subnetClient 'subnet.bicep' = {
 output dcSubnetId string = subnetDc.outputs.subnetId
 output jumpboxSubnetId string = subnetJumpbox.outputs.subnetId
 output serverSubnetId string = subnetServer.outputs.subnetId
-
 output clientSubnetId string = subnetClient.outputs.subnetId

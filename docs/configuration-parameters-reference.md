@@ -9,7 +9,7 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
 | `prefix` | string | Resource naming prefix | `"AMRL"` |
-| `stage` | string | Deployment stage: `network`, `control`, `identity`, `workload`, or `all`. See [Deployment Guide](deployment.md#stages). | `"all"` |
+| `stage` | string | Deployment stage: `network`, `compute`, `identity`, or `all`. See [Deployment Guide](deployment.md#stages). | `"all"` |
 | `tags` | object | Resource tags for organisation and billing | `{"environment": "lab"}` |
 | `regionCount` | integer | Number of regions to deploy across | `2` |
 | `maxVmsPerRegion` | integer | Maximum VMs allowed per region | `2` |

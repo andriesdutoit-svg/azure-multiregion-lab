@@ -290,7 +290,7 @@ module nsgClient 'nsg.bicep' = {
   }
 }
 
-module subnetDc 'subnet.bicep' = if (createSubnets) {
+module subnetDc 'subnet.bicep' = if (createSubnets && isHub) {
   name: '${vnetName}-subnet-dc'
   dependsOn: [
     vnet
@@ -303,7 +303,7 @@ module subnetDc 'subnet.bicep' = if (createSubnets) {
   }
 }
 
-module subnetJumpbox 'subnet.bicep' = if (createSubnets) {
+module subnetJumpbox 'subnet.bicep' = if (createSubnets && isHub) {
   name: '${vnetName}-subnet-jumpbox'
   dependsOn: [
     subnetDc
@@ -316,7 +316,7 @@ module subnetJumpbox 'subnet.bicep' = if (createSubnets) {
   }
 }
 
-// Server and client subnet creation moved to main.bicep
+// Spoke standard subnet reconciliation is handled by roleSubnets.bicep.
 
 module subnetHub 'subnet.bicep' = if (isHub && createSubnets) {
   name: 'AzureFirewallSubnet'

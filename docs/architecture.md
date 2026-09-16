@@ -12,7 +12,7 @@ The primary region is the hub. Other selected regions are spokes. Spoke-to-spoke
 - **Brownfield deployment**: Reusing existing infrastructure (typically networking) and adding new resources on top. Controlled by the `existingRegions` parameter.
 - **Reconciliation model**: Identity automation that can be safely re-executed. Scripts check whether the target state already exists before making changes; missing objects are recreated automatically.
 - **AGDLP**: Global Security Groups (containing users) are nested into Domain Local Security Groups (which hold the actual file share permissions).
-- **Stage**: Deployment execution mode that controls which resource types are deployed (`network`, `control`, `identity`, `workload`, or `all`). See [Deployment Guide](deployment.md#stages).
+- **Stage**: Deployment execution mode that controls which resource types are deployed (`network`, `compute`, `identity`, or `all`). See [Deployment Guide](deployment.md#stages).
 - **DC (Domain Controller)**: Primary (`dc01`) or replica (`dc02`, `dc03`, etc.) domain controllers. The primary DC creates the forest; replicas sync from it.
 - **Idempotent**: Deployments can be run multiple times safely. Re-running produces the same end state without errors or unwanted recreation.
 
@@ -31,8 +31,8 @@ The deployment is declarative. Bicep describes the desired resources, their conf
 
 The root [main.bicep](../main.bicep) orchestrates the deployment. Reusable modules own specific resource types:
 
-- `modules/networking` owns VNets, subnets, NSGs, firewalls, and route tables.
-- `modules/peering` owns hub-to-spoke and spoke-to-hub peering.
+- `modules/networking` owns VNets, role subnets, NSGs, firewalls, and route tables.
+- `modules/networking/peering.bicep` owns hub-to-spoke and spoke-to-hub peering.
 - `modules/compute` owns Windows and Linux VM resources.
 - `modules/identity` owns AD automation, domain joining, and departmental file-service provisioning.
 - `modules/logic` owns configuration and capacity validation.

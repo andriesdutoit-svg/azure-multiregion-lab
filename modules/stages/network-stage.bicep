@@ -8,8 +8,8 @@ targetScope = 'subscription'
 // - VNets
 // - Peerings
 // - Azure Firewall
-// - Route Tables
-// - Workload Subnets
+// - Route tables
+// - Role subnets and additional policy-neutral subnets
 //
 // Provides:
 // - subnetMap
@@ -144,9 +144,9 @@ module routeTables '../networking/routeTable.bicep' = [
   }
 ]
 
-module workloadSubnets '../networking/workloadSubnets.bicep' = [
+module roleSubnets '../networking/roleSubnets.bicep' = [
   for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
-    name: '${prefix}-workload-subnets-${region}'
+    name: '${prefix}-role-subnets-${region}'
 
     scope: resourceGroup('${prefix}-rg-${region}')
 
@@ -185,7 +185,7 @@ module additionalSubnets '../networking/additionalSubnets.bicep' = [
     scope: resourceGroup('${prefix}-rg-${region}')
     dependsOn: [
       vnets
-      workloadSubnets
+      roleSubnets
     ]
     params: {
       #disable-next-line BCP318

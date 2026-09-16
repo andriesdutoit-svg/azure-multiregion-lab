@@ -1,31 +1,50 @@
 targetScope = 'subscription'
 
-// Controls when resources deploy.
+// CONTENTS
+// 1. Configuration and stage selection
+// 2. Placement model: region ordering and VM model
+// 3. Placement and capacity calculations
+// 4. Compute and network helper values
+// 5. DNS configuration and validation
+// 6. Network, compute, and identity stages
+// 7. Deployment outputs
+
+// ========================================
+// DEPLOYMENT PURPOSE
+// Subscription-scope entry point that orchestrates multi-region networking, security, routing, compute, and identity deployment.
+// ========================================
+
+// ========================================
+// 1. CONFIGURATION AND STAGE SELECTION
+// ========================================
+
+// ----
+// Deployment Control
+// ----
+@description('Deployment stage to execute: network, compute, identity, or all.')
 @allowed([
   'network'
-  'control'
+  'compute'
   'identity'
-  'workload'
   'all'
 ])
 param stage string
 
-// ========================================
-// MODULE PURPOSE
-// Subscription-scope orchestrator for multi-region networking, security, routing, and VM deployment.
-// ========================================
-
-// ========================================
-// CONFIGURATION INPUTS
-// ========================================
+@description('Prefix for all resources')
+param prefix string
+@description('Tags applied to deployed resources.')
+param tags object
 
 // ----
 // Regional & Deployment Configuration
 // ----
+@description('Maps region names to their deployment order and address-space index.')
 param regionIndexMap object
+@description('Number of regions included in this deployment.')
 param regionCount int
+@description('Maximum number of VMs allowed in each region.')
 param maxVmsPerRegion int
-@description('Regions where VNets, NSGs, subnets, and route tables already exist and should be reused. Resources in listed regions are reused; resources in other regions are created (greenfield).')
+@description('Regions with existing VNets and managed networking to reconcile. Route tables and standard subnet associations are deployed or updated by the network stage; resources in other regions are created (greenfield).')
 param existingRegions array
 @description('Existing VM placement inventory used for brownfield VM reconciliation.')
 param existingVmPlacements array = []
@@ -33,46 +52,69 @@ param existingVmPlacements array = []
 // ----
 // Networking Configuration
 // ----
+@description('Maps subnet role names to address indexes within each regional VNet.')
 param subnetIndexMap object
+@description('Public IP ranges allowed to access jumpbox RDP or SSH.')
 param jumpboxAllowedSources array
 
 // ----
 // Compute: VM Sizing & Images
 // ----
+@description('Requested VM count by logical role.')
 param vmCounts object
 // Role-based VM size map keyed by logical workload roles.
+@description('VM size by logical role.')
 param vmSizes object
 // Role-based OS disk map (storage SKU + disk size) keyed by logical workload roles.
+@description('OS disk configuration by logical role.')
 param osDisks object
+@description('Windows Server image reference.')
 param windowsServerImage object
+@description('Windows client image reference.')
 param windowsClientImage object
+@description('Ubuntu image reference.')
 param ubuntuImage object
+@description('Automatic deletion settings for VM-associated resources.')
 param vmAutoDeleteOptions object
 
 // ----
 // Admin Credentials & Access
 // ----
+@description('Local administrator username for jumpbox VMs.')
 param jumpboxAdminUsername string
+@description('Local administrator password for jumpbox VMs.')
 @secure()
 param jumpboxAdminPassword string
+@description('Local administrator username for server and domain controller VMs.')
 param serverAdminUsername string
+@description('Local administrator password for server and domain controller VMs.')
 @secure()
 param serverAdminPassword string
+@description('Local administrator username for client VMs.')
 param clientAdminUsername string
+@description('Local administrator password for client VMs.')
 @secure()
 param clientAdminPassword string
+@description('Public SSH key used for Linux VM administration.')
 param sshPublicKey string
+@description('Private SSH key installed on jumpboxes for administrative hops to Linux VMs.')
 @secure()
 param sshPrivateKey string
 
 // ----
 // Identity & Directory Management
 // ----
+@description('Enable Active Directory forest, replica, population, and domain-join automation.')
 param enableIdentity bool
+@description('Active Directory DNS domain name for the lab environment.')
 param domainName string
+@description('System administration department definition used for directory groups and permissions.')
 param sysAdminDepartment object
+@description('Additional department definitions used for directory population and file services.')
 param additionalDepartments object
+@description('Total number of departments configured for directory population.')
 param departmentCount int
+@description('Number of users created for each configured department.')
 param usersPerDepartment int
 
 @description('Enable departmental file shares, SMB shares, and share permissions.')
@@ -81,32 +123,26 @@ param enableFileServices bool
 @description('Use a dedicated Windows server for departmental file shares.')
 param useDedicatedFileServer bool
 
-// ----
-// Tagging & Resource Identification
-// ----
-@description('Prefix for all resources')
-param prefix string
-param tags object
-
 var reconciliationToken = deployment().name
 
 // ========================================
-// STAGE FLAGS
-// Determines which deployment stages execute during this run
+// 1.1 STAGE FLAGS
+// Selects the completed deployment stages for this run.
 // ========================================
 
 var deployNetwork = stage == 'network' || stage == 'all'
-var deployControl = stage == 'control' || stage == 'all'
-// Identity bootstrap is currently not an independent first-run stage.
-// It assumes control-plane Windows DC resources are already present (or stage=all is used).
+var deployCompute = stage == 'compute' || stage == 'all'
 var deployIdentity = enableIdentity && (stage == 'identity' || stage == 'all')
-var deployWorkload = stage == 'workload' || stage == 'all'
+// The compute stage owns control-plane and workload VM deployment. These internal flags
+// describe the VM groups that the compute module activates for each public stage value.
+var deployControl = deployCompute
+var deployWorkload = deployCompute || deployIdentity
 
 // ========================================
-// PLACEMENT ENGINE
+// 2. PLACEMENT MODEL: REGION ORDERING AND VM MODEL
 //
-// The placement engine remains in the subscription-scope composition root
-// because its results drive deployment-time loops, scopes, names, and conditions.
+// Placement is evaluated in the subscription-scope composition root because its results
+// drive deployment-time loops, scopes, names, and conditions.
 //
 // Responsibilities:
 // - VM model building
@@ -117,7 +153,7 @@ var deployWorkload = stage == 'workload' || stage == 'all'
 // - VM placement
 // - Placement-derived objects
 //
-// Public contract:
+// Values consumed by validation and deployment stages:
 // regionKeys
 // primaryRegion
 // hubRegion
@@ -132,7 +168,43 @@ var deployWorkload = stage == 'workload' || stage == 'all'
 // ========================================
 
 // ========================================
-// VM MODEL BUILDING
+// 2.1 REGION ORDERING (Index-Based Sorting)
+// Converts regionIndexMap to the ordered region set used by placement and networking.
+// ========================================
+
+// Extract regions in order of their index value (1 to N).
+var regionPairs = [
+  for r in items(regionIndexMap): {
+    key: r.key
+    index: r.value
+  }
+]
+
+var sortedRegionPairs = sort(regionPairs, (a, b) => a.index < b.index)
+
+var sortedRegions = [
+  for r in sortedRegionPairs: r.key
+]
+
+// Select only the required number of regions. regionIndexMap may define more regions
+// than are active in the current deployment.
+var regionKeys = take(sortedRegions, regionCount)
+
+var primaryRegion = regionKeys[0]
+var isSingleRegion = regionCount == 1
+
+var invalidExistingRegions = filter(
+  existingRegions,
+  region => !contains(regionKeys, region)
+)
+
+var invalidExistingVmPlacements = filter(
+  existingVmPlacements,
+  vm => !contains(regionKeys, vm.regionKey)
+)
+
+// ========================================
+// 2.2 VM MODEL BUILDING
 // Constructs unified list of all VMs from role-based counts
 // ========================================
 
@@ -196,44 +268,6 @@ var missingVmList = filter(
   vm => !contains(existingVmKeys, '${vm.type}-${string(vm.index)}')
 )
 
-//
-// ========================================
-// REGION ORDERING (Index-Based Sorting)
-// Converts regionIndexMap to an ordered region list
-// ========================================
-//
-
-// Extract regions in order of their index value (1 to N)
-var regionPairs = [
-  for r in items(regionIndexMap): {
-    key: r.key
-    index: r.value
-  }
-]
-
-var sortedRegionPairs = sort(regionPairs, (a, b) => a.index < b.index)
-
-var sortedRegions = [
-  for r in sortedRegionPairs: r.key
-]
-
-// Select only the required number of regions
-// This allows regionIndexMap to define more regions than are active in a given run.
-var regionKeys = take(sortedRegions, regionCount)
-
-var primaryRegion = regionKeys[0]
-var isSingleRegion = regionCount == 1
-
-var invalidExistingRegions = filter(
-  existingRegions,
-  region => !contains(regionKeys, region)
-)
-
-var invalidExistingVmPlacements = filter(
-  existingVmPlacements,
-  vm => !contains(regionKeys, vm.regionKey)
-)
-
 // Split the unified VM model into control-plane and workload sets.
 // Placement uses different rules for these two groups.
 var controlPlaneVmList = filter(missingVmList, vm =>
@@ -252,7 +286,11 @@ var controlPlanePlacementVmList = filter(controlPlaneVmList, vm =>
 )
 
 // ========================================
-// HUB MODEL
+// 3. PLACEMENT AND CAPACITY CALCULATIONS
+// ========================================
+
+// ========================================
+// 3.1 HUB MODEL
 // ========================================
 
 var hubRegion = primaryRegion
@@ -348,12 +386,10 @@ var workloadRegionCapacityCumulative = [
   }
 ]
 
-//
 // ========================================
-// PLACEMENT ENGINE
-// Assigns each VM to a region using rules
+// 3.2 VM PLACEMENT
+// Assigns each missing VM to a region using topology and capacity rules.
 // ========================================
-//
 
 var vmPlacements = [
   for (vm, i) in missingVmList: {
@@ -435,7 +471,11 @@ var fileServerName = useDedicatedFileServer
   : primaryDc!.name
 
 // ========================================
-// VM GROUPING + SUPPORT VARIABLES
+// 4. COMPUTE AND NETWORK HELPER VALUES
+// ========================================
+
+// ========================================
+// 4.1 VM GROUPING AND SUPPORT VARIABLES
 // ========================================
 
 var finalTags = union(tags, {
@@ -443,11 +483,11 @@ var finalTags = union(tags, {
 })
 
 // ========================================
-// COMPUTE HELPER VARIABLES
+// 4.2 COMPUTE HELPER VARIABLES
 // ========================================
 
 // Maps deployment VM role keys to their role-specific compute settings.
-// Keys match vm.type values used by the placement engine: dc, jmp, srvwin, cliwin, srvlin, clilin.
+// Keys match vm.type values used by the placement model: dc, jmp, srvwin, cliwin, srvlin, clilin.
 var roleSizingMap = {
   dc: {
     vmSize: vmSizes.dc
@@ -475,8 +515,11 @@ var roleSizingMap = {
   }
 }
 
+// Passed to compute-stage so it can decide whether jumpbox SSH-key installation is needed.
+var hasLinuxVMs = vmCounts.linuxServer > 0 || vmCounts.linuxClient > 0
+
 // ========================================
-// NETWORK HELPER VARIABLES
+// 4.3 NETWORK HELPER VARIABLES
 // ========================================
 
 var windowsVMList = filter(vmPlacements, vm =>
@@ -521,8 +564,19 @@ var additionalSubnetsByRegion = map(regionKeys, region => map(additionalSubnetKe
   addressPrefix: '10.${regionIndexMap[region]}.${subnetIndexMap[subnetKey]}.0/24'
 }))
 
+var jumpboxSubnets = [
+  for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
+]
+
+// The network stage exposes subnetMap with one entry per selected region.
+// The compute stage consumes that contract for managed VM placement.
+
 // ========================================
-// DNS CONFIGURATION: DYNAMIC FROM DC PLACEMENTS
+// 5. DNS CONFIGURATION AND VALIDATION
+// ========================================
+
+// ========================================
+// 5.1 DNS CONFIGURATION: DYNAMIC FROM DC PLACEMENTS
 // DNS servers are dynamically derived from actual DC placement positions,
 // not from static region assumptions. This ensures VNets point to DCs that
 // actually exist in the deployment rather than theoretical placements.
@@ -554,16 +608,9 @@ var dnsCandidates = [
 // Each VNet supports up to 3 custom DNS servers; limit to avoid waste.
 var dnsServers = take(dnsCandidates, 3)
 
-var jumpboxSubnets = [
-  for (region, i) in regionKeys: subnetPrefixesArray[i].jumpbox
-]
-
-// The network stage exposes subnetMap with one entry per selected region.
-// The compute stage consumes that contract for managed VM placement.
-
 //
 // ========================================
-// VALIDATION ENGINE
+// 5.2 VALIDATION ENGINE
 // Delegated to modules/logic/validation.bicep
 // ========================================
 
@@ -601,11 +648,15 @@ module validationEngine 'modules/logic/validation.bicep' = {
 }
 
 // ========================================
-// DEPLOYMENT STAGE 1: RESOURCE GROUPS
+// 6. NETWORK, COMPUTE, AND IDENTITY STAGES
+// ========================================
+
+// ========================================
+// 6.1 NETWORK STAGE
 // ========================================
 
 module networkStage 'modules/stages/network-stage.bicep' = {
-  name: '${prefix}-network-stage'
+  name: '${prefix}-network-stage-${take(deployment().name, 20)}'
 
   params: {
     prefix: prefix
@@ -628,156 +679,13 @@ module networkStage 'modules/stages/network-stage.bicep' = {
     additionalSubnetsByRegion: additionalSubnetsByRegion
   }
 }
-/*
-resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
-  for region in regionKeys: {
-    name: '${prefix}-rg-${region}'
-    location: region
-    tags: finalTags
-  }
-]
 
 // ========================================
-// DEPLOYMENT STAGE 2: VNETS + NSGS + SUBNETS
+// 6.2 COMPUTE STAGE
 // ========================================
-
-module vnets 'modules/networking/vnet.bicep' = [
-  for (region, i) in regionKeys: if (deployNetwork) {
-
-    name: '${prefix}-vnet-${region}'
-
-    scope: resourceGroup('${prefix}-rg-${region}')
-
-    dependsOn: [
-      rgs
-    ]
-
-    params: {
-      vnetName: '${prefix}-vnet-${region}'
-      location: region
-      isHub: region == hubRegion
-
-      existingRegions: existingRegions
-
-      addressPrefix: addressPrefixes[i]
-      subnetPrefix: subnetPrefixesArray[i]
-
-      dnsServers: dnsServers
-      jumpboxSubnets: jumpboxSubnets
-      jumpboxAllowedSources: jumpboxAllowedSources
-      tags: finalTags
-    }
-  }
-]
-
-// ========================================
-// DEPLOYMENT STAGE 3: VNET PEERING
-// ========================================
-
-module peerings 'modules/networking/peering.bicep' = [
-  for source in regionKeys: if (deployNetwork) {
-    name: '${prefix}-peerings-${source}'
-    scope: resourceGroup('${prefix}-rg-${source}')
-    dependsOn: vnets
-    params: {
-      vnetName: '${prefix}-vnet-${source}'
-      regionKeys: regionKeys
-      sourceRegion: source
-      prefix: prefix
-      hubRegion: hubRegion
-    }
-  }
-]
-
-// ========================================
-// DEPLOYMENT STAGE 4: HUB FIREWALL
-// ========================================
-
-module firewall 'modules/networking/firewall.bicep' = if (deployNetwork) {
-  name: '${prefix}-firewall-${hubRegion}'
-
-  scope: resourceGroup('${prefix}-rg-${hubRegion}')
-
-  dependsOn: [
-    rgs
-    vnets
-  ]
-
-  params: {
-    location: hubRegion
-    firewallName: '${prefix}-fw-${hubRegion}'
-    vnetName: '${prefix}-vnet-${hubRegion}'
-    publicIpName: '${prefix}-fw-pip-${hubRegion}'
-  }
-}
-
-// ========================================
-// DEPLOYMENT STAGE 5: ROUTE TABLES (SPOKE REGIONS)
-// ========================================
-
-// Suppressions in this module are intentional: BCP318 appears because vnet/firewall outputs are conditionally evaluated
-// by the analyser in this loop, and no-unnecessary-dependson is kept to enforce firewall-before-route-table ordering
-// that helps avoid Azure concurrent network update conflicts during subnet route association.
-
-module routeTables 'modules/networking/routeTable.bicep' = [
-  for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
-
-    name: '${prefix}-rt-${region}'
-    scope: resourceGroup('${prefix}-rg-${region}')
-
-    dependsOn: [
-      #disable-next-line no-unnecessary-dependson
-      firewall
-      vnets[i]
-    ]
-
-    params: {
-      location: region
-
-      serverSubnetName: '${prefix}-vnet-${region}-subnet-server'
-
-      clientSubnetName: '${prefix}-vnet-${region}-subnet-client'
-
-      #disable-next-line BCP318
-      nextHopIp: firewall.outputs.firewallPrivateIp
-    }
-  }
-]
-
-module workloadSubnets 'modules/networking/workloadSubnets.bicep' = [
-  for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
-    name: '${prefix}-workload-subnets-${region}'
-
-    scope: resourceGroup('${prefix}-rg-${region}')
-
-    dependsOn: [
-      routeTables[i]
-    ]
-
-    params: {
-      #disable-next-line BCP318
-      vnetName: vnets[i].outputs.vnetName
-
-      #disable-next-line BCP318
-      subnetNames: vnets[i].outputs.subnetNames
-
-      #disable-next-line BCP318
-      subnetPrefixes: vnets[i].outputs.subnetPrefixes
-
-      #disable-next-line BCP318
-      nsgIds: vnets[i].outputs.nsgIds
-
-      #disable-next-line BCP318
-      serverRouteTableId: routeTables[i].outputs.serverRouteTableId
-      #disable-next-line BCP318
-      clientRouteTableId: routeTables[i].outputs.clientRouteTableId
-    }
-  }
-]
-*/
 
 module computeStage 'modules/stages/compute-stage.bicep' = {
-  name: '${prefix}-compute-stage'
+  name: '${prefix}-compute-stage-${take(deployment().name, 20)}'
 
   params: {
     prefix: prefix
@@ -819,95 +727,11 @@ module computeStage 'modules/stages/compute-stage.bicep' = {
 }
 
 // ========================================
-// DEPLOYMENT STAGE 6: WINDOWS VMS
+// 6.3 IDENTITY STAGE
 // ========================================
 
-// Compute waits for routeTables so spoke subnet route associations are applied before VM provisioning starts.
-
-// ------------------------------
-// Stage-based filtering
-// ------------------------------
-
-// Workload VMs (non-DC/jumpbox) must exist for the identity stage to domain-join them,
-// so the identity stage also creates any workload VMs that are still missing.
-
-// ------------------------------
-// Windows VM Module Deployment
-// ------------------------------
-
-/*
-module windowsVMs 'modules/compute/vm-windows.bicep' = [
-  for (vm, i) in activeWindowsVMs: {
-    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-
-    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
-
-    dependsOn: [
-      vnets
-      routeTables
-      workloadSubnets
-    ]
-
-    params: {
-      vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-      // Resolve compute sizing from the role map so each VM role can scale independently.
-      vmSize: roleSizingMap[vm.type].vmSize
-
-      adminUsername: vm.type == 'jmp'
-        ? jumpboxAdminUsername
-        : (vm.type == 'dc' || vm.type == 'srvwin'
-          ? serverAdminUsername
-          : clientAdminUsername)
-
-      adminPassword: vm.type == 'jmp'
-        ? jumpboxAdminPassword
-        : (vm.type == 'dc' || vm.type == 'srvwin'
-          ? serverAdminPassword
-          : clientAdminPassword)
-      
-      // BCP318 suppressions below are intentional: subnet outputs are resolved by VM type at runtime,
-      // but the static analyser cannot always prove the selected branch is non-null in this conditional chain.
-      // Role-to-subnet mapping: DC→dc subnet, JMP→jumpbox subnet, Windows servers→server subnet, clients→client subnet.
-      // Each role has a dedicated subnet enforcing network segmentation and security group policies.
-      subnetId: vm.type == 'dc'
-        #disable-next-line BCP318
-        ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.dc.id
-        : vm.type == 'jmp'
-          #disable-next-line BCP318
-          ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.jumpbox.id
-          : vm.type == 'srvwin'
-            #disable-next-line BCP318
-            ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id
-            #disable-next-line BCP318
-            : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
-
-      assignPublicIp: vm.type == 'jmp'
-
-      tags: union(finalTags, {
-        role: vm.type == 'dc'
-          ? 'domain-controller'
-          : vm.type == 'jmp'
-            ? 'jumpbox'
-            : vm.type == 'srvwin'
-              ? 'server'
-              : 'client'
-      })
-
-      image: vm.type == 'cliwin'
-        ? windowsClientImage
-        : windowsServerImage
-
-      // Resolve OS disk profile per role (SKU + capacity).
-      osDisk: roleSizingMap[vm.type].osDisk
-
-      vmAutoDeleteOptions: vmAutoDeleteOptions
-    }
-  }
-]
-*/
-
 module identityStage 'modules/stages/identity-stage.bicep' = {
-  name: '${prefix}-identity-stage'
+  name: '${prefix}-identity-stage-${take(deployment().name, 20)}'
 
   dependsOn: [
     computeStage
@@ -946,260 +770,7 @@ module identityStage 'modules/stages/identity-stage.bicep' = {
 }
 
 // ========================================
-// DEPLOYMENT STAGE 7: IDENTITY BOOTSTRAP (PRIMARY DC)
-// ========================================
-
-// Directory shape passed (as a JSON string) to every identity Run Command script.
-// It centralizes OU paths, group naming, and admin group names so scripts never hardcode AD structure.
-
-
-/*
-
-module adForest 'modules/identity/ad-forest.bicep' = if (deployIdentity) {
-  name: '${prefix}-ad-forest'
-  scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
-
-  // The bootstrap command must run after the target Windows DC VM exists.
-  // In staged workflows, run control before identity.
-  dependsOn: [
-    windowsVMs
-  ]
-  params: {
-    dcVmName: primaryDc!.name
-    domainName: domainName
-    serverAdminPassword: serverAdminPassword
-    reconciliationToken: reconciliationToken
-  }
-}
-
-module replicaDcs 'modules/identity/ad-replicadc.bicep' = [
-  for dc in replicaDcList: if (deployIdentity) {
-    name: '${prefix}-replica-${dc.index + 1}'
-
-    scope: resourceGroup('${prefix}-rg-${dc.regionKey}')
-
-    dependsOn: [
-      adForest
-    ]
-
-    params: {
-      dcVmName: dc.name
-      domainName: domainName
-      serverAdminUsername: serverAdminUsername
-      serverAdminPassword: serverAdminPassword
-      reconciliationToken: reconciliationToken
-    }
-  }
-]
-
-module adPopulate 'modules/identity/ad-populate.bicep' = if (deployIdentity) {
-  name: '${prefix}-ad-populate'
-
-  scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
-
-  dependsOn: [
-    adForest
-    replicaDcs
-  ]
-
-  params: {
-    dcVmName: primaryDc!.name
-    domainName: domainName
-    usersPerDepartment: usersPerDepartment
-    sysAdminDepartment: sysAdminDepartment
-    additionalDepartments: additionalDepartments
-    clientAdminPassword: clientAdminPassword
-    departmentCount: departmentCount
-    directoryModel: string(directoryModel)
-    enableFileServices: enableFileServices
-    reconciliationToken: reconciliationToken
-  }
-}
-
-module fileServices 'modules/identity/file-services.bicep' = if (deployIdentity && enableFileServices) {
-  name: '${prefix}-file-services'
-
-  scope: resourceGroup('${prefix}-rg-${fileServerVm.regionKey}')
-
-  dependsOn: [
-    adPopulate
-    domainJoinWindows
-  ]
-
-  params: {
-    fileServerVmName: fileServerName
-    directoryModel: string(directoryModel)
-    sysAdminDepartment: sysAdminDepartment
-    additionalDepartments: additionalDepartments
-    departmentCount: departmentCount
-    reconciliationToken: reconciliationToken
-  }
-}
-
-// ========================================
-// DEPLOYMENT STAGE 7b: WINDOWS DOMAIN JOIN
-// Joins Windows servers (srvwin) and clients (cliwin) to the AD domain.
-// Runs after directory population. OU placement is driven by VM type via the directory model.
-// Participates in the reconciliation model: existing domain membership is detected and skipped.
-// ========================================
-
-module domainJoinWindows 'modules/identity/domain-join.bicep' = [
-  for vm in filter(finalVmPlacements, vm => vm.type == 'srvwin' || vm.type == 'cliwin'): if (deployIdentity) {
-    name: '${prefix}-domainjoin-${vm.name}'
-    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
-
-    dependsOn: [
-      adPopulate
-    ]
-
-    params: {
-      vmName: vm.name
-      domainName: domainName
-      directoryModel: string(directoryModel)
-      vmType: vm.type
-      serverAdminUsername: serverAdminUsername
-      serverAdminPassword: serverAdminPassword
-      reconciliationToken: reconciliationToken
-    }
-  }
-]
-
-*/
-
-// ========================================
-// DEPLOYMENT STAGE 8: LINUX VMS
-// ========================================
-
-// Same ordering guarantee as Windows VMs: network pathing is established first.
-
-  /*
-module linuxVMs 'modules/compute/vm-linux.bicep' = [
-  for vm in activeLinuxVMs: {
-    name: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-
-    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
-
-    dependsOn: [
-      vnets
-      routeTables
-      workloadSubnets
-    ]
-
-    params: {
-      vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-      // Resolve compute sizing from the role map so each VM role can scale independently.
-      vmSize: roleSizingMap[vm.type].vmSize
-
-      adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
-      sshPublicKey: sshPublicKey
-
-      // Role-to-subnet mapping for Linux VMs: srvlin→server subnet, clilin→client subnet.
-      // Each role has a dedicated subnet enforcing network segmentation and security group policies.
-      // BCP318 suppressions below are intentional: subnet output selection is conditional by VM type,
-      // and the static analyser treats these indexed outputs as potentially nullable.
-      subnetId: vm.type == 'srvlin'
-        #disable-next-line BCP318
-        ? vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.server.id
-        #disable-next-line BCP318
-        : vnets[indexOf(regionKeys, vm.regionKey)].outputs.subnets.client.id
-
-      assignPublicIp: false
-
-      tags: union(finalTags, {
-        role: vm.type == 'srvlin' ? 'server' : 'client'
-      })
-
-      image: ubuntuImage
-      // Resolve OS disk profile per role (SKU + capacity).
-      osDisk: roleSizingMap[vm.type].osDisk
-
-      vmAutoDeleteOptions: vmAutoDeleteOptions
-    }
-  }
-]
-*/
-var hasLinuxVMs = vmCounts.linuxServer > 0 || vmCounts.linuxClient > 0
-
-// Deploys the SSH private key onto jumpboxes only, so admins can hop from a jumpbox to Linux VMs
-// without distributing the private key to every workload VM.
-/*
-module installJumpboxSshKey 'modules/compute/ssh-key.bicep' = [
-  for vm in jumpboxLinuxSshKeyVMs: {
-    name: '${prefix}-sshkey-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-
-    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
-
-    dependsOn: [
-      windowsVMs
-      linuxVMs
-    ]
-
-    params: {
-      vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-
-      adminUsername: jumpboxAdminUsername
-
-      sshPrivateKey: sshPrivateKey
-
-      reconciliationToken: reconciliationToken
-    }
-  }
-]
-
-
-module linuxDesktop 'modules/compute/linux-desktop.bicep' = [
-  for vm in filter(finalVmPlacements, vm => vm.type == 'clilin'): if (deployIdentity) {
-    name: '${prefix}-desktop-${vm.name}'
-
-    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
-
-    dependsOn: [
-      linuxVMs
-    ]
-
-    params: {
-      vmName: vm.name
-      domainName: domainName
-      directoryModel: string(directoryModel)
-      reconciliationToken: reconciliationToken
-    }
-  }
-]
-
-// ========================================
-// DEPLOYMENT STAGE 8b: LINUX DOMAIN JOIN
-// Joins Linux servers (srvlin) and clients (clilin) to the AD domain using realmd/SSSD integration.
-// Runs after directory population. OU placement is driven by VM type via the directory model.
-// Participates in the reconciliation model: existing domain membership is detected and skipped.
-// ========================================
-
-module domainJoinLinux 'modules/identity/domain-join-linux.bicep' = [
-  for vm in filter(finalVmPlacements, vm => vm.type == 'srvlin' || vm.type == 'clilin'): if (deployIdentity) {
-    name: '${prefix}-domainjoin-${vm.name}'
-
-    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
-
-    dependsOn: [
-      adPopulate
-      linuxDesktop
-    ]
-
-    params: {
-      vmName: vm.name
-      domainName: domainName
-      directoryModel: string(directoryModel)
-      vmType: vm.type
-      serverAdminUsername: serverAdminUsername
-      serverAdminPassword: serverAdminPassword
-      reconciliationToken: reconciliationToken
-    }
-  }
-]
-
-*/
-
-// ========================================
-// OUTPUTS: PLACEMENT, VALIDATION, CAPACITY, REGIONAL SUMMARY
+// 7. DEPLOYMENT OUTPUTS
 // ========================================
 
 // List of regions selected for this deployment (ordered by regionIndexMap) and assigned region

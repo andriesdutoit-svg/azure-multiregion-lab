@@ -57,23 +57,20 @@ This branch completes the firewall egress control update.
 | Stage | Behavior |
 |---|---|
 | `network` | Creates or reuses regional networking and peerings. |
-| `control` | Creates missing DCs and jumpboxes. |
+| `compute` | Creates missing DCs, jumpboxes, and workload VMs. |
 | `identity` | Runs AD bootstrap, replica promotion, directory population, domain join automation, and optional departmental file-service provisioning. It may also create missing workload VMs needed by the identity flow. Existing control-plane DCs are required. |
-| `workload` | Creates missing workload VMs. |
 | `all` | Runs the complete workflow. |
 
 Typical staged order:
 
 ```text
-network -> control -> identity -> workload
+network -> compute -> identity
 ```
 
 ```mermaid
 flowchart LR
-  N[stage=network] --> C[stage=control]
+  N[stage=network] --> C[stage=compute]
   C --> I[stage=identity optional]
-  C --> W[stage=workload]
-  I --> W
   A[stage=all] --> N
   E[existingRegions includes a region] -.-> N
 ```
@@ -93,7 +90,7 @@ When enabling departmental file services:
 |---|---|
 | Greenfield deployment | Yes |
 | Full deployment (`stage=all`) | Yes |
-| Staged deployment (`network` -> `control` -> `identity` -> `workload`) | Yes |
+| Staged deployment (`network` -> `compute` -> `identity`) | Yes |
 | Redeploy an existing environment created by this framework | Yes |
 | Reuse existing networking that follows this framework's structure | Yes |
 | Modify VM counts, role-based sizes/disks, images, tags, and access settings | Yes |
