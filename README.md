@@ -1,39 +1,8 @@
-# Azure Multi-Region Lab (AMRL) v2.4.1
+# Azure Multi-Region Lab (AMRL) v2.4.2
 
 AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, hub-and-spoke networking, capacity-aware VM placement, and idempotent Active Directory automation.
 
-## What This Project Demonstrates
-
-- Declarative Azure infrastructure using Bicep.
-- Reusable modules with explicit resource-group and subscription scopes.
-- Parameter-driven greenfield and brownfield deployments.
-- Deterministic regional placement with capacity protection.
-- Brownfield reconciliation using existing region and VM inventories.
-- Staged deployment of networking, compute, identity, and workloads.
-- Idempotent AD forest, replica, directory population, and domain-join automation.
-- Optional departmental file services on the primary DC or the first Windows server.
-- Validation outputs that explain template decisions and configuration problems.
-- Secure credential and SSH-key references through Azure Key Vault.
-- Controlled egress via Azure Firewall for workload subnets, with internal cross-spoke traffic and workload Internet access routed through the firewall.
-- Automatic GUI desktop and RDP access on Linux clients, with dynamic DNS registration for FQDN reachability.
-- v2.4 staged module decomposition with explicit network, compute, and identity stage contracts.
-- v2.4.1 brownfield network reconciliation and reliable cross-spoke routing for spoke DCs and jumpboxes.
-
 See [Project History and Learning Notes](docs/project-history.md) for the design decisions and IaC concepts demonstrated by the project.
-
-## Architecture
-
-The deployment creates a hub-and-spoke topology:
-
-- The primary region is the hub.
-- Other selected regions are spokes.
-- The hub contains Azure Firewall and control-plane resources.
-- Workload traffic is routed through the hub firewall.
-- Server and client subnets route internal and Internet traffic through the firewall; spoke DCs and jumpboxes route internal traffic through it while retaining direct Internet access.
-- Jumpboxes provide the administrative entry point.
-- Spoke workload subnets are protected by role-based NSGs and route tables.
-
-See [Architecture](docs/architecture.md) for the resource model, module boundaries, network layout, addressing, and desired-state model.
 
 ## Prerequisites
 
@@ -54,10 +23,10 @@ Trial and Student subscriptions may restrict regions, VM sizes, images, or quota
 
 ```powershell
 az deployment sub create `
-  --name <deployment-name> `
-  --location <deployment-location> `
-  --template-file main.bicep `
-  --parameters <parameters-file>.json
+        --name <deployment-name> `
+        --location <deployment-location> `
+        --template-file main.bicep `
+        --parameters <parameters-file>.json
 ```
 
 For Key Vault setup and parameter details, see [Deployment Guide](docs/deployment.md) and [Configuration Parameters Reference](docs/configuration-parameters-reference.md).
@@ -76,15 +45,47 @@ Example VM inventory entry:
 
 ```json
 {
-  "type": "srvlin",
-  "index": 2,
-  "regionKey": "centralindia"
+        "type": "srvlin",
+        "index": 2,
+        "regionKey": "centralindia"
 }
 ```
 
 Existing VM identities are retained and excluded from VM creation. Missing VM identities are created, and existing VM occupancy is counted before new placement.
 
 See [Placement and Reconciliation](docs/placement-and-reconciliation.md) for the complete model.
+
+## What This Project Demonstrates
+
+- Declarative Azure infrastructure using Bicep.
+- Reusable modules with explicit resource-group and subscription scopes.
+- Parameter-driven greenfield and brownfield deployments.
+- Deterministic regional placement with capacity protection.
+- Brownfield reconciliation using existing region and VM inventories.
+- Staged deployment of networking, compute, identity, and workloads.
+- Idempotent AD forest, replica, directory population, and domain-join automation.
+- Optional departmental file services on the primary DC or the first Windows server.
+- Validation outputs that explain template decisions and configuration problems.
+- Secure credential and SSH-key references through Azure Key Vault.
+- Controlled egress via Azure Firewall for workload subnets, with internal cross-spoke traffic and workload Internet access routed through the firewall.
+- Automatic GUI desktop and RDP access on Linux clients, with dynamic DNS registration for FQDN reachability.
+- v2.4 staged module decomposition with explicit network, compute, and identity stage contracts.
+- v2.4.1 brownfield network reconciliation and reliable cross-spoke routing for spoke DCs and jumpboxes.
+- v2.4.2 identity reconciliation improvements and responsibility-based directory population functions.
+
+## Architecture
+
+The deployment creates a hub-and-spoke topology:
+
+- The primary region is the hub.
+- Other selected regions are spokes.
+- The hub contains Azure Firewall and control-plane resources.
+- Workload traffic is routed through the hub firewall.
+- Server and client subnets route internal and Internet traffic through the firewall; spoke DCs and jumpboxes route internal traffic through it while retaining direct Internet access.
+- Jumpboxes provide the administrative entry point.
+- Spoke workload subnets are protected by role-based NSGs and route tables.
+
+See [Architecture](docs/architecture.md) for the resource model, module boundaries, network layout, addressing, and desired-state model.
 
 ## Deployment Stages
 
@@ -186,4 +187,4 @@ See the detailed guides for implementation boundaries and operational guidance.
 
 ## Release
 
-**v2.4.1** completes the staged deployment decomposition and network configuration fixes, including brownfield NSG reconciliation, spoke DC and jumpbox routing, serialized firewall policy deployment, and policy-neutral additional subnets.
+**v2.4.2** completes identity reconciliation improvements and the directory population workflow cleanup.
