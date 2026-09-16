@@ -20,6 +20,7 @@
 - **v2.3.5**: Brownfield placement validation and clearer deployment diagnostics.
 - **v2.4**: Main Bicep decomposition into staged modules.
 - **v2.4.1**: Brownfield networking and cross-spoke routing fixes.
+- **v2.4.2**: Identity reconciliation and directory population cleanup.
 
 ## Learning Outcomes Demonstrated
 

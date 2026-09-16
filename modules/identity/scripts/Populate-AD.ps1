@@ -182,6 +182,43 @@ function Ensure-ADGroupMember {
         -Members $MemberName
 }
 
+function Set-ADGroupMembersAuthoritative {
+    param(
+        [string]$GroupName,
+        [string[]]$DesiredMembers
+    )
+
+    $currentMembers = Get-ADGroupMember `
+        -Identity $GroupName `
+        -ErrorAction SilentlyContinue
+
+    foreach ($member in $currentMembers) {
+
+        if ($member.Name -notin $DesiredMembers) {
+
+            Write-Host (
+                "[INFO] Removing stale membership: " +
+                $member.Name +
+                " -> " +
+                $GroupName
+            )
+
+            Remove-ADGroupMember `
+                -Identity $GroupName `
+                -Members $member `
+                -Confirm:$false `
+                -ErrorAction SilentlyContinue
+        }
+    }
+
+    foreach ($member in $DesiredMembers) {
+
+        Ensure-ADGroupMember `
+            -GroupName $GroupName `
+            -MemberName $member
+    }
+}
+
 function Ensure-ADPrincipalGroupMembership {
     param(
         [string]$GroupName,
@@ -229,9 +266,8 @@ function Ensure-ADUser {
 # Existing users are updated rather than recreated.
 # Selected attributes such as Department and Title
 # are reconciled during re-execution.
-# Reporting-line remediation is handled later by
-# Get-DepartmentManagerInfo() and
-# Invoke-Phase6UserRemediation().
+# Reporting lines are reconciled by Reconcile-DepartmentManagers()
+# before existing users are repaired.
 
 if ($existingUser) {
 
@@ -260,10 +296,9 @@ if ($existingUser) {
 
     Set-ADUser @updateParams
 
-    # Reporting lines are reconciled later by
-    # Get-DepartmentManagerInfo() and
-    # Invoke-Phase6UserRemediation().
-    # Manager assignments should not be updated here.
+    # Reporting lines are reconciled by Reconcile-DepartmentManagers()
+    # before this user-repair operation. Manager assignments are not
+    # updated here.
 
     return (
         Get-ADUser `
@@ -460,7 +495,7 @@ function Get-SamAccountName {
     return $sam
 }
 
-function Invoke-Phase1OuStructure {
+function Ensure-DirectoryOuStructure {
     param(
         [object]$PopulationModel,
         [string]$DomainDn
@@ -508,7 +543,7 @@ function Invoke-Phase1OuStructure {
     return $rootOUdn
 }
 
-function Invoke-Phase2DepartmentOus {
+function Ensure-DepartmentOUs {
     param(
         [object[]]$SelectedDepartments,
         [string]$RootOuDn,
@@ -542,7 +577,7 @@ $fileServicesEnabled =
 Write-Host "EnableFileServices raw value = [$EnableFileServices]"
 Write-Host "EnableFileServices converted value = [$fileServicesEnabled]"
 
-function Invoke-Phase3DepartmentSecurityGroups {
+function Ensure-DepartmentSecurityGroups {
     param(
         [object[]]$SelectedDepartments,
         [string]$RootOuDn,
@@ -613,7 +648,7 @@ function Invoke-Phase3DepartmentSecurityGroups {
             -GroupCategory Security `
             -GroupScope Global
            
-        Write-Host "Phase 3 EnableFileServices value = [$EnableFileServices]"
+        Write-Host "Department security group file-service setting = [$EnableFileServices]"
 
         if ($EnableFileServices) {
 
@@ -638,7 +673,7 @@ function Invoke-Phase3DepartmentSecurityGroups {
     Write-Host "[i] Department security group generation completed"
 }
 
-function Invoke-Phase4DepartmentGroupNesting {
+function Ensure-DepartmentGroupNesting {
     param(
         [object[]]$SelectedDepartments,
         [object]$PopulationModel,
@@ -668,13 +703,17 @@ function Invoke-Phase4DepartmentGroupNesting {
 
     if (Get-ADGroup -Identity $platformAdminUsersGroup -ErrorAction SilentlyContinue) {
 
-        Ensure-ADGroupMember `
+        Set-ADGroupMembersAuthoritative `
             -GroupName $windowsAdminsGroup `
-            -MemberName $platformAdminUsersGroup
+            -DesiredMembers @(
+                $platformAdminUsersGroup
+            )
 
-        Ensure-ADGroupMember `
+        Set-ADGroupMembersAuthoritative `
             -GroupName $linuxAdminsGroup `
-            -MemberName $platformAdminUsersGroup
+            -DesiredMembers @(
+                $platformAdminUsersGroup
+            )
     }
     else {
         Write-Warning (
@@ -683,7 +722,7 @@ function Invoke-Phase4DepartmentGroupNesting {
         )
     }
 
-    Write-Host "Phase 4 EnableFileServices value = [$EnableFileServices]"
+    Write-Host "Department group nesting file-service setting = [$EnableFileServices]"
 
     if ($EnableFileServices) {
 
@@ -704,7 +743,7 @@ function Invoke-Phase4DepartmentGroupNesting {
     Write-Host "[i] Department group nesting completed"
 }
 
-# Manager reconciliation phase.
+# Department manager reconciliation.
 # OU placement is the authoritative source of
 # departmental ownership and reporting lines.
 # Rules:
@@ -726,7 +765,7 @@ function Invoke-Phase4DepartmentGroupNesting {
 # - Departmental ALL groups
 # - Departmental Manager groups
 
-function Get-DepartmentManagerInfo {
+function Reconcile-DepartmentManagers {
     param(
         [object[]]$SelectedDepartments,
         [object]$UsersOu,
@@ -780,8 +819,8 @@ function Get-DepartmentManagerInfo {
                     -Identity $duplicateManager `
                     -Clear Title
 
-                # Reporting lines will be remediated later
-                # in this function.
+                # Reporting lines are reconciled after duplicate managers
+                # have been resolved.
 
                 Remove-ADGroupMember `
                     -Identity "${ggsPrefix}_$($department.Value)_Managers" `
@@ -827,7 +866,8 @@ function Get-DepartmentManagerInfo {
                     Remove-ADGroupMember `
                         -Identity $_ `
                         -Members $managerObject `
-                        -Confirm:$false
+                        -Confirm:$false `
+                        -ErrorAction SilentlyContinue
                 }
 
                 Get-ADPrincipalGroupMembership $managerObject |
@@ -845,7 +885,8 @@ function Get-DepartmentManagerInfo {
                     Remove-ADGroupMember `
                         -Identity $_ `
                         -Members $managerObject `
-                        -Confirm:$false
+                        -Confirm:$false `
+                        -ErrorAction SilentlyContinue
                 }
 
                 Get-ADPrincipalGroupMembership $managerObject |
@@ -863,7 +904,8 @@ function Get-DepartmentManagerInfo {
                     Remove-ADGroupMember `
                         -Identity $_ `
                         -Members $managerObject `
-                        -Confirm:$false
+                        -Confirm:$false `
+                        -ErrorAction SilentlyContinue
                 }
 
                 $managerSam = $managerObject.SamAccountName
@@ -1130,14 +1172,14 @@ function Get-DepartmentUserTargets {
     return $departmentTargets
 }
 
-# User remediation phase.
+# Existing-user repair.
 # Responsibilities:
 # - Department attribute remediation
 # - Group membership remediation
-# Reporting-line remediation is handled earlier
-# by Get-DepartmentManagerInfo().
+# Reporting-line reconciliation is completed by
+# Reconcile-DepartmentManagers() before this function runs.
 
-function Invoke-Phase6UserRemediation {
+function Repair-ExistingUsers {
     param(
         [hashtable]$DepartmentInfo,
         [object]$PopulationModel
@@ -1195,7 +1237,8 @@ function Invoke-Phase6UserRemediation {
                     Remove-ADGroupMember `
                         -Identity $_ `
                         -Members $user `
-                        -Confirm:$false
+                        -Confirm:$false `
+                        -ErrorAction SilentlyContinue
                 }
 
                 # Remove bad *_Managers groups
@@ -1209,7 +1252,8 @@ function Invoke-Phase6UserRemediation {
                     Remove-ADGroupMember `
                         -Identity $_ `
                         -Members $user `
-                        -Confirm:$false
+                        -Confirm:$false `
+                        -ErrorAction SilentlyContinue
                 }
 
                 # Remove bad *_ALL groups
@@ -1224,7 +1268,8 @@ function Invoke-Phase6UserRemediation {
                     Remove-ADGroupMember `
                         -Identity $_ `
                         -Members $user `
-                        -Confirm:$false
+                        -Confirm:$false `
+                        -ErrorAction SilentlyContinue
                 }
 
                 # Add correct groups
@@ -1243,7 +1288,7 @@ function Invoke-Phase6UserRemediation {
     Write-Host "[i] Existing user remediation completed"
 }
 
-# Round-robin user population.
+# Missing-user population.
 # Each pass attempts to add one standard user to
 # every department that has not yet reached its
 # target population.
@@ -1254,7 +1299,7 @@ function Invoke-Phase6UserRemediation {
 # - All departments have reached target capacity.
 # - No additional unique usernames are available.
 
-function Invoke-Phase7RoundRobinUserPopulation {
+function Populate-DepartmentUsers {
     param(
         [hashtable]$DepartmentTargets,
         [System.Collections.ArrayList]$CsvNames,
@@ -1442,7 +1487,9 @@ function Invoke-Phase7RoundRobinUserPopulation {
                 Remove-ADGroupMember `
                     -Identity $_ `
                     -Members $userObject `
-                    -Confirm:$false
+                    -Confirm:$false `
+                    -ErrorAction SilentlyContinue
+                    
             }
         }
     }
@@ -1455,10 +1502,11 @@ function Invoke-Phase7RoundRobinUserPopulation {
 # objects are created.
 # Execution order:
 # 1. Validate AD connectivity
-# 2. Build OU structure
-# 3. Create security groups
-# 4. Reconcile existing users
-# 5. Populate missing users
+# 2. Ensure directory and department OUs
+# 3. Ensure security groups and nesting
+# 4. Reconcile department managers and calculate user targets
+# 5. Repair existing users
+# 6. Populate missing users
 
 Write-Host "[INFO] Waiting for Active Directory availability"
 
@@ -1519,23 +1567,23 @@ $departments = Get-SelectedDepartments `
     -AdditionalDepartmentsJson $AdditionalDepartmentsJson `
     -InputDepartmentCount $DepartmentCount
 
-$rootOUdn = Invoke-Phase1OuStructure `
+$rootOUdn = Ensure-DirectoryOuStructure `
     -PopulationModel $model `
     -DomainDn $domainDN
 
-$usersOU = Invoke-Phase2DepartmentOus `
+$usersOU = Ensure-DepartmentOUs `
     -SelectedDepartments $departments `
     -RootOuDn $rootOUdn `
     -PreventOuDeletion $model.preventOuDeletion `
     -PopulationModel $model
 
-Invoke-Phase3DepartmentSecurityGroups `
+Ensure-DepartmentSecurityGroups `
     -SelectedDepartments $departments `
     -RootOuDn $rootOUdn `
     -PopulationModel $model `
     -EnableFileServices $fileServicesEnabled
 
-Invoke-Phase4DepartmentGroupNesting `
+Ensure-DepartmentGroupNesting `
     -SelectedDepartments $departments `
     -PopulationModel $model `
     -EnableFileServices $fileServicesEnabled
@@ -1571,7 +1619,7 @@ if ($CSVNames.Count -lt $requiredUsers) {
     )
 }
 
-$departmentInfo = Get-DepartmentManagerInfo `
+$departmentInfo = Reconcile-DepartmentManagers `
     -SelectedDepartments $departments `
     -UsersOu $usersOU `
     -CsvNames $CSVNames `
@@ -1583,11 +1631,11 @@ $departmentTargets = Get-DepartmentUserTargets `
     -DepartmentInfo $departmentInfo `
     -TargetUsersPerDepartment $UsersPerDepartment
 
-Invoke-Phase6UserRemediation `
+Repair-ExistingUsers `
     -DepartmentInfo $departmentInfo `
     -PopulationModel $model
 
-Invoke-Phase7RoundRobinUserPopulation `
+Populate-DepartmentUsers `
     -DepartmentTargets $departmentTargets `
     -CsvNames $CSVNames `
     -ConnectedDomain $currentDomain `
