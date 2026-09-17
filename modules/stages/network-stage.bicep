@@ -31,6 +31,14 @@ param hubRegion string
 
 param deployNetwork bool
 
+@description('Network topology mode.')
+@allowed([
+  'hubSpokeFirewall'
+  'hubSpoke'
+  'fullMesh'
+])
+param networkMode string
+
 param tags object
 
 param existingRegions array
@@ -42,6 +50,21 @@ param dnsServers array
 param jumpboxSubnets array
 param jumpboxAllowedSources array
 param additionalSubnetsByRegion array
+
+// Capability helpers
+var deployFirewall = contains([
+  'hubSpokeFirewall'
+], networkMode)
+
+var deployRouteTables = contains([
+  'hubSpokeFirewall'
+], networkMode)
+
+var deployPeerings = contains([
+  'hubSpokeFirewall'
+  'hubSpoke'
+  'fullMesh'
+], networkMode)
 
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
@@ -85,7 +108,7 @@ module vnets '../networking/vnet.bicep' = [
 ]
 
 module peerings '../networking/peering.bicep' = [
-  for source in regionKeys: if (deployNetwork) {
+  for source in regionKeys: if (deployNetwork && deployPeerings) {
     name: '${prefix}-peerings-${source}'
     scope: resourceGroup('${prefix}-rg-${source}')
     dependsOn: vnets
@@ -95,11 +118,12 @@ module peerings '../networking/peering.bicep' = [
       sourceRegion: source
       prefix: prefix
       hubRegion: hubRegion
+      networkMode: networkMode
     }
   }
 ]
 
-module firewall '../networking/firewall.bicep' = if (deployNetwork) {
+module firewall '../networking/firewall.bicep' = if (deployNetwork && deployFirewall) {
   name: '${prefix}-firewall-${hubRegion}'
 
   scope: resourceGroup('${prefix}-rg-${hubRegion}')
@@ -118,7 +142,7 @@ module firewall '../networking/firewall.bicep' = if (deployNetwork) {
 }
 
 module routeTables '../networking/routeTable.bicep' = [
-  for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
+  for (region, i) in regionKeys: if (deployNetwork && deployRouteTables && region != hubRegion) {
 
     name: '${prefix}-rt-${region}'
     scope: resourceGroup('${prefix}-rg-${region}')

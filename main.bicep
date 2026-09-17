@@ -30,6 +30,14 @@ targetScope = 'subscription'
 ])
 param stage string
 
+@description('Network topology mode.')
+@allowed([
+  'hubSpokeFirewall'
+  'hubSpoke'
+  'fullMesh'
+])
+param networkMode string = 'hubSpokeFirewall'
+
 @description('Prefix for all resources')
 param prefix string
 @description('Tags applied to deployed resources.')
@@ -664,6 +672,8 @@ module networkStage 'modules/stages/network-stage.bicep' = {
     hubRegion: hubRegion
 
     deployNetwork: deployNetwork
+
+    networkMode: networkMode
 
     tags: finalTags
 
