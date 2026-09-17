@@ -1,0 +1,284 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "prefix": {
+      "value": "2FM"
+    },
+
+    "stage": {
+      "value": "all"
+    },
+
+    "networkMode": {
+      "value": "fullMesh"
+    },
+
+    "tags": {
+      "value": {
+        "environment": "lab"
+      }
+    },
+
+    "regionIndexMap": {
+      "value": {
+        "swedencentral": 1,
+        "southindia": 2,
+        "malaysiawest": 3,
+        "newzealandnorth": 4,
+        "austriaeast": 5
+      }
+    },
+
+    "subnetIndexMap": {
+      "value": {
+        "firewall": 0,
+        "jumpbox": 1,
+        "dc": 2,
+        "server": 3,
+        "client": 4,
+        "test": 5,
+        "management": 6
+      }
+    },
+
+    "regionCount": {
+      "value": 4
+    },
+
+    "maxVmsPerRegion": {
+      "value": 2
+    },
+
+    "vmCounts": {
+      "value": {
+        "dc": 3,
+        "jumpbox": 2,
+        "windowsServer": 1,
+        "windowsClient": 1,
+        "linuxServer": 1,
+        "linuxClient": 0
+      }
+    },
+
+    "jumpboxAllowedSources": {
+      "value": [
+        "196.210.51.91/32",
+        "168.210.156.45/32",
+        "137.158.0.0/16",
+        "197.239.0.0/16",
+        "196.24.0.0/16",
+        "196.42.0.0/16",
+        "196.47.0.0/16"
+      ]
+    },
+
+    "existingRegions": {
+      "value": [
+        "swedencentral",
+        "southindia",
+        "malaysiawest"
+      ]
+    },
+
+    "existingVmPlacements": {
+      "value": [
+        {
+          "type": "dc",
+          "index": 0,
+          "regionKey": "swedencentral"
+        },
+        {
+          "type": "dc",
+          "index": 1,
+          "regionKey": "southindia"
+        },
+        {
+          "type": "dc",
+          "index": 2,
+          "regionKey": "southindia"
+        },
+        {
+          "type": "jmp",
+          "index": 0,
+          "regionKey": "swedencentral"
+        },
+        {
+          "type": "jmp",
+          "index": 1,
+          "regionKey": "malaysiawest"
+        }
+      ]
+    },
+
+    "enableIdentity": {
+      "value": true
+    },
+
+    "enableFileServices": {
+      "value": true
+    },
+    "useDedicatedFileServer": {
+      "value": true
+    },
+
+    "domainName": {
+      "value": "amrl.lab"
+    },
+
+    "windowsServerImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsServer",
+        "offer": "WindowsServer",
+        "sku": "2022-datacenter-g2",
+        "version": "latest"
+      }
+    },
+
+    "windowsClientImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsDesktop",
+        "offer": "windows-10",
+        "sku": "win10-22h2-ent-g2",
+        "version": "latest"
+      }
+    },
+
+    "ubuntuImage": {
+      "value": {
+        "publisher": "Canonical",
+        "offer": "0001-com-ubuntu-server-jammy",
+        "sku": "22_04-lts-gen2",
+        "version": "latest"
+      }
+    },
+
+    "vmSizes": {
+      "value": {
+        "dc": "Standard_B2ls_v2",
+        "jumpbox": "Standard_B2ls_v2",
+        "windowsServer": "Standard_B2ls_v2",
+        "windowsClient": "Standard_B2ls_v2",
+        "linuxServer": "Standard_B2ls_v2",
+        "linuxClient": "Standard_B2ls_v2"
+      }
+    },
+
+    "osDisks": {
+      "value": {
+        "dc": {
+          "storageAccountType": "Standard_LRS",
+          "diskSizeGB": 128
+        },
+        "jumpbox": {
+          "storageAccountType": "Standard_LRS",
+          "diskSizeGB": 128
+        },
+        "windowsServer": {
+          "storageAccountType": "Standard_LRS",
+          "diskSizeGB": 128
+        },
+        "windowsClient": {
+          "storageAccountType": "Standard_LRS",
+          "diskSizeGB": 128
+        },
+        "linuxServer": {
+          "storageAccountType": "Standard_LRS",
+          "diskSizeGB": 128
+        },
+        "linuxClient": {
+          "storageAccountType": "Standard_LRS",
+          "diskSizeGB": 128
+        }
+      }
+    },
+
+    "vmAutoDeleteOptions": {
+      "value": {
+        "nic": true,
+        "publicIp": true,
+        "osDisk": true
+      }
+    },
+
+    "sshPublicKey": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/f9dbd9b4-902c-4a6a-970a-6d5bb2a29585/resourceGroups/amrl-foundation-rg/providers/Microsoft.KeyVault/vaults/amrlazure11-kv"
+        },
+        "secretName": "sshPublicKey"
+      }
+    },
+
+    "sshPrivateKey": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/f9dbd9b4-902c-4a6a-970a-6d5bb2a29585/resourceGroups/amrl-foundation-rg/providers/Microsoft.KeyVault/vaults/amrlazure11-kv"
+        },
+        "secretName": "sshPrivateKey"
+      }
+    },
+
+    "jumpboxAdminUsername": {
+      "value": "azureadmin"
+    },
+    "jumpboxAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/f9dbd9b4-902c-4a6a-970a-6d5bb2a29585/resourceGroups/amrl-foundation-rg/providers/Microsoft.KeyVault/vaults/amrlazure11-kv"
+        },
+        "secretName": "jumpboxAdminPassword"
+      }
+    },
+    "serverAdminUsername": {
+      "value": "azureadmin"
+    },
+    "serverAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/f9dbd9b4-902c-4a6a-970a-6d5bb2a29585/resourceGroups/amrl-foundation-rg/providers/Microsoft.KeyVault/vaults/amrlazure11-kv"
+        },
+        "secretName": "serverAdminPassword"
+      }
+    },
+    "clientAdminUsername": {
+      "value": "azureadmin"
+    },
+    "clientAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/f9dbd9b4-902c-4a6a-970a-6d5bb2a29585/resourceGroups/amrl-foundation-rg/providers/Microsoft.KeyVault/vaults/amrlazure11-kv"
+        },
+        "secretName": "clientAdminPassword"
+      }
+    },
+    "usersPerDepartment": {
+      "value": 50
+    },
+
+    "sysAdminDepartment": {
+      "value": {
+        "Information Technology": "ICT"
+      }
+    },
+
+    "additionalDepartments": {
+      "value": {
+        "Finance": "FIN",
+        "Human Resources": "HR",
+        "Engineering": "ENG",
+        "Tech Team": "Tech",
+        "Marketing": "MAR",
+        "Legal": "LEG",
+        "Procurement": "PRO",
+        "Research": "RES",
+        "Support": "SUP",
+        "Operations": "OPS",
+        "Administration": "ADM"
+      }
+    },
+    "departmentCount": {
+      "value": 6
+    }
+  }
+}

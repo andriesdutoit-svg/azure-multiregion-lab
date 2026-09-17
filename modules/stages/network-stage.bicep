@@ -91,6 +91,7 @@ module vnets '../networking/vnet.bicep' = [
       vnetName: '${prefix}-vnet-${region}'
       location: region
       isHub: region == hubRegion
+      deployAzureFirewallSubnet: deployFirewall
 
       existingRegions: existingRegions
 
@@ -103,22 +104,6 @@ module vnets '../networking/vnet.bicep' = [
       tags: union(tags, {
         project: prefix
       })
-    }
-  }
-]
-
-module peerings '../networking/peering.bicep' = [
-  for source in regionKeys: if (deployNetwork && deployPeerings) {
-    name: '${prefix}-peerings-${source}'
-    scope: resourceGroup('${prefix}-rg-${source}')
-    dependsOn: vnets
-    params: {
-      vnetName: '${prefix}-vnet-${source}'
-      regionKeys: regionKeys
-      sourceRegion: source
-      prefix: prefix
-      hubRegion: hubRegion
-      networkMode: networkMode
     }
   }
 ]
@@ -211,6 +196,26 @@ module additionalSubnets '../networking/additionalSubnets.bicep' = [
       #disable-next-line BCP318
       vnetName: vnets[i].outputs.vnetName
       subnets: additionalSubnetsByRegion[i]
+    }
+  }
+]
+
+module peerings '../networking/peering.bicep' = [
+  for source in regionKeys: if (deployNetwork && deployPeerings) {
+    name: '${prefix}-peerings-${source}'
+    scope: resourceGroup('${prefix}-rg-${source}')
+    dependsOn: [
+      vnets
+      roleSubnets
+      additionalSubnets
+    ]
+    params: {
+      vnetName: '${prefix}-vnet-${source}'
+      regionKeys: regionKeys
+      sourceRegion: source
+      prefix: prefix
+      hubRegion: hubRegion
+      networkMode: networkMode
     }
   }
 ]

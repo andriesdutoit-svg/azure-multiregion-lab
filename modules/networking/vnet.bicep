@@ -17,6 +17,7 @@ param dnsServers array
 param jumpboxSubnets array
 param existingRegions array = []
 param jumpboxAllowedSources array
+param deployAzureFirewallSubnet bool
 param tags object = {}
 
 // ========================================
@@ -318,7 +319,10 @@ module subnetJumpbox 'subnet.bicep' = if (createSubnets && isHub) {
 
 // Spoke standard subnet reconciliation is handled by roleSubnets.bicep.
 
-module subnetHub 'subnet.bicep' = if (isHub && createSubnets) {
+// AzureFirewallSubnet is reconciled independently of createSubnets
+// to support brownfield upgrades from hubSpoke to hubSpokeFirewall.
+// module subnetHub 'subnet.bicep' = if (isHub && createSubnets && deployAzureFirewallSubnet) {
+module subnetHub 'subnet.bicep' = if (isHub && deployAzureFirewallSubnet) {
   name: 'AzureFirewallSubnet'
   dependsOn: [
     subnetJumpbox
