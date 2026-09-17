@@ -174,10 +174,6 @@ module roleSubnets '../networking/roleSubnets.bicep' = [
 
     scope: resourceGroup('${prefix}-rg-${region}')
 
-    dependsOn: [
-      routeTables[i]
-    ]
-
     params: {
       #disable-next-line BCP318
       vnetName: vnets[i].outputs.vnetName
@@ -192,13 +188,13 @@ module roleSubnets '../networking/roleSubnets.bicep' = [
       nsgIds: vnets[i].outputs.nsgIds
 
       #disable-next-line BCP318
-      dcRouteTableId: routeTables[i].outputs.dcRouteTableId
+      dcRouteTableId: deployRouteTables ? routeTables[i].outputs.dcRouteTableId : ''
       #disable-next-line BCP318
-      jumpboxRouteTableId: routeTables[i].outputs.jumpboxRouteTableId
+      jumpboxRouteTableId: deployRouteTables ? routeTables[i].outputs.jumpboxRouteTableId : ''
       #disable-next-line BCP318
-      serverRouteTableId: routeTables[i].outputs.serverRouteTableId
+      serverRouteTableId: deployRouteTables ? routeTables[i].outputs.serverRouteTableId : ''
       #disable-next-line BCP318
-      clientRouteTableId: routeTables[i].outputs.clientRouteTableId
+      clientRouteTableId: deployRouteTables ? routeTables[i].outputs.clientRouteTableId : ''
     }
   }
 ]

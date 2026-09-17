@@ -2,8 +2,13 @@ targetScope = 'resourceGroup'
 
 // ========================================
 // MODULE PURPOSE
-// Creates hub-to-spoke and spoke-to-hub peering.
-// Does not create full-mesh peering between spokes.
+// Creates VNet peerings according to networkMode.
+// Supported:
+// - hubSpokeFirewall
+// - hubSpoke
+// - fullMesh
+// Hub-spoke modes create hub-to-spoke peerings only.
+// Full mesh mode creates peerings between all regions.
 // ========================================
 
 // ========================================
@@ -35,8 +40,10 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
 
 // ========================================
 // PEERING RULE
-// Hub peers with every spoke. Each spoke peers only with the hub. No spoke-to-spoke peering.
-// This enforces hub-centric traffic routing: spoke-to-spoke traffic must traverse hub firewall.
+// Hub-spoke modes create hub-to-spoke and spoke-to-hub peerings only.
+// In hubSpokeFirewall mode, cross-spoke traffic is routed through the hub firewall.
+// In hubSpoke mode, spokes remain connected through the hub without firewall routing.
+// fullMesh mode creates peerings between every pair of distinct regions.
 // ========================================
 
 resource peerings 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2022-07-01' = [
