@@ -21,6 +21,7 @@
 - **v2.4**: Main Bicep decomposition into staged modules.
 - **v2.4.1**: Brownfield networking and cross-spoke routing fixes.
 - **v2.4.2**: Identity reconciliation and directory population cleanup.
+- **v2.5**: Selectable `hubSpokeFirewall`, `hubSpoke`, and `fullMesh` topology creation; brownfield firewall introduction through `AzureFirewallSubnet` reconciliation; and documented non-transitive hub-spoke peering behavior.
 
 ## Learning Outcomes Demonstrated
 
@@ -50,6 +51,7 @@ Validation outputs and Run Command instance views expose placement decisions, ca
 - Azure SKU availability and quota must be checked against the target subscription.
 - Region indexes determine VNet address spaces and must be treated as part of the deployed network contract.
 - Identity scripts are idempotent, but guest networking, DNS, Kerberos, LDAP, and Azure VM Agent health can still affect execution.
+- Topology modes create the resources for the selected mode but do not automatically retire peerings, firewall resources, route tables, UDR associations, or `AzureFirewallSubnet` from a previous mode.
 
 ## Third-Party Components
 

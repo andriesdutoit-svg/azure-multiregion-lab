@@ -44,13 +44,29 @@ Example inventory entry:
 
 ## Controlled Egress
 
-This branch completes the firewall egress control update.
+Controlled egress applies when `networkMode=hubSpokeFirewall`.
 
 - Server and client workload subnets no longer have direct Internet access.
 - Their default route is sent to the Azure Firewall private IP via the route table next hop.
 - All outbound Internet traffic from those subnets is inspected and controlled at the firewall before leaving the environment.
 - Internal traffic remains allowed, and firewall policy continues to allow required outbound HTTP/HTTPS flows.
 - This is a controlled-egress model: the lab still has outbound connectivity where required, but it is centralized and inspectable at the firewall rather than exposed directly from workload subnets.
+
+## Network Topology Modes
+
+| `networkMode` | Deploys | Use case and boundary |
+|---|---|---|
+| `hubSpokeFirewall` | Hub-spoke peerings, Azure Firewall, policy, `AzureFirewallSubnet`, route tables, and UDRs | Full cross-spoke connectivity through the firewall with controlled workload egress. |
+| `hubSpoke` | Hub-spoke peerings only | Management-focused or staging topology. Peering is non-transitive, so spokes cannot communicate with each other. |
+| `fullMesh` | Direct peerings between every selected region | Lab, training, and test environments that need direct regional connectivity without firewall or UDR management. |
+
+The hub remains the control-plane region in all modes. Selecting a mode does not change VM placement, DNS candidate selection, or identity orchestration.
+
+### Brownfield Firewall Introduction
+
+Changing `networkMode` from `hubSpoke` to `hubSpokeFirewall` and running `stage=network` adds `AzureFirewallSubnet`, the firewall, policy, route tables, and UDRs without recreating VMs or identity resources. The firewall subnet is reconciled even when the hub VNet is listed in `existingRegions`.
+
+Other topology transitions are creation-only. The template does not remove peerings, firewall resources, route tables, UDR associations, or `AzureFirewallSubnet` that belong to a previous mode. Plan and perform resource retirement explicitly before considering a topology migration complete.
 
 ## Stages
 
@@ -104,6 +120,7 @@ These parameters can significantly affect topology or addressing, and changing t
 - `regionCount`
 - `regionIndexMap`
 - `subnetIndexMap` (including the `firewall` index)
+- `networkMode`
 
 See [Region Indexes](#region-indexes) below for why `regionIndexMap` changes are especially disruptive to existing (brownfield) regions.
 

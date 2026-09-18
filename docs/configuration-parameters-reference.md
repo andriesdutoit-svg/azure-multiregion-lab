@@ -10,6 +10,7 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 |---|---|---|---|
 | `prefix` | string | Resource naming prefix | `"AMRL"` |
 | `stage` | string | Deployment stage: `network`, `compute`, `identity`, or `all`. See [Deployment Guide](deployment.md#stages). | `"all"` |
+| `networkMode` | string | Network topology: `hubSpokeFirewall`, `hubSpoke`, or `fullMesh`. See [Network Topology Modes](deployment.md#network-topology-modes). | `"hubSpokeFirewall"` |
 | `tags` | object | Resource tags for organisation and billing | `{"environment": "lab"}` |
 | `regionCount` | integer | Number of regions to deploy across | `2` |
 | `maxVmsPerRegion` | integer | Maximum VMs allowed per region | `2` |
@@ -27,9 +28,19 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 - **Greenfield (all new)**: `"existingRegions": []`, `"existingVmPlacements": []`
 - **Brownfield (mixed)**: `"existingRegions": ["westeurope"]` (reuses westeurope, creates additional regions)
 
+### Network Topology Modes
+
+| Value | Resources created | Connectivity |
+|---|---|---|
+| `hubSpokeFirewall` | Hub-spoke peerings, Azure Firewall, firewall policy, `AzureFirewallSubnet`, route tables, and UDRs | Cross-spoke traffic is routed through the firewall. |
+| `hubSpoke` | Hub-spoke peerings | Hub-to-spoke only; VNet peering is non-transitive, so spoke-to-spoke traffic is unavailable. |
+| `fullMesh` | Direct regional peerings | Every selected region is directly peered with every other selected region. |
+
+`networkMode` changes do not affect VM placement or identity automation. The template creates resources needed by the selected mode but does not remove resources from a prior mode; treat topology changes as a planned migration with explicit cleanup.
+
 ## Virtual Machine Configuration
 
-Reserved subnet keys have known platform roles. AMRL generates role-specific NSGs, internal route tables for spoke DCs and jumpboxes, and firewall route tables for server and client subnets. Additional subnet keys are policy-neutral and receive no inferred NSG or route table.
+Reserved subnet keys have known platform roles. AMRL generates role-specific NSGs in every mode. In `hubSpokeFirewall`, it also generates internal route tables for spoke DCs and jumpboxes and firewall route tables for server and client subnets. Additional subnet keys are policy-neutral and receive no inferred NSG or route table.
 
 **VM Scale**:
 

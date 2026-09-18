@@ -237,10 +237,10 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = if (!isExistingRe
 }
 
 // ========================================
-// CONDITIONAL MODULE DEPLOYMENTS (createSubnets = true)
-// 1) Optional hub firewall subnet
+// CONDITIONAL MODULE DEPLOYMENTS
+// 1) AzureFirewallSubnet on the hub when firewall mode is selected
 // 2) NSGs per role
-// 3) Subnets per role with NSG association
+// 3) Greenfield hub standard subnets with NSG association
 // ========================================
 
 module nsgDc 'nsg.bicep' = {
@@ -321,7 +321,6 @@ module subnetJumpbox 'subnet.bicep' = if (createSubnets && isHub) {
 
 // AzureFirewallSubnet is reconciled independently of createSubnets
 // to support brownfield upgrades from hubSpoke to hubSpokeFirewall.
-// module subnetHub 'subnet.bicep' = if (isHub && createSubnets && deployAzureFirewallSubnet) {
 module subnetHub 'subnet.bicep' = if (isHub && deployAzureFirewallSubnet) {
   name: 'AzureFirewallSubnet'
   dependsOn: [

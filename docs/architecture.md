@@ -2,9 +2,9 @@
 
 ## Overview
 
-AMRL is a subscription-scope Bicep deployment for a multi-region Azure lab. It creates resource groups, hub-and-spoke VNets, subnet and NSG segmentation, Azure Firewall routing, virtual machines, and optional Active Directory automation.
+AMRL is a subscription-scope Bicep deployment for a multi-region Azure lab. It creates resource groups, selectable VNet topologies, subnet and NSG segmentation, virtual machines, and optional Active Directory automation.
 
-The primary region is the hub. Other selected regions are spokes. Spoke-to-spoke traffic is routed through the hub firewall rather than using direct spoke peering.
+The primary region is always the hub and control-plane anchor. It hosts `dc01` and `jmp01`; other selected regions are spokes. `networkMode` selects connectivity and routing without changing this placement model.
 
 ## Core Terminology
 
@@ -32,7 +32,7 @@ The deployment is declarative. Bicep describes the desired resources, their conf
 The root [main.bicep](../main.bicep) orchestrates the deployment. Reusable modules own specific resource types:
 
 - `modules/networking` owns VNets, role subnets, NSGs, firewalls, and route tables.
-- `modules/networking/peering.bicep` owns hub-to-spoke and spoke-to-hub peering.
+- `modules/networking/peering.bicep` owns mode-specific hub-spoke or full-mesh peering.
 - `modules/compute` owns Windows and Linux VM resources.
 - `modules/identity` owns AD automation, domain joining, and departmental file-service provisioning.
 - `modules/logic` owns configuration and capacity validation.
@@ -40,6 +40,20 @@ The root [main.bicep](../main.bicep) orchestrates the deployment. Reusable modul
 ## Resource Scope
 
 `main.bicep` uses subscription scope so it can create one resource group per selected region. Regional resources are deployed into their corresponding resource group with module-level resource-group scope.
+
+## Network Topology
+
+The `networkMode` parameter supports three topology creation modes:
+
+| Mode | Peerings | Firewall and routing | Cross-spoke connectivity |
+|---|---|---|---|
+| `hubSpokeFirewall` | Hub-to-spoke and spoke-to-hub | Azure Firewall, firewall policy, `AzureFirewallSubnet`, route tables, and UDRs | Routed through the hub firewall. |
+| `hubSpoke` | Hub-to-spoke and spoke-to-hub | None | Not available. Azure VNet peering is non-transitive. |
+| `fullMesh` | Every pair of distinct regions | None | Direct VNet peering between every region. |
+
+`hubSpoke` is suitable for management-focused or firewall-introduction staging environments. It is not a lower-cost replacement for firewall-routed cross-spoke workloads. `fullMesh` avoids Azure Firewall and UDR management, but VNet peering traffic costs and the growing number of peerings should be considered.
+
+The `hubSpoke -> hubSpokeFirewall` transition is supported with `stage=network`: `AzureFirewallSubnet` is reconciled independently of greenfield subnet creation, allowing it to be added to an existing hub VNet. Other topology migrations do not currently remove resources from the prior mode.
 
 ## Network Layout
 
@@ -59,7 +73,7 @@ server   = 3
 client   = 4
 ```
 
-The hub contains the firewall and control-plane subnets. Spokes contain workload subnets and route tables. NSGs restrict administration and AD traffic by subnet role.
+All modes contain control-plane and role-based workload subnets. In `hubSpokeFirewall`, the hub additionally contains the firewall and `AzureFirewallSubnet`, while spokes receive route tables. NSGs restrict administration and AD traffic by subnet role in every mode.
 
 ### Network Architecture Diagram
 
@@ -81,7 +95,7 @@ flowchart TB
   AC --> FW
 ```
 
-Traffic path: spoke VM -> route table -> hub firewall -> destination (no direct spoke-to-spoke path).
+This diagram applies to `hubSpokeFirewall`: spoke VM -> route table -> hub firewall -> destination. `hubSpoke` has no spoke-to-spoke path; `fullMesh` uses direct peerings instead.
 
 ### Subnet Roles and NSG Rules
 
@@ -122,9 +136,13 @@ All VMs (`modules/compute/vm-windows.bicep`, `modules/compute/vm-linux.bicep`) s
 
 ## Controlled Egress
 
-Server and client subnets send both `10.0.0.0/8` and `0.0.0.0/0` to the Azure Firewall private IP, forcing internal cross-spoke traffic and Internet egress through the hub firewall. Spoke DC and jumpbox subnets send only `10.0.0.0/8` through the firewall, preserving direct Internet access while enabling cross-spoke directory services and administration. Hub DC and jumpbox subnets do not receive these route tables because the hub is directly peered with every spoke.
+Controlled egress applies only to `hubSpokeFirewall`. Server and client subnets send both `10.0.0.0/8` and `0.0.0.0/0` to the Azure Firewall private IP, forcing internal cross-spoke traffic and Internet egress through the hub firewall. Spoke DC and jumpbox subnets send only `10.0.0.0/8` through the firewall, preserving direct Internet access while enabling cross-spoke directory services and administration. Hub DC and jumpbox subnets do not receive these route tables because the hub is directly peered with every spoke.
 
 This is a controlled-egress design rather than a block-all design: outbound connectivity is still allowed where required, but it is centralized and inspectable at the firewall instead of being direct from the workload subnets.
+
+## Topology Transition Boundary
+
+The deployment creates and reconciles resources required by the selected mode, but it does not retire resources that are no longer selected. For example, moving from `fullMesh` to a hub-spoke mode can leave spoke-to-spoke peerings, and moving away from `hubSpokeFirewall` can leave the firewall, policy, public IP, route tables, UDR associations, and `AzureFirewallSubnet`. Treat topology migration as a planned manual operation until explicit retirement logic is implemented.
 
 ## Desired State
 

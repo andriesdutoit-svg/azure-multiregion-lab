@@ -75,6 +75,12 @@ Before each brownfield expansion, update:
 - `existingVmPlacements` with every VM that already exists.
 - `regionIndexMap` without changing indexes assigned to existing VNets.
 
+## Topology Independence and Transition
+
+VM placement is independent of `networkMode`. The hub remains the control-plane region for `dc01` and `jmp01`, while workload placement, capacity accounting, DNS candidates, and identity targeting use the same final placement model in every topology mode.
+
+The network stage can add firewall resources during a `hubSpoke -> hubSpokeFirewall` transition without recreating the hub VNet. Other topology changes are not full reconciliation: resources such as peerings, firewall components, route tables, UDR associations, and `AzureFirewallSubnet` are not automatically retired when no longer required. Maintain the brownfield inventory and plan cleanup separately for topology transitions.
+
 ## File Server Reassignment on Brownfield Expansion
 
 The `useDedicatedFileServer` parameter controls the file server target:

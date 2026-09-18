@@ -1,6 +1,6 @@
-# Azure Multi-Region Lab (AMRL) v2.4.2
+# Azure Multi-Region Lab (AMRL) v2.5
 
-AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, hub-and-spoke networking, capacity-aware VM placement, and idempotent Active Directory automation.
+AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, selectable network topologies, capacity-aware VM placement, and idempotent Active Directory automation.
 
 See [Project History and Learning Notes](docs/project-history.md) for the design decisions and IaC concepts demonstrated by the project.
 
@@ -72,18 +72,21 @@ See [Placement and Reconciliation](docs/placement-and-reconciliation.md) for the
 - v2.4 staged module decomposition with explicit network, compute, and identity stage contracts.
 - v2.4.1 brownfield network reconciliation and reliable cross-spoke routing for spoke DCs and jumpboxes.
 - v2.4.2 identity reconciliation improvements and responsibility-based directory population functions.
+- v2.5 selectable hub-and-spoke firewall, hub-and-spoke peering-only, and full-mesh topology creation.
 
-## Architecture
+## Network Topology
 
-The deployment creates a hub-and-spoke topology:
+The `networkMode` parameter selects the network topology without changing VM placement or identity orchestration:
 
-- The primary region is the hub.
-- Other selected regions are spokes.
-- The hub contains Azure Firewall and control-plane resources.
-- Workload traffic is routed through the hub firewall.
-- Server and client subnets route internal and Internet traffic through the firewall; spoke DCs and jumpboxes route internal traffic through it while retaining direct Internet access.
-- Jumpboxes provide the administrative entry point.
-- Spoke workload subnets are protected by role-based NSGs and route tables.
+| `networkMode` | Deploys | Connectivity |
+|---|---|---|
+| `hubSpokeFirewall` | Hub-spoke peerings, Azure Firewall, firewall policy, `AzureFirewallSubnet`, route tables, and UDRs | Cross-spoke traffic is routed through the hub firewall. |
+| `hubSpoke` | Hub-spoke peerings only | Hub-to-spoke traffic only. Azure VNet peering is non-transitive, so spokes cannot communicate through the hub. |
+| `fullMesh` | Direct peering between every selected region | Direct region-to-region connectivity without Azure Firewall or UDRs. |
+
+The primary region remains the hub and control-plane anchor for `dc01` and `jmp01` in every mode. Role-based NSGs protect all standard subnets.
+
+`hubSpoke -> hubSpokeFirewall` is supported with `stage=network`; the existing hub VNet receives `AzureFirewallSubnet` without recreation. Topology changes do not currently retire peerings, firewall resources, route tables, UDR associations, or firewall subnets from the previous mode. Plan and perform that cleanup explicitly before relying on a topology migration.
 
 See [Architecture](docs/architecture.md) for the resource model, module boundaries, network layout, addressing, and desired-state model.
 
@@ -155,7 +158,7 @@ See [CI/CD Workflow and Local Checks](docs/ci-cd-validation.md) for GitHub Actio
 main.bicep                         Subscription-scope orchestrator
 main.parameters.*.json             Deployment parameter examples
 modules/networking                 VNets, subnets, NSGs, firewall, routes
-modules/networking/peering.bicep   Hub-to-spoke peering
+modules/networking/peering.bicep   Mode-specific hub-spoke or full-mesh peering
 modules/compute                    Windows and Linux VM resources
 modules/identity                   AD and domain-join automation
 modules/logic                      Placement and configuration validation
@@ -166,6 +169,7 @@ docs/                              Detailed project documentation
 
 - Live Azure VM discovery is not automatic; brownfield inventory must be maintained in `existingVmPlacements`.
 - Region indexes determine VNet address spaces and must be treated as part of the deployed network contract.
+- Topology creation is supported for all `networkMode` values, but topology transitions do not automatically remove resources from a previous mode.
 - Azure VM SKU availability and quota are subscription- and region-specific and require preflight checks.
 - Identity scripts depend on guest networking, DNS, Kerberos, LDAP, and a healthy Azure VM Agent.
 - Control-plane placement falls back to the hub after spoke capacity is exhausted; per-region validation reports hub overflow after placement rather than preventing the fallback.
@@ -187,4 +191,4 @@ See the detailed guides for implementation boundaries and operational guidance.
 
 ## Release
 
-**v2.4.2** completes identity reconciliation improvements and the directory population workflow cleanup.
+**v2.5** adds selectable topology creation and brownfield firewall introduction; topology migration and resource retirement remain planned work.

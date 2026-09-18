@@ -42,7 +42,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
 // PEERING RULE
 // Hub-spoke modes create hub-to-spoke and spoke-to-hub peerings only.
 // In hubSpokeFirewall mode, cross-spoke traffic is routed through the hub firewall.
-// In hubSpoke mode, spokes remain connected through the hub without firewall routing.
+// In hubSpoke mode, only hub-to-spoke traffic is available; VNet peering is non-transitive.
 // fullMesh mode creates peerings between every pair of distinct regions.
 // ========================================
 
