@@ -181,11 +181,13 @@ var hasEmptyVmSizeRole = contains(emptyVmSizeRoleFlags, true)
 var invalidOsDiskConfigurationFlags = [
   for role in requiredRoleKeys: !contains(osDisks, role)
     ? false
-    : empty(osDisks[role].?storageAccountType)
+    : !contains(osDisks[role], 'storageAccountType')
       ? true
-      : empty(osDisks[role].?diskSizeGB)
+      : empty(osDisks[role].storageAccountType)
         ? true
-        : osDisks[role].diskSizeGB < 1
+        : !contains(osDisks[role], 'diskSizeGB')
+          ? true
+          : osDisks[role].diskSizeGB < 1
 ]
 var hasInvalidOsDiskConfiguration = contains(invalidOsDiskConfigurationFlags, true)
 
