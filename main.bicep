@@ -1,5 +1,6 @@
 targetScope = 'subscription'
 
+// ========================================
 // CONTENTS
 // 1. Configuration and stage selection
 // 2. Placement model: region ordering and VM model
@@ -8,6 +9,7 @@ targetScope = 'subscription'
 // 5. DNS configuration and validation
 // 6. Network, compute, and identity stages
 // 7. Deployment outputs
+// ========================================
 
 // ========================================
 // DEPLOYMENT PURPOSE
@@ -23,12 +25,26 @@ targetScope = 'subscription'
 // ----
 @description('Deployment stage to execute: network, compute, identity, or all.')
 @allowed([
+  'all'
   'network'
   'compute'
   'identity'
-  'all'
 ])
 param stage string
+
+@description('Network topology mode.')
+@allowed([
+  'hubSpokeFirewall'
+  'hubSpoke'
+  'fullMesh'
+])
+param networkMode string
+
+@description('Allows removal of candidate spoke-to-spoke peerings identified by the brownfield cleanup script.')
+param executePeeringCleanup bool
+
+@description('Resource ID of the User Assigned Managed Identity used by Deployment Scripts.')
+param automationManagedIdentityResourceId string
 
 @description('Prefix for all resources')
 param prefix string
@@ -44,7 +60,7 @@ param regionIndexMap object
 param regionCount int
 @description('Maximum number of VMs allowed in each region.')
 param maxVmsPerRegion int
-@description('Regions with existing VNets and managed networking to reconcile. Route tables and standard subnet associations are deployed or updated by the network stage; resources in other regions are created (greenfield).')
+@description('Regions with existing VNet infrastructure where networking is reconciled. Route tables and standard subnet associations are deployed or updated; networking in other regions is created from scratch.')
 param existingRegions array
 @description('Existing VM placement inventory used for brownfield VM reconciliation.')
 param existingVmPlacements array = []
@@ -620,9 +636,15 @@ module validationEngine 'modules/logic/validation.bicep' = {
     vmCounts: vmCounts
     vmSizes: vmSizes
     osDisks: osDisks
+    windowsServerImage: windowsServerImage
+    windowsClientImage: windowsClientImage
+    ubuntuImage: ubuntuImage
     regionCount: regionCount
     regionIndexMap: regionIndexMap
     subnetIndexMap: subnetIndexMap
+    jumpboxAllowedSources: jumpboxAllowedSources
+    networkMode: networkMode
+    automationManagedIdentityResourceId: automationManagedIdentityResourceId
     vmPlacements: finalVmPlacements
     regionKeys: regionKeys
     maxVmsPerRegion: maxVmsPerRegion
@@ -664,6 +686,10 @@ module networkStage 'modules/stages/network-stage.bicep' = {
     hubRegion: hubRegion
 
     deployNetwork: deployNetwork
+
+    networkMode: networkMode
+    executePeeringCleanup: executePeeringCleanup
+    automationManagedIdentityResourceId: automationManagedIdentityResourceId
 
     tags: finalTags
 

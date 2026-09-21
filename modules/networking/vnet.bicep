@@ -17,12 +17,8 @@ param dnsServers array
 param jumpboxSubnets array
 param existingRegions array = []
 param jumpboxAllowedSources array
+param deployAzureFirewallSubnet bool
 param tags object = {}
-
-// ========================================
-// SECURITY RULE BUILDING BLOCKS
-// Base rule arrays reused to build role-specific NSG rule sets.
-// ========================================
 
 var isExistingRegion = contains(existingRegions, location)
 
@@ -236,10 +232,10 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = if (!isExistingRe
 }
 
 // ========================================
-// CONDITIONAL MODULE DEPLOYMENTS (createSubnets = true)
-// 1) Optional hub firewall subnet
+// CONDITIONAL MODULE DEPLOYMENTS
+// 1) AzureFirewallSubnet on the hub when firewall mode is selected
 // 2) NSGs per role
-// 3) Subnets per role with NSG association
+// 3) Greenfield hub standard subnets with NSG association
 // ========================================
 
 module nsgDc 'nsg.bicep' = {
@@ -318,7 +314,9 @@ module subnetJumpbox 'subnet.bicep' = if (createSubnets && isHub) {
 
 // Spoke standard subnet reconciliation is handled by roleSubnets.bicep.
 
-module subnetHub 'subnet.bicep' = if (isHub && createSubnets) {
+// AzureFirewallSubnet is created independently of createSubnets to support brownfield
+// transitions from hubSpoke to hubSpokeFirewall.
+module subnetHub 'subnet.bicep' = if (isHub && deployAzureFirewallSubnet) {
   name: 'AzureFirewallSubnet'
   dependsOn: [
     subnetJumpbox
@@ -333,7 +331,8 @@ module subnetHub 'subnet.bicep' = if (isHub && createSubnets) {
 
 // ========================================
 // EXISTING RESOURCE REFERENCES
-// In brownfield deployments (isExistingRegion=true), networking resources are not created by this module.
+// In brownfield deployments, existing VNets and standard subnets are reused while NSGs,
+// route tables, and supported subnet changes remain managed by the network stage.
 // Existing resource references allow safe ID resolution without module.outputs access,
 // avoiding null-reference errors in conditional-module paths.
 // ========================================

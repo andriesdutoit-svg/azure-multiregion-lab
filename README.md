@@ -1,6 +1,6 @@
-# Azure Multi-Region Lab (AMRL) v2.4.2
+# Azure Multi-Region Lab (AMRL) v2.5
 
-AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, hub-and-spoke networking, capacity-aware VM placement, and idempotent Active Directory automation.
+AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, selectable network topologies, capacity-aware VM placement, and idempotent Active Directory automation.
 
 See [Project History and Learning Notes](docs/project-history.md) for the design decisions and IaC concepts demonstrated by the project.
 
@@ -9,8 +9,10 @@ See [Project History and Learning Notes](docs/project-history.md) for the design
 - Azure CLI installed and authenticated to the target subscription.
 - Permission to create subscription and resource-group resources.
 - Azure Key Vault containing the referenced admin credentials and SSH keys.
+- A User Assigned Managed Identity for deployment-script automation; grant it the Network Contributor role at subscription scope and pass its resource ID through `automationManagedIdentityResourceId`.
 - Valid VM sizes and images for the target regions.
 - Sufficient regional vCPU quota.
+- At least one domain controller requested with `vmCounts.dc >= 1`, even when identity and file services are disabled.
 
 Trial and Student subscriptions may restrict regions, VM sizes, images, or quota. Check availability before deployment using the commands in [Validation and Troubleshooting](docs/validation-and-troubleshooting.md).
 
@@ -19,7 +21,8 @@ Trial and Student subscriptions may restrict regions, VM sizes, images, or quota
 1. Copy `main.parameters.demo.json` to a local parameter file.
 2. Replace its placeholders with your public IP, SSH public key, and Key Vault ID.
 3. Set `existingRegions` and `existingVmPlacements` to empty arrays.
-4. Deploy the Bicep template:
+4. Set `vmCounts.dc` to at least `1`.
+5. Deploy the Bicep template:
 
 ```powershell
 az deployment sub create `
@@ -72,18 +75,21 @@ See [Placement and Reconciliation](docs/placement-and-reconciliation.md) for the
 - v2.4 staged module decomposition with explicit network, compute, and identity stage contracts.
 - v2.4.1 brownfield network reconciliation and reliable cross-spoke routing for spoke DCs and jumpboxes.
 - v2.4.2 identity reconciliation improvements and responsibility-based directory population functions.
+- v2.5 selectable hub-and-spoke firewall, hub-and-spoke peering-only, and full-mesh topology creation.
 
-## Architecture
+## Network Topology
 
-The deployment creates a hub-and-spoke topology:
+The `networkMode` parameter selects the network topology without changing VM placement or identity orchestration:
 
-- The primary region is the hub.
-- Other selected regions are spokes.
-- The hub contains Azure Firewall and control-plane resources.
-- Workload traffic is routed through the hub firewall.
-- Server and client subnets route internal and Internet traffic through the firewall; spoke DCs and jumpboxes route internal traffic through it while retaining direct Internet access.
-- Jumpboxes provide the administrative entry point.
-- Spoke workload subnets are protected by role-based NSGs and route tables.
+| `networkMode` | Deploys | Connectivity |
+|---|---|---|
+| `hubSpokeFirewall` | Hub-spoke peerings, Azure Firewall, firewall policy, `AzureFirewallSubnet`, route tables, and UDRs | Cross-spoke traffic is routed through the hub firewall. |
+| `hubSpoke` | Hub-spoke peerings only | Hub-to-spoke traffic only. Azure VNet peering is non-transitive, so spokes cannot communicate through the hub. |
+| `fullMesh` | Direct peering between every selected region | Direct region-to-region connectivity without Azure Firewall or UDRs. |
+
+The primary region remains the hub and control-plane anchor for `dc01` and `jmp01` in every mode. Role-based NSGs protect all standard subnets.
+
+For brownfield topology simplification, cleanup can remove candidate spoke-to-spoke peerings when moving to `hubSpoke` or `hubSpokeFirewall`. The template infers candidates from `existingRegions`; it does not discover or validate the previously deployed topology. Confirm that matching peerings are obsolete before enabling deletion. See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification) for the cleanup procedure, scope, and RBAC requirement.
 
 See [Architecture](docs/architecture.md) for the resource model, module boundaries, network layout, addressing, and desired-state model.
 
@@ -155,7 +161,7 @@ See [CI/CD Workflow and Local Checks](docs/ci-cd-validation.md) for GitHub Actio
 main.bicep                         Subscription-scope orchestrator
 main.parameters.*.json             Deployment parameter examples
 modules/networking                 VNets, subnets, NSGs, firewall, routes
-modules/networking/peering.bicep   Hub-to-spoke peering
+modules/networking/peering.bicep   Mode-specific hub-spoke or full-mesh peering
 modules/compute                    Windows and Linux VM resources
 modules/identity                   AD and domain-join automation
 modules/logic                      Placement and configuration validation
@@ -164,14 +170,17 @@ docs/                              Detailed project documentation
 
 ## Known Limitations
 
-- Live Azure VM discovery is not automatic; brownfield inventory must be maintained in `existingVmPlacements`.
+- Live Azure discovery is not used for brownfield reconciliation. You must declare existing network regions in `existingRegions` and existing VMs in `existingVmPlacements`; planned topology reconciliation will likewise require manually declared current and desired topologies.
 - Region indexes determine VNet address spaces and must be treated as part of the deployed network contract.
+- Brownfield topology cleanup infers candidate spoke-to-spoke peerings from `existingRegions`; it does not discover the prior topology or retire firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or resources required by reverse or expansion transitions. See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification).
 - Azure VM SKU availability and quota are subscription- and region-specific and require preflight checks.
 - Identity scripts depend on guest networking, DNS, Kerberos, LDAP, and a healthy Azure VM Agent.
 - Control-plane placement falls back to the hub after spoke capacity is exhausted; per-region validation reports hub overflow after placement rather than preventing the fallback.
 - The solution is designed for networking structures created by its own modules, not arbitrary existing VNets.
 
-See the detailed guides for implementation boundaries and operational guidance.
+## Planned Future Work
+
+The next engineering step is automated discovery and reconciliation for existing environments. See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification) for the detailed cleanup boundary and roadmap.
 
 ## Detailed Documentation
 
@@ -187,4 +196,4 @@ See the detailed guides for implementation boundaries and operational guidance.
 
 ## Release
 
-**v2.4.2** completes identity reconciliation improvements and the directory population workflow cleanup.
+**v2.5** adds selectable topology creation and brownfield firewall introduction; topology migration and resource retirement remain planned work.

@@ -12,9 +12,15 @@ targetScope = 'subscription'
 param vmCounts object
 param vmSizes object
 param osDisks object
+param windowsServerImage object
+param windowsClientImage object
+param ubuntuImage object
 param regionCount int
 param regionIndexMap object
 param subnetIndexMap object
+param jumpboxAllowedSources array
+param networkMode string
+param automationManagedIdentityResourceId string
 param vmPlacements array
 param regionKeys array
 param maxVmsPerRegion int
@@ -75,6 +81,70 @@ var hasInvalidRegionIndex = [
 var missingRegionIndex = contains(hasInvalidRegionIndex, true)
 var hasInvalidSubnetIndex = !(contains(subnetIndexMap, 'firewall') && contains(subnetIndexMap, 'jumpbox') && contains(subnetIndexMap, 'dc') && contains(subnetIndexMap, 'server') && contains(subnetIndexMap, 'client'))
 
+var regionIndexValues = [
+  for region in items(regionIndexMap): region.value
+]
+
+var subnetIndexValues = [
+  for subnet in items(subnetIndexMap): subnet.value
+]
+
+var hasDuplicateRegionIndexes = length(distinct(regionIndexValues)) != length(regionIndexValues)
+var outOfBoundsRegionIndexFlags = [
+  for index in regionIndexValues: index < 1 || index > 255
+]
+var hasOutOfBoundsRegionIndex = contains(outOfBoundsRegionIndexFlags, true)
+var hasDuplicateSubnetIndexes = length(distinct(subnetIndexValues)) != length(subnetIndexValues)
+var outOfBoundsSubnetIndexFlags = [
+  for index in subnetIndexValues: index < 0 || index > 255
+]
+var hasOutOfBoundsSubnetIndex = contains(outOfBoundsSubnetIndexFlags, true)
+
+// Existing inventory must map one-to-one to the logical VM model.
+var supportedExistingVmTypes = [
+  'dc'
+  'jmp'
+  'srvwin'
+  'cliwin'
+  'srvlin'
+  'clilin'
+]
+
+var existingVmCountByType = {
+  dc: vmCounts.dc
+  jmp: vmCounts.jumpbox
+  srvwin: vmCounts.windowsServer
+  cliwin: vmCounts.windowsClient
+  srvlin: vmCounts.linuxServer
+  clilin: vmCounts.linuxClient
+}
+
+var existingVmKeys = [
+  for vm in existingVmPlacements: '${vm.type}-${string(vm.index)}'
+]
+
+var hasDuplicateExistingRegions = length(distinct(existingRegions)) != length(existingRegions)
+var hasDuplicateExistingVmPlacements = length(distinct(existingVmKeys)) != length(existingVmKeys)
+var unsupportedExistingVmTypeFlags = [
+  for vm in existingVmPlacements: !contains(supportedExistingVmTypes, vm.type)
+]
+var hasUnsupportedExistingVmType = contains(unsupportedExistingVmTypeFlags, true)
+var invalidExistingVmIndexFlags = [
+  for vm in existingVmPlacements: contains(supportedExistingVmTypes, vm.type)
+    ? vm.index < 0 || vm.index >= existingVmCountByType[vm.type]
+    : false
+]
+var hasInvalidExistingVmIndex = contains(invalidExistingVmIndexFlags, true)
+
+// Empty or public-wide jumpbox access is reported for operator review without blocking deployment.
+var hasUnsafeJumpboxAllowedSources = empty(jumpboxAllowedSources) || contains(jumpboxAllowedSources, '0.0.0.0/0')
+
+// Brownfield cleanup requires a User Assigned Managed Identity only when the cleanup script is deployed.
+var requiresPeeringCleanupIdentity = networkMode != 'fullMesh' && !empty(existingRegions)
+var hasMissingPeeringCleanupIdentity = empty(automationManagedIdentityResourceId)
+var hasMalformedPeeringCleanupIdentity = !startsWith(toLower(automationManagedIdentityResourceId), '/subscriptions/') || !contains(toLower(automationManagedIdentityResourceId), '/providers/microsoft.managedidentity/userassignedidentities/')
+var hasInvalidPeeringCleanupIdentity = requiresPeeringCleanupIdentity && (hasMissingPeeringCleanupIdentity || hasMalformedPeeringCleanupIdentity)
+
 // ========================================
 // ROLE CONFIG VALIDATION
 // Ensures all role-based sizing and disk maps contain the required workload keys.
@@ -102,6 +172,35 @@ var osDiskRoleMissingFlags = [
 
 var hasMissingVmSizeRole = contains(vmSizeRoleMissingFlags, true)
 var hasMissingOsDiskRole = contains(osDiskRoleMissingFlags, true)
+
+var emptyVmSizeRoleFlags = [
+  for role in requiredRoleKeys: contains(vmSizes, role) ? empty(vmSizes[role]) : false
+]
+var hasEmptyVmSizeRole = contains(emptyVmSizeRoleFlags, true)
+
+var invalidOsDiskConfigurationFlags = [
+  for role in requiredRoleKeys: !contains(osDisks, role)
+    ? false
+    : !contains(osDisks[role], 'storageAccountType')
+      ? true
+      : empty(osDisks[role].storageAccountType)
+        ? true
+        : !contains(osDisks[role], 'diskSizeGB')
+          ? true
+          : osDisks[role].diskSizeGB < 1
+]
+var hasInvalidOsDiskConfiguration = contains(invalidOsDiskConfigurationFlags, true)
+
+var imageReferences = [
+  windowsServerImage
+  windowsClientImage
+  ubuntuImage
+]
+
+var incompleteImageReferenceFlags = [
+  for image in imageReferences: empty(image.?publisher) || empty(image.?offer) || empty(image.?sku) || empty(image.?version)
+]
+var hasIncompleteImageReference = contains(incompleteImageReferenceFlags, true)
 
 var hasMissingIndexes = [
   for i in range(1, length(regionIndexMap) + 1): empty(filter(items(regionIndexMap), r => r.value == i))
@@ -222,8 +321,21 @@ var validationFlags = {
   invalidCapacity: invalidCapacity
   missingRegionIndex: missingRegionIndex
   hasInvalidSubnetIndex: hasInvalidSubnetIndex
+  hasDuplicateRegionIndexes: hasDuplicateRegionIndexes
+  hasOutOfBoundsRegionIndex: hasOutOfBoundsRegionIndex
+  hasDuplicateSubnetIndexes: hasDuplicateSubnetIndexes
+  hasOutOfBoundsSubnetIndex: hasOutOfBoundsSubnetIndex
+  hasDuplicateExistingRegions: hasDuplicateExistingRegions
+  hasDuplicateExistingVmPlacements: hasDuplicateExistingVmPlacements
+  hasUnsupportedExistingVmType: hasUnsupportedExistingVmType
+  hasInvalidExistingVmIndex: hasInvalidExistingVmIndex
+  hasUnsafeJumpboxAllowedSources: hasUnsafeJumpboxAllowedSources
+  hasInvalidPeeringCleanupIdentity: hasInvalidPeeringCleanupIdentity
   hasMissingVmSizeRole: hasMissingVmSizeRole
   hasMissingOsDiskRole: hasMissingOsDiskRole
+  hasEmptyVmSizeRole: hasEmptyVmSizeRole
+  hasInvalidOsDiskConfiguration: hasInvalidOsDiskConfiguration
+  hasIncompleteImageReference: hasIncompleteImageReference
   hasInsufficientWorkloadCapacity: hasInsufficientWorkloadCapacity
   invalidIndexSequence: invalidIndexSequence
   hasRegionOverflow: hasRegionOverflow
@@ -304,8 +416,44 @@ var msg25 = invalidDedicatedFileServerConfiguration
 var msg26 = invalidFileServicesIdentityConfiguration
   ? 'enableIdentity must be true when enableFileServices or useDedicatedFileServer is true. File services depend on Active Directory users and groups.'
   : ''
+var msg27 = hasDuplicateRegionIndexes
+  ? 'regionIndexMap contains duplicate index values, which would create overlapping VNet address spaces.'
+  : ''
+var msg28 = hasOutOfBoundsRegionIndex
+  ? 'regionIndexMap values must be between 1 and 255.'
+  : ''
+var msg29 = hasDuplicateSubnetIndexes
+  ? 'subnetIndexMap contains duplicate index values, which would create overlapping subnet address spaces.'
+  : ''
+var msg30 = hasOutOfBoundsSubnetIndex
+  ? 'subnetIndexMap values must be between 0 and 255.'
+  : ''
+var msg31 = hasDuplicateExistingRegions
+  ? 'existingRegions contains duplicate region entries.'
+  : ''
+var msg32 = hasDuplicateExistingVmPlacements
+  ? 'existingVmPlacements contains duplicate type and index entries.'
+  : ''
+var msg33 = hasUnsupportedExistingVmType
+  ? 'existingVmPlacements contains an unsupported VM type.'
+  : ''
+var msg34 = hasInvalidExistingVmIndex
+  ? 'existingVmPlacements contains an index outside the requested vmCounts range.'
+  : ''
+var msg35 = hasInvalidPeeringCleanupIdentity
+  ? 'automationManagedIdentityResourceId must be a User Assigned Managed Identity resource ID when brownfield peering cleanup is applicable.'
+  : ''
+var msg36 = hasEmptyVmSizeRole
+  ? 'vmSizes values must be non-empty for all required roles.'
+  : ''
+var msg37 = hasInvalidOsDiskConfiguration
+  ? 'osDisks entries must include a storageAccountType and a positive diskSizeGB for all required roles.'
+  : ''
+var msg38 = hasIncompleteImageReference
+  ? 'Image references must include publisher, offer, sku, and version.'
+  : ''
 
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : msg23 != '' ? msg23 : msg24 != '' ? msg24 : msg25 != '' ? msg25 : msg26 != '' ? msg26 : 'All validation checks passed.'
+var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : msg23 != '' ? msg23 : msg24 != '' ? msg24 : msg25 != '' ? msg25 : msg26 != '' ? msg26 : msg27 != '' ? msg27 : msg28 != '' ? msg28 : msg29 != '' ? msg29 : msg30 != '' ? msg30 : msg31 != '' ? msg31 : msg32 != '' ? msg32 : msg33 != '' ? msg33 : msg34 != '' ? msg34 : msg35 != '' ? msg35 : msg36 != '' ? msg36 : msg37 != '' ? msg37 : msg38 != '' ? msg38 : 'All validation checks passed.'
 
 // ========================================
 // OUTPUTS

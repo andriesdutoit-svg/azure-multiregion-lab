@@ -12,6 +12,14 @@
       "value": "all"
     },
 
+    "networkMode": {
+      "value": "fullMesh"
+    },
+
+    "executePeeringCleanup": {
+      "value": true
+    },
+
     "tags": {
       "value": {
         "environment": "lab"
@@ -268,6 +276,11 @@
         },
         "secretName": "clientAdminPassword"
       }
+    },
+
+    "automationManagedIdentityResourceId": {
+      "value": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<automation-managed-identity-name>"
     }
+
   }
 }

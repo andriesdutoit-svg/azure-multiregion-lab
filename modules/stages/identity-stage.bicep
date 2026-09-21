@@ -38,8 +38,7 @@ targetScope = 'subscription'
 //
 // linuxDesktop
 
-// Dependencies:
-
+// Dependencies
 // Placement outputs:
 // - primaryDc
 // - replicaDcList
@@ -47,11 +46,10 @@ targetScope = 'subscription'
 // - fileServerName
 // - finalVmPlacements
 
-// Compute-stage:
+// Compute stage:
 // - VM availability before domain-join and file-service commands run
 
-// Inputs:
-//
+// Inputs
 // prefix
 //
 // deployIdentity

@@ -2,8 +2,13 @@ targetScope = 'resourceGroup'
 
 // ========================================
 // MODULE PURPOSE
-// Creates hub-to-spoke and spoke-to-hub peering.
-// Does not create full-mesh peering between spokes.
+// Creates VNet peerings according to networkMode.
+// Supported:
+// - hubSpokeFirewall
+// - hubSpoke
+// - fullMesh
+// Hub-spoke modes create hub-to-spoke peerings only.
+// Full mesh mode creates peerings between all regions.
 // ========================================
 
 // ========================================
@@ -16,6 +21,18 @@ param regionKeys array
 param sourceRegion string
 param prefix string
 param hubRegion string
+param networkMode string
+
+var useHubSpokePeering = contains([
+  'hubSpokeFirewall'
+  'hubSpoke'
+], networkMode)
+
+var useFullMeshPeering = networkMode == 'fullMesh'
+
+var desiredPeeringTargets = [
+  for target in regionKeys: (useHubSpokePeering && sourceRegion == hubRegion && target != hubRegion) || useHubSpokePeering && sourceRegion != hubRegion && target == hubRegion || useFullMeshPeering && sourceRegion != target ? target : ''
+]
 
 // ========================================
 // EXISTING DEPENDENCY: LOCAL VNET
@@ -27,12 +44,14 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
 
 // ========================================
 // PEERING RULE
-// Hub peers with every spoke. Each spoke peers only with the hub. No spoke-to-spoke peering.
-// This enforces hub-centric traffic routing: spoke-to-spoke traffic must traverse hub firewall.
+// Hub-spoke modes create hub-to-spoke and spoke-to-hub peerings only.
+// In hubSpokeFirewall mode, cross-spoke traffic is routed through the hub firewall.
+// In hubSpoke mode, only hub-to-spoke traffic is available; VNet peering is non-transitive.
+// fullMesh mode creates peerings between every pair of distinct regions.
 // ========================================
 
 resource peerings 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2022-07-01' = [
-  for target in regionKeys: if ((sourceRegion == hubRegion && target != hubRegion) || (sourceRegion != hubRegion && target == hubRegion)) {
+  for target in desiredPeeringTargets: if (!empty(target)) {
     name: '${vnet.name}-to-${prefix}-vnet-${target}'
     parent: vnet
     properties: {

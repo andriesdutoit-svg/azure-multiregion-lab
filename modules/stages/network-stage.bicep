@@ -31,6 +31,18 @@ param hubRegion string
 
 param deployNetwork bool
 
+@description('Network topology mode.')
+@allowed([
+  'hubSpokeFirewall'
+  'hubSpoke'
+  'fullMesh'
+])
+param networkMode string
+
+param executePeeringCleanup bool
+@description('Resource ID of the User Assigned Managed Identity used by Deployment Scripts.')
+param automationManagedIdentityResourceId string
+
 param tags object
 
 param existingRegions array
@@ -42,6 +54,24 @@ param dnsServers array
 param jumpboxSubnets array
 param jumpboxAllowedSources array
 param additionalSubnetsByRegion array
+
+// Capability helpers
+var deployFirewall = contains([
+  'hubSpokeFirewall'
+], networkMode)
+
+var deployRouteTables = contains([
+  'hubSpokeFirewall'
+], networkMode)
+
+var deployPeerings = contains([
+  'hubSpokeFirewall'
+  'hubSpoke'
+  'fullMesh'
+], networkMode)
+
+// The script is deployed only for brownfield non-full-mesh modes; executePeeringCleanup controls deletion within the script.
+var removeMeshPeerings = networkMode != 'fullMesh' && length(existingRegions) > 0
 
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
@@ -68,6 +98,7 @@ module vnets '../networking/vnet.bicep' = [
       vnetName: '${prefix}-vnet-${region}'
       location: region
       isHub: region == hubRegion
+      deployAzureFirewallSubnet: deployFirewall
 
       existingRegions: existingRegions
 
@@ -84,22 +115,7 @@ module vnets '../networking/vnet.bicep' = [
   }
 ]
 
-module peerings '../networking/peering.bicep' = [
-  for source in regionKeys: if (deployNetwork) {
-    name: '${prefix}-peerings-${source}'
-    scope: resourceGroup('${prefix}-rg-${source}')
-    dependsOn: vnets
-    params: {
-      vnetName: '${prefix}-vnet-${source}'
-      regionKeys: regionKeys
-      sourceRegion: source
-      prefix: prefix
-      hubRegion: hubRegion
-    }
-  }
-]
-
-module firewall '../networking/firewall.bicep' = if (deployNetwork) {
+module firewall '../networking/firewall.bicep' = if (deployNetwork && deployFirewall) {
   name: '${prefix}-firewall-${hubRegion}'
 
   scope: resourceGroup('${prefix}-rg-${hubRegion}')
@@ -118,7 +134,7 @@ module firewall '../networking/firewall.bicep' = if (deployNetwork) {
 }
 
 module routeTables '../networking/routeTable.bicep' = [
-  for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
+  for (region, i) in regionKeys: if (deployNetwork && deployRouteTables && region != hubRegion) {
 
     name: '${prefix}-rt-${region}'
     scope: resourceGroup('${prefix}-rg-${region}')
@@ -150,10 +166,6 @@ module roleSubnets '../networking/roleSubnets.bicep' = [
 
     scope: resourceGroup('${prefix}-rg-${region}')
 
-    dependsOn: [
-      routeTables[i]
-    ]
-
     params: {
       #disable-next-line BCP318
       vnetName: vnets[i].outputs.vnetName
@@ -168,13 +180,13 @@ module roleSubnets '../networking/roleSubnets.bicep' = [
       nsgIds: vnets[i].outputs.nsgIds
 
       #disable-next-line BCP318
-      dcRouteTableId: routeTables[i].outputs.dcRouteTableId
+      dcRouteTableId: deployRouteTables ? routeTables[i].outputs.dcRouteTableId : ''
       #disable-next-line BCP318
-      jumpboxRouteTableId: routeTables[i].outputs.jumpboxRouteTableId
+      jumpboxRouteTableId: deployRouteTables ? routeTables[i].outputs.jumpboxRouteTableId : ''
       #disable-next-line BCP318
-      serverRouteTableId: routeTables[i].outputs.serverRouteTableId
+      serverRouteTableId: deployRouteTables ? routeTables[i].outputs.serverRouteTableId : ''
       #disable-next-line BCP318
-      clientRouteTableId: routeTables[i].outputs.clientRouteTableId
+      clientRouteTableId: deployRouteTables ? routeTables[i].outputs.clientRouteTableId : ''
     }
   }
 ]
@@ -194,6 +206,41 @@ module additionalSubnets '../networking/additionalSubnets.bicep' = [
     }
   }
 ]
+
+module peerings '../networking/peering.bicep' = [
+  for source in regionKeys: if (deployNetwork && deployPeerings) {
+    name: '${prefix}-peerings-${source}'
+    scope: resourceGroup('${prefix}-rg-${source}')
+    dependsOn: [
+      vnets
+      roleSubnets
+      additionalSubnets
+    ]
+    params: {
+      vnetName: '${prefix}-vnet-${source}'
+      regionKeys: regionKeys
+      sourceRegion: source
+      prefix: prefix
+      hubRegion: hubRegion
+      networkMode: networkMode
+    }
+  }
+]
+
+// Candidate peerings are inferred from existingRegions; the script does not discover the prior topology.
+module topologyCleanup '../networking/topology-cleanup.bicep' = if (removeMeshPeerings) {
+  name: '${prefix}-topology-cleanup'
+  scope: resourceGroup('${prefix}-rg-${hubRegion}')
+
+  params: {
+    prefix: prefix
+    hubRegion: hubRegion
+    existingRegions: existingRegions
+    networkMode: networkMode
+    executePeeringCleanup: executePeeringCleanup
+    automationManagedIdentityResourceId: automationManagedIdentityResourceId
+  }
+}
 
 // ========================================
 // NETWORK STAGE OUTPUT CONTRACT

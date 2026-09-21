@@ -36,7 +36,7 @@ flowchart LR
 
 ## Directory Model
 
-The `directoryModel` object in `main.bicep` (passed as a JSON string to every identity script) centralises OU paths, group naming, and share configuration so scripts never hardcode AD structure:
+The `directoryModel` object in `main.bicep` is passed as a JSON string to identity scripts that require directory structure, group naming, OU mapping, or share configuration. It centralises those details so the scripts do not hardcode AD structure:
 
 - `rootOuName` — top-level OU beneath the domain root (`_ROOT`).
 - `customOus` — hierarchical OU structure for computers, groups, and users, including reserved OUs for disabled users.

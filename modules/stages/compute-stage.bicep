@@ -187,9 +187,9 @@ func getSubnetId(vm object) string =>
         ? subnetMapByRegion[vm.regionKey].server.id
         : subnetMapByRegion[vm.regionKey].client.id
 
-// ------------------------------
+// ========================================
 // Windows VM deployment
-// ------------------------------
+// ========================================
 
 module windowsVMs '../compute/vm-windows.bicep' = [
   for (vm, i) in activeWindowsVMs: {

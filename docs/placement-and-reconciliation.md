@@ -27,6 +27,7 @@ var missingVmList = filter(
 4. Existing VMs reduce the available capacity of their regions before new placement occurs.
 5. Workloads use the remaining spoke capacity after existing and new control-plane occupancy is accounted for.
 6. If spoke capacity is exhausted, additional control-plane placement falls back to the hub, which has no capacity limit enforced at placement time.
+7. For multi-region placement, workloads fall back to the first spoke when no workload capacity remains. This can exceed `maxVmsPerRegion` and produce a regional-overflow validation flag.
 
 ```mermaid
 flowchart TD
@@ -74,6 +75,10 @@ Before each brownfield expansion, update:
 - `existingRegions` with every region whose networking already exists.
 - `existingVmPlacements` with every VM that already exists.
 - `regionIndexMap` without changing indexes assigned to existing VNets.
+
+## Topology Independence
+
+VM placement is independent of `networkMode`. The hub remains the control-plane region for `dc01` and `jmp01`, while workload placement, capacity accounting, DNS candidates, and identity targeting use the same final placement model in every topology mode. For network-transition behavior and cleanup boundaries, see [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification).
 
 ## File Server Reassignment on Brownfield Expansion
 
