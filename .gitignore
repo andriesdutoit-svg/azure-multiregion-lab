@@ -5,9 +5,7 @@
 /modules/**/*.json
 
 # Test parameter file
-main.parameters.test.json
-hub.parameters.test.json
-peer.parameters.test.json
+*.parameters.test.json
 
 # VS Code workspace settings
 .vscode/

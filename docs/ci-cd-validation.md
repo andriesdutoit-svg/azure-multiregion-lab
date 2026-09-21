@@ -15,7 +15,16 @@ It performs:
 5. Subscription deployment validation.
 6. What-if analysis.
 
-The workflow requires Azure credentials configured as GitHub secrets and demo values configured as repository variables. See the workflow file for the exact secret and variable names.
+The workflow requires Azure credentials configured as GitHub secrets and demo values configured as repository variables. Configure these GitHub Actions values:
+
+| Name | Type | Purpose |
+|---|---|---|
+| `AZURE_CLIENT_ID` | Secret | Entra application ID used for Azure OIDC login. |
+| `AZURE_TENANT_ID` | Secret | Microsoft Entra tenant ID. |
+| `AZURE_SUBSCRIPTION_ID` | Secret | Azure subscription ID used by the workflow. |
+| `YOUR_PUBLIC_IP` | Variable | Public IP address allowed to access jumpboxes. |
+| `KEYVAULT_ID` | Variable | Resource ID of the Key Vault referenced by the demo parameter file. |
+| `AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID` | Variable | Resource ID of the User Assigned Managed Identity used by Deployment Scripts. The identity must have the Network Contributor role at subscription scope. |
 
 When creating a new branch, make sure the matching GitHub Actions federated credential is created in Azure so OIDC authentication remains valid for that branch. This also applies to fix branches that should trigger validation automatically.
 
@@ -63,6 +72,14 @@ Then set the GitHub Actions secrets so `azure/login` can use OIDC:
 gh secret set AZURE_CLIENT_ID -b "<app.appId>" -R <GitHub profile>/<repo>
 gh secret set AZURE_TENANT_ID -b "<tenant-id>" -R <GitHub profile>/<repo>
 gh secret set AZURE_SUBSCRIPTION_ID -b "<subscription-id>" -R <GitHub profile>/<repo>
+```
+
+Set the repository variables used to populate the demo parameter file:
+
+```powershell
+gh variable set YOUR_PUBLIC_IP -b "<public-ip-address>" -R <GitHub profile>/<repo>
+gh variable set KEYVAULT_ID -b "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.KeyVault/vaults/<key-vault-name>" -R <GitHub profile>/<repo>
+gh variable set AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID -b "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity-name>" -R <GitHub profile>/<repo>
 ```
 
 ## Local Validation

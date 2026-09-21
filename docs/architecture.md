@@ -142,7 +142,7 @@ This is a controlled-egress design rather than a block-all design: outbound conn
 
 ## Topology Transition Boundary
 
-The deployment creates and reconciles resources required by the selected mode, but it does not retire resources that are no longer selected. For example, moving from `fullMesh` to a hub-spoke mode can leave spoke-to-spoke peerings, and moving away from `hubSpokeFirewall` can leave the firewall, policy, public IP, route tables, UDR associations, and `AzureFirewallSubnet`. Treat topology migration as a planned manual operation until explicit retirement logic is implemented.
+The deployment creates and reconciles resources required by the selected mode, but it does not fully retire resources that are no longer selected. Brownfield cleanup can remove candidate spoke-to-spoke peerings for non-`fullMesh` modes, inferred from `existingRegions`; it does not discover the prior topology. It does not retire firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or resources retained from reverse or expansion transitions. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for the operational boundary and verification requirement.
 
 ## Desired State
 

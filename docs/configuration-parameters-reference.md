@@ -11,6 +11,8 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | `prefix` | string | Resource naming prefix | `"AMRL"` |
 | `stage` | string | Deployment stage: `network`, `compute`, `identity`, or `all`. See [Deployment Guide](deployment.md#stages). | `"all"` |
 | `networkMode` | string | Network topology: `hubSpokeFirewall`, `hubSpoke`, or `fullMesh`. See [Network Topology Modes](deployment.md#network-topology-modes). | `"hubSpokeFirewall"` |
+| `executePeeringCleanup` | bool | Controls deletion, not execution, of the peering-cleanup Deployment Script. For applicable brownfield non-`fullMesh` deployments, `true` removes candidate spoke-to-spoke peerings inferred from `existingRegions`; `false` reports them without deleting them. The script is not deployed for greenfield or `fullMesh` deployments. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for verification requirements and scope. | `true` |
+| `automationManagedIdentityResourceId` | string | Required resource ID of the User Assigned Managed Identity used by Deployment Scripts. Supply it for every deployment; the identity is used only when the applicable brownfield cleanup Deployment Script is deployed. Create the identity, grant it Network Contributor at subscription scope, and pass the full resource ID here. | `"/subscriptions/<subscriptionId>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identityName>"` |
 | `tags` | object | Resource tags for organisation and billing | `{"environment": "lab"}` |
 | `regionCount` | integer | Number of regions to deploy across | `2` |
 | `maxVmsPerRegion` | integer | Maximum VMs allowed per region | `2` |
@@ -36,7 +38,7 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | `hubSpoke` | Hub-spoke peerings | Hub-to-spoke only; VNet peering is non-transitive, so spoke-to-spoke traffic is unavailable. |
 | `fullMesh` | Direct regional peerings | Every selected region is directly peered with every other selected region. |
 
-`networkMode` changes do not affect VM placement or identity automation. The template creates resources needed by the selected mode but does not remove resources from a prior mode; treat topology changes as a planned migration with explicit cleanup.
+`networkMode` changes do not affect VM placement or identity automation. The template does not discover the prior topology or automatically retire all resources from a previous mode. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for the cleanup scope and roadmap.
 
 ## Virtual Machine Configuration
 
@@ -46,7 +48,9 @@ Reserved subnet keys have known platform roles. AMRL generates role-specific NSG
 
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
-| `vmCounts` | object | Number of each VM type to deploy: `dc`, `jumpbox`, `windowsServer`, `windowsClient`, `linuxServer`, `linuxClient` | `{"dc": 1, "jumpbox": 1, "windowsServer": 1, "windowsClient": 0, "linuxServer": 0, "linuxClient": 0}` |
+| `vmCounts` | object | Number of each VM type to deploy: `dc`, `jumpbox`, `windowsServer`, `windowsClient`, `linuxServer`, `linuxClient`. The current template requires `dc >= 1` for every deployment. | `{"dc": 1, "jumpbox": 1, "windowsServer": 1, "windowsClient": 0, "linuxServer": 0, "linuxClient": 0}` |
+
+`vmCounts.dc` must be at least `1` even when identity and file services are disabled. The template evaluates the primary DC and file-server target during validation, so `dc=0` is not a supported compute-only or network-only configuration.
 
 **VM Sizing** (all role keys must be present):
 
@@ -180,6 +184,12 @@ Supported combinations:
 | `true` | `true` | `false` | File services are provisioned on the primary DC. |
 | `true` | `true` | `true` | File services are provisioned on the first `srvwin` VM. |
 
-Other combinations produce validation flags. If dedicated mode has no `srvwin` placement, target selection falls back to the primary DC so template evaluation can continue, but `missingDedicatedFileServer` is reported and the configuration should be corrected. Changing the target does not move existing share data or remove shares from the former host.
+The following combinations produce validation flags:
+
+- `enableIdentity=false` with `enableFileServices=true`.
+- `enableIdentity=false` with `useDedicatedFileServer=true`.
+- `enableFileServices=false` with `useDedicatedFileServer=true`.
+
+If dedicated mode has no `srvwin` placement, target selection falls back to the primary DC so template evaluation can continue, but `missingDedicatedFileServer` is reported and the configuration should be corrected. Changing the target does not move existing share data or remove shares from the former host.
 
 [Back to README](../README.md)

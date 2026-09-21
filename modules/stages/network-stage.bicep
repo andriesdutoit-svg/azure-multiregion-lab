@@ -39,6 +39,10 @@ param deployNetwork bool
 ])
 param networkMode string
 
+param executePeeringCleanup bool
+@description('Resource ID of the User Assigned Managed Identity used by Deployment Scripts.')
+param automationManagedIdentityResourceId string
+
 param tags object
 
 param existingRegions array
@@ -65,6 +69,9 @@ var deployPeerings = contains([
   'hubSpoke'
   'fullMesh'
 ], networkMode)
+
+// The script is deployed only for brownfield non-full-mesh modes; executePeeringCleanup controls deletion within the script.
+var removeMeshPeerings = networkMode != 'fullMesh' && length(existingRegions) > 0
 
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
@@ -219,6 +226,21 @@ module peerings '../networking/peering.bicep' = [
     }
   }
 ]
+
+// Candidate peerings are inferred from existingRegions; the script does not discover the prior topology.
+module topologyCleanup '../networking/topology-cleanup.bicep' = if (removeMeshPeerings) {
+  name: '${prefix}-topology-cleanup'
+  scope: resourceGroup('${prefix}-rg-${hubRegion}')
+
+  params: {
+    prefix: prefix
+    hubRegion: hubRegion
+    existingRegions: existingRegions
+    networkMode: networkMode
+    executePeeringCleanup: executePeeringCleanup
+    automationManagedIdentityResourceId: automationManagedIdentityResourceId
+  }
+}
 
 // ========================================
 // NETWORK STAGE OUTPUT CONTRACT

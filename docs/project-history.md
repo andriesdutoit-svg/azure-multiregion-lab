@@ -51,7 +51,7 @@ Validation outputs and Run Command instance views expose placement decisions, ca
 - Azure SKU availability and quota must be checked against the target subscription.
 - Region indexes determine VNet address spaces and must be treated as part of the deployed network contract.
 - Identity scripts are idempotent, but guest networking, DNS, Kerberos, LDAP, and Azure VM Agent health can still affect execution.
-- Topology modes create the resources for the selected mode but do not automatically retire peerings, firewall resources, route tables, UDR associations, or `AzureFirewallSubnet` from a previous mode.
+- Topology modes create the resources for the selected mode but do not automatically retire peerings, firewall resources, route tables, UDR associations, or `AzureFirewallSubnet` from a previous mode. Planned topology reconciliation will use manually declared current and desired topologies, analogous to the existing region and VM inventories.
 
 ## Third-Party Components
 

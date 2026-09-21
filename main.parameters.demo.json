@@ -10,6 +10,14 @@
       "value": "all"
     },
 
+    "networkMode": {
+      "value": "fullMesh"
+    },
+
+    "executePeeringCleanup": {
+      "value": true
+    },
+
     "tags": {
       "value": {
         "environment": "lab"
@@ -265,6 +273,10 @@
         },
         "secretName": "clientAdminPassword"
       }
+    },
+
+    "automationManagedIdentityResourceId": {
+      "value": "<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>"
     }
   }
 }

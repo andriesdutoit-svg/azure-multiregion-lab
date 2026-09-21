@@ -30,6 +30,10 @@ It checks:
 - File services requiring identity automation.
 - Dedicated file-server mode requiring enabled file services and an available `srvwin` VM. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
 
+The current template requires `vmCounts.dc >= 1` for every deployment. It evaluates the primary DC and `fileServerName` before the identity and file-service feature flags can suppress their resource modules. With `vmCounts.dc=0`, template evaluation fails because no primary DC exists to supply `fileServerName`; set `dc` to at least `1` and redeploy.
+
+`vmCounts.jumpbox=0` produces the `invalidMinimums` validation flag and message, but does not currently block deployment.
+
 ## Useful Outputs
 
 - `validationSummary`: Short status for quick review.
@@ -55,7 +59,7 @@ az deployment sub show `
   --output json
 ```
 
-A healthy result has `validationSummary` set to `Validation passed.` and `capacityCheck.withinLimit` set to `true`. In `validationFlags`, the following flags should be `false`:
+A healthy result has `validationSummary` set to `All validation checks passed.` and `capacityCheck.withinLimit` set to `true`. In `validationFlags`, the following flags should be `false`:
 
 - `hasRegionOverflow`: A region, including the hub, exceeds `maxVmsPerRegion`.
 - `hasNonControlInHub`: A workload VM was placed in the hub.
@@ -64,7 +68,7 @@ A healthy result has `validationSummary` set to `Validation passed.` and `capaci
 - `invalidDedicatedFileServerConfiguration`: `useDedicatedFileServer` is `true` while `enableFileServices` is `false`.
 - `invalidFileServicesIdentityConfiguration`: `enableFileServices` or `useDedicatedFileServer` is `true` while `enableIdentity` is `false`.
 
-Validation outputs describe the calculated result; they do not by themselves change or roll back resources. Also inspect VM Run Command results separately.
+Validation flags and messages are diagnostic outputs; they do not by themselves block deployment, change resources, or roll back resources. Some invalid configurations can still fail earlier during template evaluation when later expressions require their values, such as `vmCounts.dc=0` when the template requires a primary DC. Also inspect VM Run Command results separately.
 
 ## Azure Availability Checks
 

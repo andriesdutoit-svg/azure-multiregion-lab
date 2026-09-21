@@ -9,10 +9,13 @@
 - A Key Vault containing the referenced credentials and SSH keys.
 - VM sizes, images, regional quota, and regional availability verified for the subscription.
 - A parameter file with valid region, network, compute, and identity settings.
+- At least one domain controller requested with `vmCounts.dc >= 1`, even if `enableIdentity`, `enableFileServices`, and `useDedicatedFileServer` are all `false`.
 
 ## Greenfield Deployment
 
-For a new environment, use an empty `existingRegions` array and an empty `existingVmPlacements` array.
+For a new environment, use an empty `existingRegions` array and an empty `existingVmPlacements` array. Set `vmCounts.dc` to at least `1`.
+
+The current template evaluates the primary domain-controller and file-server target during validation regardless of the identity and file-service flags. A deployment with `vmCounts.dc=0` therefore fails template validation before resources are created.
 
 ```powershell
 az deployment sub create `
@@ -62,11 +65,69 @@ Controlled egress applies when `networkMode=hubSpokeFirewall`.
 
 The hub remains the control-plane region in all modes. Selecting a mode does not change VM placement, DNS candidate selection, or identity orchestration.
 
-### Brownfield Firewall Introduction
+### Brownfield Topology Simplification
 
-Changing `networkMode` from `hubSpoke` to `hubSpokeFirewall` and running `stage=network` adds `AzureFirewallSubnet`, the firewall, policy, route tables, and UDRs without recreating VMs or identity resources. The firewall subnet is reconciled even when the hub VNet is listed in `existingRegions`.
+Changing `networkMode` from `fullMesh` to `hubSpoke`, `fullMesh` to `hubSpokeFirewall`, or `hubSpoke` to `hubSpokeFirewall` and running `stage=network` is the currently supported brownfield topology simplification path. In these transitions, the deployment removes unneeded full-mesh peerings and adds the target-mode resources required by the new topology without recreating VMs or identity resources. The firewall subnet is reconciled even when the hub VNet is listed in `existingRegions`.
 
-Other topology transitions are creation-only. The template does not remove peerings, firewall resources, route tables, UDR associations, or `AzureFirewallSubnet` that belong to a previous mode. Plan and perform resource retirement explicitly before considering a topology migration complete.
+Set `executePeeringCleanup=true` to opt in to the peering-removal behavior during this supported path. This flag controls deletion, not execution, of the cleanup Deployment Script: for brownfield deployments with `networkMode` set to `hubSpoke` or `hubSpokeFirewall`, the script runs whenever `existingRegions` is not empty and queries candidate spoke-to-spoke peerings. When the flag is `false`, the script reports matching peerings without deleting them. The script is not deployed for greenfield deployments or when `networkMode` is `fullMesh`.
+
+The script infers candidate peerings from `existingRegions`; it does not discover or validate the previously deployed topology. Enable deletion only when the matching peerings are confirmed to be obsolete. The flag is intentionally narrow: it only removes obsolete full-mesh peerings and does not retire firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or handle reverse topology transitions or broader topology discovery.
+
+This support is intentionally narrow. It does not yet automate reverse topology transitions, broader discovery of existing topology, or retirement of firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or other previous-mode resources when they are no longer needed. Planned topology reconciliation will use manually declared current and desired topologies, analogous to `existingRegions` and `existingVmPlacements`, to determine resource retirement before considering a topology migration complete.
+
+The planned roadmap for later work includes topology discovery, region discovery, VM discovery, firewall retirement, route-table retirement, `AzureFirewallSubnet` retirement, reverse topology transitions, and zero-VM deployment support.
+
+## RBAC Requirements for Peering Cleanup
+
+AMRL uses an Azure Deployment Script to identify and optionally remove obsolete spoke-to-spoke VNet peerings when transitioning from a `fullMesh` topology to either `hubSpoke` or `hubSpokeFirewall`.
+
+Create a User Assigned Managed Identity, grant it the **Network Contributor** role, and supply the identity resource ID through the `automationManagedIdentityResourceId` parameter.
+
+### Managed Identity
+
+Create a User Assigned Managed Identity for deployment automation:
+
+```powershell
+az identity create `
+  --name amrl-deployment-mi `
+  --resource-group amrl-foundation-rg `
+  --location <region>
+```
+
+### Required Role Assignment
+
+Grant the managed identity the **Network Contributor** role at subscription scope:
+
+```powershell
+az role assignment create `
+  --assignee-object-id <principalId> `
+  --assignee-principal-type ServicePrincipal `
+  --role "Network Contributor" `
+  --scope /subscriptions/<subscriptionId>
+```
+
+### Why This Permission Is Required
+
+The Deployment Script authenticates using the managed identity and performs the following operations:
+
+- Query existing VNet peerings.
+- Identify obsolete spoke-to-spoke peerings when moving away from `fullMesh`.
+- Remove obsolete peerings when `executePeeringCleanup` is enabled.
+
+Without the **Network Contributor** role, the Deployment Script can calculate the peerings that should be removed but cannot query or modify Azure networking resources.
+
+### Managed Identity Configuration
+
+The Deployment Script resource must be configured to use the managed identity:
+
+```bicep
+identity: {
+  type: 'UserAssigned'
+  userAssignedIdentities: {
+    '/subscriptions/<subscriptionId>/resourceGroups/amrl-foundation-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/amrl-deployment-mi': {}
+  }
+}
+```
 
 ## Stages
 

@@ -30,6 +30,10 @@ var useHubSpokePeering = contains([
 
 var useFullMeshPeering = networkMode == 'fullMesh'
 
+var desiredPeeringTargets = [
+  for target in regionKeys: (useHubSpokePeering && sourceRegion == hubRegion && target != hubRegion) || useHubSpokePeering && sourceRegion != hubRegion && target == hubRegion || useFullMeshPeering && sourceRegion != target ? target : ''
+]
+
 // ========================================
 // EXISTING DEPENDENCY: LOCAL VNET
 // ========================================
@@ -47,7 +51,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
 // ========================================
 
 resource peerings 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2022-07-01' = [
-  for target in regionKeys: if (useHubSpokePeering && sourceRegion == hubRegion && target != hubRegion || useHubSpokePeering && sourceRegion != hubRegion && target == hubRegion || useFullMeshPeering && sourceRegion != target) {
+  for target in desiredPeeringTargets: if (!empty(target)) {
     name: '${vnet.name}-to-${prefix}-vnet-${target}'
     parent: vnet
     properties: {

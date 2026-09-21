@@ -9,8 +9,10 @@ See [Project History and Learning Notes](docs/project-history.md) for the design
 - Azure CLI installed and authenticated to the target subscription.
 - Permission to create subscription and resource-group resources.
 - Azure Key Vault containing the referenced admin credentials and SSH keys.
+- A User Assigned Managed Identity for deployment-script automation; grant it the Network Contributor role at subscription scope and pass its resource ID through `automationManagedIdentityResourceId`.
 - Valid VM sizes and images for the target regions.
 - Sufficient regional vCPU quota.
+- At least one domain controller requested with `vmCounts.dc >= 1`, even when identity and file services are disabled.
 
 Trial and Student subscriptions may restrict regions, VM sizes, images, or quota. Check availability before deployment using the commands in [Validation and Troubleshooting](docs/validation-and-troubleshooting.md).
 
@@ -19,7 +21,8 @@ Trial and Student subscriptions may restrict regions, VM sizes, images, or quota
 1. Copy `main.parameters.demo.json` to a local parameter file.
 2. Replace its placeholders with your public IP, SSH public key, and Key Vault ID.
 3. Set `existingRegions` and `existingVmPlacements` to empty arrays.
-4. Deploy the Bicep template:
+4. Set `vmCounts.dc` to at least `1`.
+5. Deploy the Bicep template:
 
 ```powershell
 az deployment sub create `
@@ -86,7 +89,7 @@ The `networkMode` parameter selects the network topology without changing VM pla
 
 The primary region remains the hub and control-plane anchor for `dc01` and `jmp01` in every mode. Role-based NSGs protect all standard subnets.
 
-`hubSpoke -> hubSpokeFirewall` is supported with `stage=network`; the existing hub VNet receives `AzureFirewallSubnet` without recreation. Topology changes do not currently retire peerings, firewall resources, route tables, UDR associations, or firewall subnets from the previous mode. Plan and perform that cleanup explicitly before relying on a topology migration.
+For brownfield topology simplification, cleanup can remove candidate spoke-to-spoke peerings when moving to `hubSpoke` or `hubSpokeFirewall`. The template infers candidates from `existingRegions`; it does not discover or validate the previously deployed topology. Confirm that matching peerings are obsolete before enabling deletion. See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification) for the cleanup procedure, scope, and RBAC requirement.
 
 See [Architecture](docs/architecture.md) for the resource model, module boundaries, network layout, addressing, and desired-state model.
 
@@ -167,15 +170,17 @@ docs/                              Detailed project documentation
 
 ## Known Limitations
 
-- Live Azure VM discovery is not automatic; brownfield inventory must be maintained in `existingVmPlacements`.
+- Live Azure discovery is not used for brownfield reconciliation. You must declare existing network regions in `existingRegions` and existing VMs in `existingVmPlacements`; planned topology reconciliation will likewise require manually declared current and desired topologies.
 - Region indexes determine VNet address spaces and must be treated as part of the deployed network contract.
-- Topology creation is supported for all `networkMode` values, but topology transitions do not automatically remove resources from a previous mode.
+- Brownfield topology cleanup infers candidate spoke-to-spoke peerings from `existingRegions`; it does not discover the prior topology or retire firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or resources required by reverse or expansion transitions. See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification).
 - Azure VM SKU availability and quota are subscription- and region-specific and require preflight checks.
 - Identity scripts depend on guest networking, DNS, Kerberos, LDAP, and a healthy Azure VM Agent.
 - Control-plane placement falls back to the hub after spoke capacity is exhausted; per-region validation reports hub overflow after placement rather than preventing the fallback.
 - The solution is designed for networking structures created by its own modules, not arbitrary existing VNets.
 
-See the detailed guides for implementation boundaries and operational guidance.
+## Planned Future Work
+
+The next engineering step is automated discovery and reconciliation for existing environments. See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification) for the detailed cleanup boundary and roadmap.
 
 ## Detailed Documentation
 

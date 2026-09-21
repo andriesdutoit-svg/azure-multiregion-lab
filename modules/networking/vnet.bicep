@@ -20,11 +20,6 @@ param jumpboxAllowedSources array
 param deployAzureFirewallSubnet bool
 param tags object = {}
 
-// ========================================
-// SECURITY RULE BUILDING BLOCKS
-// Base rule arrays reused to build role-specific NSG rule sets.
-// ========================================
-
 var isExistingRegion = contains(existingRegions, location)
 
 var createSubnets = !isExistingRegion
@@ -319,8 +314,8 @@ module subnetJumpbox 'subnet.bicep' = if (createSubnets && isHub) {
 
 // Spoke standard subnet reconciliation is handled by roleSubnets.bicep.
 
-// AzureFirewallSubnet is reconciled independently of createSubnets
-// to support brownfield upgrades from hubSpoke to hubSpokeFirewall.
+// AzureFirewallSubnet is created independently of createSubnets to support brownfield
+// transitions from hubSpoke to hubSpokeFirewall.
 module subnetHub 'subnet.bicep' = if (isHub && deployAzureFirewallSubnet) {
   name: 'AzureFirewallSubnet'
   dependsOn: [
@@ -336,7 +331,8 @@ module subnetHub 'subnet.bicep' = if (isHub && deployAzureFirewallSubnet) {
 
 // ========================================
 // EXISTING RESOURCE REFERENCES
-// In brownfield deployments (isExistingRegion=true), networking resources are not created by this module.
+// In brownfield deployments, existing VNets and standard subnets are reused while NSGs,
+// route tables, and supported subnet changes remain managed by the network stage.
 // Existing resource references allow safe ID resolution without module.outputs access,
 // avoiding null-reference errors in conditional-module paths.
 // ========================================
