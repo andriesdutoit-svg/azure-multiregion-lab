@@ -71,7 +71,7 @@ var deployPeerings = contains([
 ], networkMode)
 
 // The script is deployed only for brownfield non-full-mesh modes; executePeeringCleanup controls deletion within the script.
-var removeMeshPeerings = networkMode != 'fullMesh' && length(existingRegions) > 0
+var removeMeshPeerings = deployNetwork && networkMode != 'fullMesh' && length(existingRegions) > 0
 
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
@@ -246,31 +246,9 @@ module topologyCleanup '../networking/topology-cleanup.bicep' = if (removeMeshPe
 // NETWORK STAGE OUTPUT CONTRACT
 // ========================================
 //
-// Output contract consumed by compute-stage:
+// Output contract consumed by compute-stage
 //
-// [
-//   {
-//     regionKey: 'westeurope'
-//
-//     subnets: {
-//       dc: {
-//         id: '...'
-//       }
-//
-//       jumpbox: {
-//         id: '...'
-//       }
-//
-//       server: {
-//         id: '...'
-//       }
-//
-//       client: {
-//         id: '...'
-//       }
-//     }
-//   }
-// ]
+
 
 output subnetMap array = [
   for (region, i) in regionKeys: {
