@@ -180,6 +180,12 @@ var directoryModel = {
     sourceDepartmentCode: first(items(sysAdminDepartment))!.value
   }
 
+  gpoNames: {
+    serverAdministration: 'Server Administration'
+    clientAdministration: 'Client Administration'
+  }
+
+
   shares: {
     root: {
       name: 'Shares'
@@ -255,6 +261,23 @@ module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
   }
 }
 
+module adGpo '../identity/ad-gpo.bicep' = if (deployIdentity) {
+  name: '${prefix}-ad-gpo'
+
+  scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
+
+  dependsOn: [
+    adPopulate
+  ]
+
+  params: {
+    dcVmName: primaryDc!.name
+    domainName: domainName
+    directoryModel: string(directoryModel)
+    reconciliationToken: reconciliationToken
+  }
+}
+
 module fileServices '../identity/file-services.bicep' = if (deployIdentity && enableFileServices) {
   name: '${prefix}-file-services'
 
@@ -288,7 +311,7 @@ module domainJoinWindows '../identity/domain-join.bicep' = [
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
     dependsOn: [
-      adPopulate
+      adGpo
     ]
 
     params: {
@@ -317,7 +340,7 @@ module domainJoinLinux '../identity/domain-join-linux.bicep' = [
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
     dependsOn: [
-      adPopulate
+      adGpo
       linuxDesktop
     ]
 

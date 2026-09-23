@@ -152,23 +152,27 @@ Write-Host "Configuring local administrator access"
 
 $netbiosName = $DomainName.Split('.')[0].ToUpper()
 
-try {
-    Add-LocalGroupMember `
-        -Group "Administrators" `
-        -Member "$netbiosName\$windowsAdminsGroup" `
-        -ErrorAction Stop
+Write-Host (
+    "Local administrator assignment handled by Group Policy."
+)
 
-    Write-Host (
-        "Added $netbiosName\$windowsAdminsGroup " +
-        "to local Administrators"
-    )
-}
-catch {
-    Write-Warning (
-        "Unable to add $netbiosName\$windowsAdminsGroup " +
-        "to local Administrators. $_"
-    )
-}
+# try {
+#     Add-LocalGroupMember `
+#         -Group "Administrators" `
+#         -Member "$netbiosName\$windowsAdminsGroup" `
+#         -ErrorAction Stop
+
+#     Write-Host (
+#         "Added $netbiosName\$windowsAdminsGroup " +
+#         "to local Administrators"
+#     )
+# }
+# catch {
+#     Write-Warning (
+#         "Unable to add $netbiosName\$windowsAdminsGroup " +
+#         "to local Administrators. $_"
+#     )
+# }
 
 Write-Host "Restarting computer to complete domain join."
 
