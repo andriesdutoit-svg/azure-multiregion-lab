@@ -156,24 +156,6 @@ Write-Host (
     "Local administrator assignment handled by Group Policy."
 )
 
-# try {
-#     Add-LocalGroupMember `
-#         -Group "Administrators" `
-#         -Member "$netbiosName\$windowsAdminsGroup" `
-#         -ErrorAction Stop
-
-#     Write-Host (
-#         "Added $netbiosName\$windowsAdminsGroup " +
-#         "to local Administrators"
-#     )
-# }
-# catch {
-#     Write-Warning (
-#         "Unable to add $netbiosName\$windowsAdminsGroup " +
-#         "to local Administrators. $_"
-#     )
-# }
-
 Write-Host "Restarting computer to complete domain join."
 
 Restart-Computer -Force

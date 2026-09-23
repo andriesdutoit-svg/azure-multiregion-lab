@@ -135,6 +135,13 @@ function Ensure-Folder {
     }
 }
 
+# Local administrator assignment is implemented
+# through Group Policy Preferences (Local Users and Groups).
+#
+# XML is written directly to SYSVOL and a subsequent
+# Update-GpoVersion() call is required to trigger
+# DSVersion, SysvolVersion and GPT.INI updates.
+
 function Ensure-ServerAdministrationMembership {
     param(
         [psobject]$Model,
@@ -290,6 +297,36 @@ function Ensure-ClientAdministrationPolicies {
         -Value 1
 }
 
+function Update-GpoVersion {
+    param(
+        [string]$GpoName
+    )
+
+    Write-Host "[Update] Incrementing version for $GpoName"
+
+    # Trigger supported GPO version increment.
+    # Required after writing Local Users and Groups
+    # preference XML directly into SYSVOL.
+    #
+    # Set-GPPrefRegistryValue updates:
+    # - AD versionNumber
+    # - DSVersion
+    # - SysvolVersion
+    # - GPT.INI Version
+    #
+    # Without this step, Group Policy clients do not
+    # detect changes to the generated Groups.xml file.
+
+    Set-GPPrefRegistryValue `
+        -Name $GpoName `
+        -Context Computer `
+        -Action Update `
+        -Key 'HKLM\SOFTWARE\AMRL\GpoVersion' `
+        -ValueName 'VersionRefresh' `
+        -Type String `
+        -Value (Get-Date -Format 'yyyyMMddHHmmss')
+}
+
 Ensure-Gpo `
     -Name $model.gpoNames.serverAdministration `
     -Description 'Administrative policy for AMRL member servers'
@@ -311,8 +348,14 @@ Ensure-ServerAdministrationMembership `
     -Model $model `
     -DomainName $DomainName
 
+Update-GpoVersion `
+    -GpoName $model.gpoNames.serverAdministration
+
 Ensure-ClientAdministrationMembership `
     -Model $model `
     -DomainName $DomainName
+
+Update-GpoVersion `
+    -GpoName $model.gpoNames.clientAdministration
 
 Write-Host "AMRL GPO Configuration Completed"
