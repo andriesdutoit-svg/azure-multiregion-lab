@@ -37,6 +37,34 @@ catch {
     throw "Unable to load ActiveDirectory module. $_"
 }
 
+function Register-LugsExtension {
+    param(
+        [string]$GpoName
+    )
+
+    $gpo = Get-GPO $GpoName
+
+    $currentValue = (
+        Get-ADObject `
+            -Identity $gpo.Path `
+            -Properties gPCMachineExtensionNames
+    ).gPCMachineExtensionNames
+
+    $lugsExtension =
+        '[{00000000-0000-0000-0000-000000000000}{79F92669-4224-476C-9C5C-6EFB4D87DF4A}]' +
+        '[{17D89FEC-5C44-4972-B12D-241CAEF74509}{79F92669-4224-476C-9C5C-6EFB4D87DF4A}]'
+
+    if ($currentValue -notmatch '79F92669-4224-476C-9C5C-6EFB4D87DF4A') {
+
+        Set-ADObject `
+            -Identity $gpo.Path `
+            -Replace @{
+                gPCMachineExtensionNames =
+                    ($currentValue + $lugsExtension)
+            }
+    }
+}
+
 function Ensure-Gpo {
     param(
         [string]$Name,
@@ -172,13 +200,16 @@ function Ensure-ServerAdministrationMembership {
 
     $guid = [guid]::NewGuid().ToString().ToUpper()
 
+    $changedTimestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+
     $xml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <Groups clsid="{3125E937-EB16-4b4c-9934-544FC6D24D26}">
   <Group clsid="{6D4A79E4-529C-4481-ABD0-F5BD7EA93BA7}"
          name="Administrators (built-in)"
          image="2"
-         uid="{$guid}">
+         uid="{$guid}"
+         changed="$changedTimestamp">
     <Properties action="U"
                 newName=""
                 description=""
@@ -205,6 +236,9 @@ function Ensure-ServerAdministrationMembership {
                 -Path $groupsFile `
                 -Value $xml `
                 -Encoding UTF8
+
+        Register-LugsExtension `
+            -GpoName $Model.gpoNames.serverAdministration
 
         Write-Host (
             "[Success] $windowsAdminsGroup configured"
@@ -241,13 +275,23 @@ function Ensure-ClientAdministrationMembership {
 
     $guid = [guid]::NewGuid().ToString().ToUpper()
 
+    $changedTimestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+
+    # Group Policy Preferences Local Users and Groups items
+    # require a valid changed timestamp attribute.
+    #
+    # Without the changed attribute the preference may
+    # appear correctly in GPMC but will not be applied
+    # reliably to client computers.
+
     $xml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <Groups clsid="{3125E937-EB16-4b4c-9934-544FC6D24D26}">
   <Group clsid="{6D4A79E4-529C-4481-ABD0-F5BD7EA93BA7}"
          name="Administrators (built-in)"
          image="2"
-         uid="{$guid}">
+         uid="{$guid}"
+         changed="$changedTimestamp">
     <Properties action="U"
                 newName=""
                 description=""
@@ -275,6 +319,9 @@ function Ensure-ClientAdministrationMembership {
                 -Value $xml `
                 -Encoding UTF8
 
+        Register-LugsExtension `
+            -GpoName $Model.gpoNames.clientAdministration
+
         Write-Host (
             "[Success] $windowsAdminsGroup configured"
         ) 
@@ -296,6 +343,16 @@ function Ensure-ClientAdministrationPolicies {
         -Type DWord `
         -Value 1
 }
+
+# Trigger supported GPO version increment.
+# Required after writing Local Users and Groups
+# preference XML directly into SYSVOL.
+#
+# Updates:
+# - AD versionNumber
+# - DSVersion
+# - SysvolVersion
+# - GPT.INI Version
 
 function Update-GpoVersion {
     param(
@@ -327,9 +384,25 @@ function Update-GpoVersion {
         -Value (Get-Date -Format 'yyyyMMddHHmmss')
 }
 
+function Show-GpoVersion {
+    param(
+        [string]$Name
+    )
+
+    $gpo = Get-GPO $Name
+
+    Write-Host ""
+    Write-Host "GPO: $Name"
+    Write-Host "DSVersion     = $($gpo.Computer.DSVersion)"
+    Write-Host "SysvolVersion = $($gpo.Computer.SysvolVersion)"
+}
+
 Ensure-Gpo `
     -Name $model.gpoNames.serverAdministration `
     -Description 'Administrative policy for AMRL member servers'
+
+Show-GpoVersion `
+    -Name $model.gpoNames.serverAdministration
 
 Ensure-Gpo `
     -Name $model.gpoNames.clientAdministration `
@@ -344,16 +417,34 @@ Ensure-ClientAdministrationPolicies `
 Ensure-ServerAdministrationPolicies `
     -Model $model
 
+Show-GpoVersion `
+    -Name $model.gpoNames.serverAdministration
+
 Ensure-ServerAdministrationMembership `
     -Model $model `
     -DomainName $DomainName
 
+Show-GpoVersion `
+    -Name $model.gpoNames.serverAdministration
+
 Update-GpoVersion `
     -GpoName $model.gpoNames.serverAdministration
+
+Show-GpoVersion `
+    -Name $model.gpoNames.serverAdministration
+
+Update-GpoVersion `
+    -GpoName $model.gpoNames.serverAdministration
+
+Show-GpoVersion `
+    -Name $model.gpoNames.serverAdministration
 
 Ensure-ClientAdministrationMembership `
     -Model $model `
     -DomainName $DomainName
+
+Update-GpoVersion `
+    -GpoName $model.gpoNames.clientAdministration
 
 Update-GpoVersion `
     -GpoName $model.gpoNames.clientAdministration

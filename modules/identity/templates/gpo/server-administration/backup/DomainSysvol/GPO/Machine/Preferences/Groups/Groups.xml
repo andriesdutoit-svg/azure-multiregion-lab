@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Groups clsid="{3125E937-EB16-4b4c-9934-544FC6D24D26}"><Group clsid="{6D4A79E4-529C-4481-ABD0-F5BD7EA93BA7}" name="Administrators (built-in)" image="2" changed="2026-09-29 09:47:28" uid="{14E6C0C7-6EAB-41FA-AA90-1B38A24A8DF0}"><Properties action="U" newName="" description="" deleteAllUsers="0" deleteAllGroups="0" removeAccounts="0" groupSid="S-1-5-32-544" groupName="Administrators (built-in)"><Members><Member name="AMRL\GGS_Windows_Admins" action="ADD" sid=""/></Members></Properties></Group>
+</Groups>

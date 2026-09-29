@@ -261,6 +261,7 @@ module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
   }
 }
 
+/*
 module adGpo '../identity/ad-gpo.bicep' = if (deployIdentity) {
   name: '${prefix}-ad-gpo'
 
@@ -277,6 +278,7 @@ module adGpo '../identity/ad-gpo.bicep' = if (deployIdentity) {
     reconciliationToken: reconciliationToken
   }
 }
+*/
 
 module fileServices '../identity/file-services.bicep' = if (deployIdentity && enableFileServices) {
   name: '${prefix}-file-services'
@@ -311,7 +313,7 @@ module domainJoinWindows '../identity/domain-join.bicep' = [
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
     dependsOn: [
-      adGpo
+      adPopulate
     ]
 
     params: {
@@ -340,7 +342,7 @@ module domainJoinLinux '../identity/domain-join-linux.bicep' = [
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
     dependsOn: [
-      adGpo
+      adPopulate
       linuxDesktop
     ]
 
