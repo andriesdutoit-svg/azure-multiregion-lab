@@ -13,6 +13,8 @@ Replica DC promotion
         ->
 Directory population
         ->
+Group Policy provisioning
+        ->
 Windows and Linux domain join
         ->
 Departmental share provisioning (when enabled)
@@ -29,14 +31,15 @@ flowchart LR
   D --> E
   E --> F[Promote replica DCs]
   F --> G[Populate OU, groups, and users]
-  G --> H[Domain join Windows and Linux]
+  G --> K[Import and link administration GPOs]
+  K --> H[Domain join Windows and Linux]
         H --> I[Provision departmental shares when enabled]
         I --> J[Safe re-run keeps state idempotent]
 ```
 
 ## Directory Model
 
-The `directoryModel` object in `main.bicep` is passed as a JSON string to identity scripts that require directory structure, group naming, OU mapping, or share configuration. It centralises those details so the scripts do not hardcode AD structure:
+The `directoryModel` object in `modules/stages/identity-stage.bicep` is passed as a JSON string to identity scripts that require directory structure, group naming, OU mapping, GPO names, or share configuration. It centralises those details so the scripts do not hardcode AD structure:
 
 - `rootOuName` — top-level OU beneath the domain root (`_ROOT`).
 - `customOus` — hierarchical OU structure for computers, groups, and users, including reserved OUs for disabled users.
@@ -44,10 +47,11 @@ The `directoryModel` object in `main.bicep` is passed as a JSON string to identi
 - `groupOuMapping` — OUs for global security groups (`Groups/GGS`) and domain local security groups (`Groups/DLGS`).
 - `groupNaming` — configurable prefixes: `globalSecurityPrefix` (`GGS`) for user-facing department groups, `domainLocalSecurityPrefix` (`DLGS`) for share permission groups.
 - `platformAdminGroups` — names of the Windows/Linux platform admin groups and the department code they're sourced from.
+- `gpoNames` — display names of the administration GPOs. These must match the `DisplayName` inside the exported backups in `TemplateExports.zip`.
 - `shares` — root share name/path (`C:\Shares`) and the current file server host (`fileServerName`).
 - `coreOuMapping` — references to the core `Users`/`Groups` OUs used by scripts.
 
-The directory model is not parameterised; it represents a stable architectural decision. Customisation requires editing `main.bicep` directly.
+The directory model is not parameterised; it represents a stable architectural decision. Customisation requires editing `modules/stages/identity-stage.bicep` directly.
 
 ## Directory Population Rules
 
@@ -85,6 +89,36 @@ Examples:
 ## Windows Domain Join
 
 Windows workload VMs are targeted from `finalVmPlacements`. The PowerShell script checks `Win32_ComputerSystem.PartOfDomain` before joining and continues with local administrator configuration and restart behavior when appropriate.
+
+## Group Policy Provisioning
+
+After directory population, `modules/identity/ad-gpo.bicep` runs `Import-GPO-Templates.ps1` on the primary DC to create the administration GPOs from exported GPMC backups.
+
+The GPO names come from the directory model, so the scripts do not hardcode them:
+
+```text
+gpoNames.serverAdministration   ->  linked to OU=Servers,OU=Computers
+gpoNames.clientAdministration   ->  linked to OU=Clients,OU=Computers
+```
+
+The backups ship as `modules/identity/templates/gpo/TemplateExports.zip`, embedded in the template with `loadFileAsBase64` and passed to the Run Command as a string parameter. The script writes the zip to the DC, expands it to `C:\Temp\TemplateExports`, and discards any previous extraction first.
+
+Each run performs three steps per GPO:
+
+1. **Import** — only when the GPO does not already exist. `Import-GPO` resolves the backup by the `DisplayName` recorded inside its `Backup.xml`, and `-Path` is the backup root containing the GUID folders.
+2. **Reconcile the group reference** — the `Groups.xml` preference is rewritten so the Windows administrators member matches this domain. Both the SID and the `NETBIOS\Group` name are derived from `groupNaming.globalSecurityPrefix`, `platformAdminGroups.windowsAdmins`, and the live domain NetBIOS name, because the exported template carries values from the domain it was captured in.
+3. **Link** — the GPO is linked to its target OU when no link exists.
+
+`treatFailureAsDeploymentFailure` is enabled on the Run Command, so a guest-script failure fails the deployment instead of reporting success.
+
+### Idempotency and Template Limitations
+
+The zipped template is a creation-time seed, not a desired-state definition. Be aware of these boundaries:
+
+- **Template edits do not reach existing GPOs.** Import is skipped once the GPO exists, so updating `TemplateExports.zip` and redeploying leaves an already-created GPO unchanged. Remove the GPO, or change the name in `gpoNames`, to import a revised template. This preserves in-place policy edits, consistent with the wider reconciliation model.
+- **GPO names are coupled to the backups.** `Import-GPO` looks the backup up by display name, so renaming `gpoNames` without re-exporting the backups breaks the import. The script fails fast with an explicit message when no backup carries the requested name.
+- **The group reference is rewritten in SYSVOL without a version increment.** Step 2 edits `Groups.xml` directly, so clients may not reprocess the preference until the GPO version changes. Only the Windows administrators member is reconciled; other preference content is left as exported.
+- **Re-running requires a new Run Command definition.** As with the other identity scripts, use a new deployment name so the Run Command is reapplied.
 
 ## Linux Domain Join
 

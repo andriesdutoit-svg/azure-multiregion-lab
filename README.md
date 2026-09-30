@@ -121,12 +121,14 @@ Replica DC promotion
         ->
 Directory population
         ->
+Group Policy provisioning
+        ->
 Windows and Linux domain join
         ->
 Departmental share provisioning (when enabled)
 ```
 
-The scripts inspect current state before applying changes. Existing forests, domain controllers, and domain memberships are retained. Missing or incomplete configuration is repaired where supported.
+The scripts inspect current state before applying changes. Existing forests, domain controllers, and domain memberships are retained. Missing or incomplete configuration is repaired where supported. Administration GPOs are imported from exported backups only when absent, so later template edits do not overwrite an existing GPO.
 
 See [Identity and Domain Join](docs/identity-and-domain-join.md) for Windows and Linux behavior, healing, troubleshooting, and Run Command inspection.
 

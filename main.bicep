@@ -666,6 +666,7 @@ module validationEngine 'modules/logic/validation.bicep' = {
     useDedicatedFileServer: useDedicatedFileServer
     enableFileServices: enableFileServices
     fileServerVmAvailable: length(fileServerVmList) > 0
+    domainName: domainName
   }
 }
 

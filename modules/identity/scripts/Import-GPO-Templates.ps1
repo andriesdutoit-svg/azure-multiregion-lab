@@ -1,20 +1,19 @@
-# GPO templates are imported only when missing.
+# AMRL GPO provisioning from exported GPMC backups.
 #
-# Existing GPOs are intentionally preserved to
-# align with AMRL's reconciliation model and
-# avoid destructive policy replacement.
+# Transport:   the backup set ships as a base64 zip parameter and is expanded
+#              fresh on the DC each run (packaged by ad-gpo.bicep).
+# Creation:    a GPO is imported only when it does not already exist.
+# Reconcile:   the Windows admins reference inside Groups.xml is rewritten on
+#              every run so the exported SID and NetBIOS name match this domain.
+#
+# Idempotency limitation: because import is skipped once the GPO exists,
+# editing TemplateExports.zip does NOT update an already-created GPO. Remove
+# the GPO, or rename it via the directory model, to pick up template changes.
 
 param(
     [string]$DomainName,
     [string]$DirectoryModel,
-    
-    [string]$ServerAdministrationBackupXml,
-    [string]$ServerAdministrationReportXml,
-    [string]$ServerAdministrationGroupsXml,
-
-    [string]$ClientAdministrationBackupXml,
-    [string]$ClientAdministrationReportXml,
-    [string]$ClientAdministrationGroupsXml,
+    [string]$GpoTemplatesZip,
 
     [string]$ReconciliationToken
 )
@@ -25,9 +24,57 @@ Write-Host "AMRL GPO Template Import"
 
 Import-Module GroupPolicy -ErrorAction Stop
 
-$templateRoot = 'C:\Temp\GpoTemplates'
+$templateRoot = 'C:\Temp\TemplateExports'
+
+$gpoTemplateRepositoryPath = $templateRoot
+
+$zipPath =
+    'C:\Temp\TemplateExports.zip'
+
+if ([string]::IsNullOrWhiteSpace($GpoTemplatesZip)) {
+    throw "GpoTemplatesZip is empty. Confirm templates/gpo/TemplateExports.zip exists and is committed."
+}
+
+# Run Command parameters are strings, so the zip crosses as base64.
+try {
+    [System.IO.File]::WriteAllBytes(
+        $zipPath,
+        [Convert]::FromBase64String($GpoTemplatesZip)
+    )
+}
+catch {
+    throw "GpoTemplatesZip is not valid base64 content: $($_.Exception.Message)"
+}
+
+# Discard the previous extraction so a changed zip cannot leave stale backups behind.
+Remove-Item `
+    $templateRoot `
+    -Recurse `
+    -Force `
+    -ErrorAction SilentlyContinue
+
+Expand-Archive `
+    -LiteralPath $zipPath `
+    -DestinationPath 'C:\Temp' `
+    -Force `
+    -ErrorAction Stop
+
+# Expand-Archive writes into C:\Temp, so the zip must contain a TemplateExports root folder.
+if (-not (Test-Path -LiteralPath $templateRoot)) {
+    throw "Expanded archive does not contain the expected '$templateRoot' folder."
+}
+
+if (-not (Get-ChildItem -LiteralPath $templateRoot -Filter 'Backup.xml' -File -Recurse -ErrorAction SilentlyContinue)) {
+    throw "No GPO backups were found under '$templateRoot'. The zip must hold exported GPMC backup folders."
+}
 
 $model = $DirectoryModel | ConvertFrom-Json
+
+if (-not $model.gpoNames -or
+    [string]::IsNullOrWhiteSpace($model.gpoNames.serverAdministration) -or
+    [string]::IsNullOrWhiteSpace($model.gpoNames.clientAdministration)) {
+    throw "directoryModel.gpoNames must define serverAdministration and clientAdministration."
+}
 
 $domainDn = (($DomainName -split '\.') | ForEach-Object {
     "DC=$_"
@@ -39,68 +86,15 @@ $serversOuDn =
 $clientsOuDn =
     "OU=Clients,OU=Computers,OU=$($model.rootOuName),$domainDn"
 
+$serverAdministrationGpoName =
+    $model.gpoNames.serverAdministration
+
+$clientAdministrationGpoName =
+    $model.gpoNames.clientAdministration
+
 $gpoTemplateRepositoryPath = $templateRoot
 
 Write-Host "Template Root = $templateRoot"
-
-function Write-TemplateFile {
-    param(
-        [string]$FilePath,
-        [string]$Content
-    )
-
-    $parentFolder = Split-Path `
-        -Path $FilePath `
-        -Parent
-
-    if (-not (Test-Path $parentFolder)) {
-
-        New-Item `
-            -ItemType Directory `
-            -Path $parentFolder `
-            -Force |
-            Out-Null
-
-    }
-
-    Set-Content `
-        -Path $FilePath `
-        -Value $Content `
-        -Encoding UTF8
-}
-
-function Write-GpoTemplate {
-    param(
-        [string]$TemplateName,
-
-        [string]$BackupXml,
-        [string]$ReportXml,
-        [string]$GroupsXml
-    )
-
-    $templatePath =
-        Join-Path `
-            $templateRoot `
-            $TemplateName
-
-    Write-TemplateFile `
-        -FilePath "$templatePath\Backup.xml" `
-        -Content $BackupXml
-
-    Write-TemplateFile `
-        -FilePath "$templatePath\gpreport.xml" `
-        -Content $ReportXml
-
-    Write-TemplateFile `
-        -FilePath "$templatePath\DomainSysvol\GPO\Machine\Preferences\Groups\Groups.xml" `
-        -Content $GroupsXml
-
-    Write-Host (
-        "[Template Created] $TemplateName"
-    )
-}
-
-Write-Host "GroupPolicy module loaded successfully"
 
 function Ensure-GpoLink {
     param(
@@ -108,9 +102,15 @@ function Ensure-GpoLink {
         [string]$TargetDn
     )
 
-    $inheritance = Get-GPInheritance `
-        -Target $TargetDn `
-        -ErrorAction Stop
+    # Surfaces a missing OU as a configuration problem rather than a raw cmdlet error.
+    try {
+        $inheritance = Get-GPInheritance `
+            -Target $TargetDn `
+            -ErrorAction Stop
+    }
+    catch {
+        throw "Cannot link '$GpoName'. Target OU '$TargetDn' was not found; confirm directory population completed: $($_.Exception.Message)"
+    }
 
     $existingLink = $inheritance.GpoLinks |
         Where-Object DisplayName -eq $GpoName
@@ -133,6 +133,7 @@ function Ensure-GpoLink {
     }
 }
 
+# Imports a GPO from the backup set, skipping GPOs that already exist.
 function Ensure-GpoFromTemplate {
     param(
         [string]$GpoName,
@@ -163,6 +164,10 @@ function Ensure-GpoFromTemplate {
             Select-Object FullName |
             Out-Host
 
+        # Import-GPO matches a backup by the DisplayName recorded inside its
+        # Backup.xml, so the directory model's gpoNames must equal the exported
+        # names. Resolving it here fails fast with a clearer message than the
+        # cmdlet's own "backup not found" error.
         $backupXmlFiles = Get-ChildItem `
             -LiteralPath $TemplatePath `
             -Filter 'Backup.xml' `
@@ -194,6 +199,8 @@ function Ensure-GpoFromTemplate {
 
         Write-Host "[Validate] Matched backup: $($matchingBackup.FullName)"
 
+        # -Path is the backup root holding the GUID folders, not the matched
+        # folder itself; -BackupGpoName selects which backup inside it to use.
         Import-GPO `
             -BackupGpoName $GpoName `
             -Path $TemplatePath `
@@ -222,32 +229,126 @@ function Ensure-GpoFromTemplate {
     }
 }
 
-Write-GpoTemplate `
-    -TemplateName '{B2F4D556-0972-4279-A56B-72971037BEEB}' `
-    -BackupXml $ServerAdministrationBackupXml `
-    -ReportXml $ServerAdministrationReportXml `
-    -GroupsXml $ServerAdministrationGroupsXml
+# Re-points the exported admins reference at this domain. The zip carries the
+# SID and NetBIOS name of whichever domain it was exported from, so both are
+# rewritten here rather than being trusted from the template.
+#
+# Unlike the import, this runs on every execution. It edits Groups.xml directly
+# in SYSVOL without incrementing the GPO version, so clients may not reprocess
+# the preference until the version changes.
+function Update-GpoGroupReference {
+    param(
+        [string]$GpoName
+    )
 
-Write-GpoTemplate `
-    -TemplateName '{BAE14512-0FC9-4990-90C1-58FB81F7D4E7}' `
-    -BackupXml $ClientAdministrationBackupXml `
-    -ReportXml $ClientAdministrationReportXml `
-    -GroupsXml $ClientAdministrationGroupsXml
+    $gpo = Get-GPO `
+        -Name $GpoName `
+        -ErrorAction Stop
+
+    $groupsXmlPath =
+        "\\$DomainName\SYSVOL\$DomainName\Policies\{$($gpo.Id)}\Machine\Preferences\Groups\Groups.xml"
+
+    if (-not (Test-Path $groupsXmlPath)) {
+        throw "Groups.xml not found: $groupsXmlPath"
+    }
+
+    $windowsAdminsGroupName = (
+        "$($model.groupNaming.globalSecurityPrefix)_" +
+        "$($model.platformAdminGroups.windowsAdmins)"
+    )
+
+    $windowsAdminsGroup = Get-ADGroup `
+        -Identity $windowsAdminsGroupName `
+        -Properties SID `
+        -ErrorAction Stop
+
+    $currentSid =
+        $windowsAdminsGroup.SID.Value
+
+    $netbiosDomainName =
+        (Get-ADDomain).NetBIOSName
+
+    [xml]$xml =
+        Get-Content `
+            $groupsXmlPath `
+            -Raw
+
+    $members =
+        @($xml.Groups.Group.Properties.Members.Member)
+
+    foreach ($existingMember in $members) {
+
+        if (
+            $existingMember.name -eq "$netbiosDomainName\$windowsAdminsGroupName" -and
+            $existingMember.sid -ne $currentSid
+        ) {
+
+            $existingMember.ParentNode.RemoveChild($existingMember) |
+                Out-Null
+
+            Write-Host (
+                "[Removed Stale Reference] SID = $($existingMember.sid)"
+            )
+        }
+    }
+
+    $member =
+        $xml.Groups.Group.Properties.Members.Member
+
+    # The exported preference carries exactly one admins member; more than one
+    # means the template changed shape and the rewrite below would be ambiguous.
+    if ($null -eq $member) {
+        throw "No Member entry remains in '$groupsXmlPath' for '$GpoName'."
+    }
+
+    if (@($member).Count -gt 1) {
+        throw "Expected a single Member entry in '$groupsXmlPath' for '$GpoName', found $(@($member).Count)."
+    }
+
+    $member.sid =
+        $currentSid
+
+    $member.name =
+        "$netbiosDomainName\$windowsAdminsGroupName"
+
+    $xml.Groups.Group.changed =
+    (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+
+    $xml.Save($groupsXmlPath)
+
+    Write-Host (
+        "[Reference Updated] $GpoName"
+    )
+
+    Write-Host (
+        "Name = $($member.name)"
+    )
+
+    Write-Host (
+        "SID  = $currentSid"
+    )
+}
 
 Ensure-GpoFromTemplate `
-    -GpoName 'Server Administration' `
+    -GpoName $serverAdministrationGpoName `
     -TemplatePath $gpoTemplateRepositoryPath
 
+Update-GpoGroupReference `
+    -GpoName $serverAdministrationGpoName
+
 Ensure-GpoFromTemplate `
-    -GpoName 'Client Administration' `
+    -GpoName $clientAdministrationGpoName `
     -TemplatePath $gpoTemplateRepositoryPath
+
+Update-GpoGroupReference `
+    -GpoName $clientAdministrationGpoName
 
 Ensure-GpoLink `
-    -GpoName 'Server Administration' `
+    -GpoName $serverAdministrationGpoName `
     -TargetDn $serversOuDn
 
 Ensure-GpoLink `
-    -GpoName 'Client Administration' `
+    -GpoName $clientAdministrationGpoName `
     -TargetDn $clientsOuDn
 
 Get-ChildItem `

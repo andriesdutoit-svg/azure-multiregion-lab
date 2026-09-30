@@ -46,6 +46,8 @@ param enableIdentity bool
 param useDedicatedFileServer bool
 param enableFileServices bool
 param fileServerVmAvailable bool
+// Domain name consumed by the Group Policy Run Command to build DNs and SYSVOL paths.
+param domainName string = ''
 
 // ========================================
 // PLACEMENT & CAPACITY VALIDATION
@@ -309,6 +311,34 @@ var duplicateDepartmentCodes = length(distinct(departmentCodes)) != length(depar
 var requestedDirectoryAccounts = departmentCount * (usersPerDepartment + 1)
 
 // ========================================
+// GROUP POLICY PROVISIONING VALIDATION
+// The GPO Run Command derives the domain DN and the SYSVOL UNC path holding
+// Groups.xml from domainName, and reconciles the Windows admins group that
+// directory population creates from the system administration department.
+// ========================================
+
+var domainLabels = split(domainName, '.')
+
+var emptyDomainLabelFlags = [
+  for label in domainLabels: empty(label)
+]
+
+// A single-label, blank, or UNC-unsafe domain name yields an unreachable SYSVOL path at run time.
+var malformedDomainName = empty(domainName) || length(domainLabels) < 2 || contains(emptyDomainLabelFlags, true) || contains(domainName, ' ') || contains(domainName, '\\') || contains(domainName, '@') || contains(domainName, '/')
+
+var hasMalformedDomainName = enableIdentity && malformedDomainName
+
+var emptySysAdminDepartmentCodeFlags = [
+  for d in items(sysAdminDepartment): empty(d.value)
+]
+
+// The GPO group reference resolves GGS_<windowsAdmins>, which population sources from this code.
+var hasEmptySysAdminDepartmentCode = enableIdentity && (empty(items(sysAdminDepartment)) || contains(emptySysAdminDepartmentCodeFlags, true))
+
+// Group Policy is provisioned on the primary DC, so a missing primary DC pin also breaks GPO import.
+var hasNoGpoTargetDc = enableIdentity && missingPinnedDc
+
+// ========================================
 // VALIDATION FLAG MODEL
 // Consolidated rule state emitted for diagnostics.
 // ========================================
@@ -353,6 +383,9 @@ var validationFlags = {
   missingDedicatedFileServer: missingDedicatedFileServer
   invalidDedicatedFileServerConfiguration: invalidDedicatedFileServerConfiguration
   invalidFileServicesIdentityConfiguration: invalidFileServicesIdentityConfiguration
+  hasMalformedDomainName: hasMalformedDomainName
+  hasEmptySysAdminDepartmentCode: hasEmptySysAdminDepartmentCode
+  hasNoGpoTargetDc: hasNoGpoTargetDc
 }
 
 // ========================================
@@ -453,7 +486,18 @@ var msg38 = hasIncompleteImageReference
   ? 'Image references must include publisher, offer, sku, and version.'
   : ''
 
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : msg23 != '' ? msg23 : msg24 != '' ? msg24 : msg25 != '' ? msg25 : msg26 != '' ? msg26 : msg27 != '' ? msg27 : msg28 != '' ? msg28 : msg29 != '' ? msg29 : msg30 != '' ? msg30 : msg31 != '' ? msg31 : msg32 != '' ? msg32 : msg33 != '' ? msg33 : msg34 != '' ? msg34 : msg35 != '' ? msg35 : msg36 != '' ? msg36 : msg37 != '' ? msg37 : msg38 != '' ? msg38 : 'All validation checks passed.'
+// Group Policy Provisioning Validation (msg39-41): inputs the GPO Run Command derives paths and group names from
+var msg39 = hasMalformedDomainName
+  ? 'domainName must be a multi-label DNS name (for example amrl.lab) without spaces, slashes, or @. Group Policy provisioning derives the domain DN and the SYSVOL path to Groups.xml from this value.'
+  : ''
+var msg40 = hasEmptySysAdminDepartmentCode
+  ? 'sysAdminDepartment must define a non-empty department code. Group Policy provisioning resolves the Windows admins group that directory population creates from this code.'
+  : ''
+var msg41 = hasNoGpoTargetDc
+  ? 'Group Policy provisioning runs on the primary domain controller, which is not placed in the primary region. Correct dc01 placement or set enableIdentity to false.'
+  : ''
+
+var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : msg23 != '' ? msg23 : msg24 != '' ? msg24 : msg25 != '' ? msg25 : msg26 != '' ? msg26 : msg27 != '' ? msg27 : msg28 != '' ? msg28 : msg29 != '' ? msg29 : msg30 != '' ? msg30 : msg31 != '' ? msg31 : msg32 != '' ? msg32 : msg33 != '' ? msg33 : msg34 != '' ? msg34 : msg35 != '' ? msg35 : msg36 != '' ? msg36 : msg37 != '' ? msg37 : msg38 != '' ? msg38 : msg39 != '' ? msg39 : msg40 != '' ? msg40 : msg41 != '' ? msg41 : 'All validation checks passed.'
 
 // ========================================
 // OUTPUTS
