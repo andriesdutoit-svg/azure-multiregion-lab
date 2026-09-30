@@ -1,3 +1,10 @@
+# NOTE:
+# The direct Group Policy Preferences generation approach has been
+# superseded by the GPO Template Framework.
+#
+# Investigation retained temporarily until template import
+# implementation is complete and validated.
+
 param(
     [string]$DomainName,
     [string]$DirectoryModel,

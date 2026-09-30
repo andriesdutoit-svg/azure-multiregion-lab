@@ -261,7 +261,6 @@ module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
   }
 }
 
-/*
 module adGpo '../identity/ad-gpo.bicep' = if (deployIdentity) {
   name: '${prefix}-ad-gpo'
 
@@ -278,7 +277,6 @@ module adGpo '../identity/ad-gpo.bicep' = if (deployIdentity) {
     reconciliationToken: reconciliationToken
   }
 }
-*/
 
 module fileServices '../identity/file-services.bicep' = if (deployIdentity && enableFileServices) {
   name: '${prefix}-file-services'
