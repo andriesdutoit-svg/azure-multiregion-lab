@@ -7,6 +7,7 @@ targetScope = 'subscription'
 // - AD Forest deployment
 // - Replica DC deployment
 // - AD population
+// - Group Policy provisioning
 // - Windows domain join
 // - Linux domain join
 // - File services
@@ -30,6 +31,7 @@ targetScope = 'subscription'
 // adForest
 // replicaDcs
 // adPopulate
+// adGpo
 //
 // domainJoinWindows
 // domainJoinLinux
@@ -61,6 +63,7 @@ targetScope = 'subscription'
 // fileServerName
 //
 // domainName
+// gpoNames
 //
 // usersPerDepartment
 // departmentCount
@@ -72,8 +75,6 @@ targetScope = 'subscription'
 //
 // serverAdminUsername
 // serverAdminPassword
-//
-// clientAdminPassword
 //
 // reconciliationToken
 
@@ -117,6 +118,8 @@ param finalVmPlacements array
 
 param domainName string
 
+param gpoNames object
+
 param usersPerDepartment int
 
 param departmentCount int
@@ -135,9 +138,6 @@ param serverAdminUsername string
 
 @secure()
 param serverAdminPassword string
-
-@secure()
-param clientAdminPassword string
 
 // Directory shape passed (as a JSON string) to every identity Run Command script.
 // It centralizes OU paths, group naming, and admin group names so scripts never hardcode AD structure.
@@ -179,6 +179,12 @@ var directoryModel = {
     linuxAdmins: 'Linux_Admins'
     sourceDepartmentCode: first(items(sysAdminDepartment))!.value
   }
+
+  gpoNames: {
+    serverAdministration: gpoNames.serverAdministration
+    clientAdministration: gpoNames.clientAdministration
+  }
+
 
   shares: {
     root: {
@@ -247,10 +253,26 @@ module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
     usersPerDepartment: usersPerDepartment
     sysAdminDepartment: sysAdminDepartment
     additionalDepartments: additionalDepartments
-    clientAdminPassword: clientAdminPassword
     departmentCount: departmentCount
     directoryModel: string(directoryModel)
     enableFileServices: enableFileServices
+    reconciliationToken: reconciliationToken
+  }
+}
+
+module adGpo '../identity/ad-gpo.bicep' = if (deployIdentity) {
+  name: '${prefix}-ad-gpo'
+
+  scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
+
+  dependsOn: [
+    adPopulate
+  ]
+
+  params: {
+    dcVmName: primaryDc!.name
+    domainName: domainName
+    directoryModel: string(directoryModel)
     reconciliationToken: reconciliationToken
   }
 }

@@ -48,8 +48,6 @@ ssh -i C:\ProgramData\ssh\ssh-key azureadmin@<linux-vm-private-ip>
 
 Linux client SSH access from jumpboxes is always enabled and is not gated by a parameter.
 
-### Future Enhancement Consideration
-
 Direct SSH authentication using Active Directory credentials (e.g. `ssh user@amrl.lab@<ip>`) is not supported. Linux VMs are deployed with `disablePasswordAuthentication: true`, which intentionally keeps infrastructure administration (SSH keys via `azureadmin`) and user authentication (Active Directory credentials, via `su -` after SSH access) as separate security models.
 
 ### Linux Client GUI (RDP)
@@ -90,16 +88,38 @@ Register the resource provider (only needed once per subscription) and create th
 az provider register --namespace Microsoft.KeyVault
 az group create --name <foundation-rg> --location <region>
 az keyvault create --name <key-vault-name> --resource-group <foundation-rg> --location <region> `
-  --enable-rbac-authorization true --enabled-for-template-deployment true
+  --enable-rbac-authorization true --enabled-for-template-deployment true `
+  --enable-purge-protection true
 ```
 
-`--enabled-for-template-deployment true` is required so ARM/Bicep deployments can resolve `reference.keyVault` secret values. Grant RBAC access to whoever creates secrets and to any principal that deploys the template (including the GitHub Actions service principal from [CI/CD Workflow and Local Checks](ci-cd-validation.md)):
+`--enabled-for-template-deployment true` is required so ARM/Bicep deployments can resolve `reference.keyVault` secret values. Purge protection is irreversible: after `--enable-purge-protection true` is enabled, it cannot be disabled, and a deleted vault cannot be permanently purged until its soft-delete retention period expires. This protects the recovered secrets, keys, and certificates from immediate permanent deletion, but does not prevent the vault from being soft-deleted.
+
+Grant RBAC access to whoever creates secrets and to any principal that deploys the template (including the GitHub Actions service principal from [CI/CD Workflow and Local Checks](ci-cd-validation.md)):
 
 ```powershell
 $kvId = az keyvault show --name <key-vault-name> --resource-group <foundation-rg> --query id -o tsv
 
 az role assignment create --assignee <your-user-object-id> --role "Key Vault Secrets Officer" --scope $kvId
 az role assignment create --assignee <github-actions-app-id> --role "Key Vault Secrets User" --scope $kvId
+```
+
+### Foundation Deletion Lock
+
+After creating the foundation resources and restoring their RBAC assignments, protect the resource group from accidental deletion:
+
+```powershell
+az lock create `
+  --name protect-foundation `
+  --lock-type CanNotDelete `
+  --resource-group <foundation-rg>
+```
+
+The `CanNotDelete` lock applies to the resource group and its contained Azure resources, blocking control-plane delete operations against the group, Key Vault, and deployment managed identity. It still permits reads, updates, secret operations, and creation of additional resources. It does not block Key Vault data-plane deletion of individual secrets; soft delete and purge protection govern recovery and permanent purge instead.
+
+Remove the lock only for an intentional foundation-resource deletion, then recreate it after maintenance:
+
+```powershell
+az lock delete --name protect-foundation --resource-group <foundation-rg>
 ```
 
 ### SSH Key Setup
@@ -120,6 +140,8 @@ az keyvault secret set --vault-name <key-vault-name> --name jumpboxAdminPassword
 az keyvault secret set --vault-name <key-vault-name> --name serverAdminPassword --value "<password>"
 az keyvault secret set --vault-name <key-vault-name> --name clientAdminPassword --value "<password>"
 ```
+
+These Key Vault passwords remain deployment credentials, not passwords for generated AD users. In particular, `clientAdminPassword` remains wired through the compute stage to initialize the local client VM account; it is not passed to directory population. `Populate-AD.ps1` creates an independent random password for each new AD user and does not expose or retain it, so arrange a separate secure password-reset or delivery process for users.
 
 After the vault and secrets are recreated, update every `reference.keyVault.id` in the parameter file to the new vault's resource ID.
 

@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.5
+# Azure Multi-Region Lab (AMRL) v2.6
 
 AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, selectable network topologies, capacity-aware VM placement, and idempotent Active Directory automation.
 
@@ -76,6 +76,7 @@ See [Placement and Reconciliation](docs/placement-and-reconciliation.md) for the
 - v2.4.1 brownfield network reconciliation and reliable cross-spoke routing for spoke DCs and jumpboxes.
 - v2.4.2 identity reconciliation improvements and responsibility-based directory population functions.
 - v2.5 selectable hub-and-spoke firewall, hub-and-spoke peering-only, and full-mesh topology creation.
+- v2.6 OU-targeted Server and Client Administration GPO provisioning, Windows administrators group-reference reconciliation, and unique random passwords for newly created AD users.
 
 ## Network Topology
 
@@ -121,12 +122,14 @@ Replica DC promotion
         ->
 Directory population
         ->
+Group Policy provisioning
+        ->
 Windows and Linux domain join
         ->
 Departmental share provisioning (when enabled)
 ```
 
-The scripts inspect current state before applying changes. Existing forests, domain controllers, and domain memberships are retained. Missing or incomplete configuration is repaired where supported.
+The scripts inspect current state before applying changes. Existing forests, domain controllers, and domain memberships are retained. Missing or incomplete configuration is repaired where supported. Administration GPOs are imported from exported backups only when absent, so later template edits do not overwrite an existing GPO.
 
 See [Identity and Domain Join](docs/identity-and-domain-join.md) for Windows and Linux behavior, healing, troubleshooting, and Run Command inspection.
 
@@ -196,4 +199,4 @@ The next engineering step is automated discovery and reconciliation for existing
 
 ## Release
 
-**v2.5** adds selectable topology creation and brownfield firewall introduction; topology migration and resource retirement remain planned work.
+**v2.6 is complete.** It adds OU-targeted Server and Client Administration GPO provisioning, Windows administrators group-reference reconciliation, and unique random passwords for newly created AD users. Topology migration and resource retirement remain planned work.

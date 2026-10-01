@@ -140,10 +140,14 @@ param enableFileServices bool
 param useDedicatedFileServer bool
 
 var reconciliationToken = deployment().name
+var gpoNames = {
+  serverAdministration: 'Server Administration'
+  clientAdministration: 'Client Administration'
+}
 
 // ========================================
 // 1.1 STAGE FLAGS
-// Selects the completed deployment stages for this run.
+// Determines which deployment stages are active for this run.
 // ========================================
 
 var deployNetwork = stage == 'network' || stage == 'all'
@@ -666,6 +670,8 @@ module validationEngine 'modules/logic/validation.bicep' = {
     useDedicatedFileServer: useDedicatedFileServer
     enableFileServices: enableFileServices
     fileServerVmAvailable: length(fileServerVmList) > 0
+    domainName: domainName
+    gpoNames: gpoNames
   }
 }
 
@@ -779,6 +785,7 @@ module identityStage 'modules/stages/identity-stage.bicep' = {
     finalVmPlacements: finalVmPlacements
 
     domainName: domainName
+    gpoNames: gpoNames
 
     usersPerDepartment: usersPerDepartment
     departmentCount: departmentCount
@@ -790,8 +797,6 @@ module identityStage 'modules/stages/identity-stage.bicep' = {
 
     serverAdminUsername: serverAdminUsername
     serverAdminPassword: serverAdminPassword
-
-    clientAdminPassword: clientAdminPassword
   }
 }
 
