@@ -47,7 +47,7 @@ The `directoryModel` object in `modules/stages/identity-stage.bicep` is passed a
 - `groupOuMapping` — OUs for global security groups (`Groups/GGS`) and domain local security groups (`Groups/DLGS`).
 - `groupNaming` — configurable prefixes: `globalSecurityPrefix` (`GGS`) for user-facing department groups, `domainLocalSecurityPrefix` (`DLGS`) for share permission groups.
 - `platformAdminGroups` — names of the Windows/Linux platform admin groups and the department code they're sourced from.
-- `gpoNames` — display names of the administration GPOs. These must match the `DisplayName` inside the exported backups in `TemplateExports.zip`.
+- `gpoNames` — display names of the Server Administration, Client Administration, and Windows LAPS GPOs. Each must match the `DisplayName` inside an exported backup in `GpoTemplates.zip`.
 - `shares` — root share name/path (`C:\Shares`) and the current file server host (`fileServerName`).
 - `coreOuMapping` — references to the core `Users`/`Groups` OUs used by scripts.
 
@@ -66,6 +66,12 @@ The directory model is not parameterised; it represents a stable architectural d
 - **Department removal**: removing a department from `additionalDepartments` does not delete its OU or users; the OU becomes unmanaged rather than deleted.
 
 This reflects the non-destructive design: existing compliant objects are preserved, and only missing required objects are restored.
+
+## Windows LAPS Active Directory Configuration
+
+During directory population, `Ensure-LapsConfiguration` checks for the `ms-LAPS-Password` schema attribute and extends the AD schema with `Update-LapsADSchema` only when it is missing. It grants computer self-update permission separately on the Servers and Clients OUs, then grants the configured Windows administrators group (default `GGS_Windows_Admins`) permission to read LAPS passwords on both OUs.
+
+The linked Windows LAPS GPO supplies the policy side of this setup: it backs passwords up to Active Directory. After import (or when an existing GPO is found), `Import-GPO-Templates.ps1` reconciles its `ADPasswordEncryptionPrincipal` registry policy value to the live NetBIOS domain and the Windows administrators group derived from `directoryModel`. This keeps the GPO decryptor aligned with the AD read-permission group without re-importing the GPO. Other LAPS policy settings remain creation-time values from the backup; changing those still requires replacing the existing GPO or updating it separately.
 
 ## Departmental File Services
 
@@ -95,22 +101,28 @@ Windows workload VMs are targeted from `finalVmPlacements`. The PowerShell scrip
 
 After directory population, `modules/identity/ad-gpo.bicep` runs `Import-GPO-Templates.ps1` on the primary DC to create the administration GPOs from exported GPMC backups.
 
-The GPO names come from the directory model, so the scripts do not hardcode them:
+The three required GPO names come from the directory model, so the script does not hardcode them:
 
 ```text
 gpoNames.serverAdministration   ->  linked to OU=Servers,OU=Computers
 gpoNames.clientAdministration   ->  linked to OU=Clients,OU=Computers
+gpoNames.windowsLaps           ->  linked to OU=Servers,OU=Computers and OU=Clients,OU=Computers
 ```
 
-The backups ship as `modules/identity/templates/gpo/TemplateExports.zip`, embedded in the template with `loadFileAsBase64` and passed to the Run Command as a string parameter. The script writes the zip to the DC, expands it to `C:\Temp\TemplateExports`, and discards any previous extraction first.
+Windows LAPS is linked separately to the Servers and Clients OUs. The Windows administrators group-reference rewrite applies only to the two administration GPOs.
 
-The template validation engine reports flags for a malformed `domainName`, a missing or blank system-administration department code, a missing primary-DC target, and blank GPO names. These flags are diagnostic outputs and do not by themselves block deployment. On the DC, the script checks that the zip is present and decodable, that it expands to the expected folder, and that each requested GPO has a matching `Backup.xml` display name. It also checks for the target OUs and an existing `Groups.xml` with exactly one member entry before rewriting the Windows administrators reference. Run Command failures fail the deployment.
+The backups ship as `modules/identity/templates/gpo/GpoTemplates.zip`, embedded in the template with `loadFileAsBase64` and passed to the Run Command as a string parameter. The script writes the zip to `C:\Temp\GpoTemplates.zip` on the DC, expands it to `C:\Temp\GpoTemplates`, and removes any previous extraction first. The archive must contain a top-level `GpoTemplates` folder.
 
-Each run performs three steps per GPO:
+The template validation engine reports flags for a malformed `domainName`, a missing or blank system-administration department code, a missing primary-DC target, and missing or blank names for any of the three required GPOs. These flags are diagnostic outputs and do not by themselves block deployment. On the DC, the script checks that the zip is present and decodable, that it expands to the expected folder, and that each requested GPO has a matching `Backup.xml` display name. It also checks for the target OUs and an existing `Groups.xml` with exactly one member entry before rewriting the Windows administrators reference in the two administration GPOs. Run Command failures fail the deployment.
+
+For all three GPOs, each run performs these steps:
 
 1. **Import** — only when the GPO does not already exist. `Import-GPO` resolves the backup by the `DisplayName` recorded inside its `Backup.xml`, and `-Path` is the backup root containing the GUID folders.
-2. **Reconcile the group reference** — the `Groups.xml` preference is rewritten so the Windows administrators member matches this domain. Both the SID and the `NETBIOS\Group` name are derived from `groupNaming.globalSecurityPrefix`, `platformAdminGroups.windowsAdmins`, and the live domain NetBIOS name, because the exported template carries values from the domain it was captured in.
-3. **Link** — the GPO is linked to its target OU when no link exists.
+2. **Link** — the GPO is linked to its target OU when no link exists.
+
+For Server Administration and Client Administration only, the `Groups.xml` preference is also rewritten on every run so the Windows administrators member matches this domain. Its SID and `NETBIOS\Group` name are derived from `groupNaming.globalSecurityPrefix`, `platformAdminGroups.windowsAdmins`, and the live domain NetBIOS name because the exported template carries values from the domain it was captured in.
+
+For Windows LAPS, the `ADPasswordEncryptionPrincipal` registry policy setting is compared with the current `NETBIOS\<WindowsAdminsGroup>` value on each run and updated only when it differs. The setting is stored under the Windows LAPS Group Policy registry root; the GPO cmdlet updates the policy rather than editing the deployed GPO backup files directly.
 
 `treatFailureAsDeploymentFailure` is enabled on the Run Command, so a guest-script failure fails the deployment instead of reporting success.
 
@@ -118,7 +130,7 @@ Each run performs three steps per GPO:
 
 The zipped template is a creation-time seed, not a desired-state definition. Be aware of these boundaries:
 
-- **Template edits do not reach existing GPOs.** Import is skipped once the GPO exists, so updating `TemplateExports.zip` and redeploying leaves an already-created GPO unchanged. Remove the GPO, or change the name in `gpoNames`, to import a revised template. This preserves in-place policy edits, consistent with the wider reconciliation model.
+- **Template edits do not reach existing GPOs.** Import is skipped once the GPO exists, so updating `GpoTemplates.zip` and redeploying leaves its policy settings unchanged except for the runtime-reconciled Windows LAPS `ADPasswordEncryptionPrincipal` and the administration GPO `Groups.xml` references. Remove the GPO, or change the name in `gpoNames`, to import a revised template. This preserves in-place policy edits, consistent with the wider reconciliation model.
 - **GPO names are coupled to the backups.** `Import-GPO` looks the backup up by display name, so renaming `gpoNames` without re-exporting the backups breaks the import. Template validation reports blank names; at run time, the script fails fast when no backup carries a requested name.
 - **The group reference is rewritten in SYSVOL without a version increment.** Step 2 edits `Groups.xml` directly, so clients may not reprocess the preference until the GPO version changes. Only the Windows administrators member is reconciled; other preference content is left as exported.
 - **Re-running requires a new Run Command definition.** As with the other identity scripts, use a new deployment name so the Run Command is reapplied.

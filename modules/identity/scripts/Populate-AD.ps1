@@ -1516,6 +1516,90 @@ function Populate-DepartmentUsers {
     }
 }
 
+# Prepare AD for the Windows LAPS GPO: extend the schema if needed and grant the GPO's authorized decryptor read access on both workload OUs.
+function Ensure-LapsConfiguration {
+    param(
+        [object]$DirectoryModel
+    )
+
+    $windowsAdminsGroup = (
+        "$($DirectoryModel.groupNaming.globalSecurityPrefix)_" +
+        $DirectoryModel.platformAdminGroups.windowsAdmins
+    )
+
+    $lapsSchema = Get-ADObject `
+        -SearchBase (Get-ADRootDSE).SchemaNamingContext `
+        -LDAPFilter "(name=ms-LAPS-Password)" `
+        -ErrorAction SilentlyContinue
+
+    if (-not $lapsSchema) {
+
+        Write-Host (
+            "[+] Windows LAPS schema not detected. " +
+            "Extending schema."
+        )
+
+        Update-LapsADSchema -Confirm:$false
+    }
+    else {
+
+        Write-Host (
+            "[=] Windows LAPS schema already present."
+        )
+    }
+
+    $domain = Get-ADDomain
+
+    $serversOuDn = (
+        "OU=Servers," +
+        "OU=Computers," +
+        "OU=$($DirectoryModel.rootOuName)," +
+        $domain.DistinguishedName
+    )
+
+    $clientsOuDn = (
+        "OU=Clients," +
+        "OU=Computers," +
+        "OU=$($DirectoryModel.rootOuName)," +
+        $domain.DistinguishedName
+    )
+
+    $qualifiedWindowsAdmins = (
+        $domain.NetBIOSName +
+        "\" +
+        $windowsAdminsGroup
+    )
+
+    Write-Host (
+        "[+] Configuring Windows LAPS self permissions: " +
+        "Servers OU"
+    )
+
+    Set-LapsADComputerSelfPermission `
+        -Identity $serversOuDn
+
+    Write-Host (
+        "[+] Configuring Windows LAPS self permissions: " +
+        "Clients OU"
+    )
+
+    Set-LapsADComputerSelfPermission `
+        -Identity $clientsOuDn
+
+    Write-Host (
+        "[+] Configuring Windows LAPS read permissions: " +
+        $qualifiedWindowsAdmins
+    )
+
+    Set-LapsADReadPasswordPermission `
+        -Identity $serversOuDn `
+        -AllowedPrincipals $qualifiedWindowsAdmins
+
+    Set-LapsADReadPasswordPermission `
+        -Identity $clientsOuDn `
+        -AllowedPrincipals $qualifiedWindowsAdmins
+}
+
 # Execute directory population workflow.
 # The script is designed to be idempotent and
 # may be executed repeatedly. Existing objects
@@ -1603,6 +1687,9 @@ Ensure-DepartmentSecurityGroups `
     -RootOuDn $rootOUdn `
     -PopulationModel $model `
     -EnableFileServices $fileServicesEnabled
+
+Ensure-LapsConfiguration `
+    -DirectoryModel $model
 
 Ensure-DepartmentGroupNesting `
     -SelectedDepartments $departments `

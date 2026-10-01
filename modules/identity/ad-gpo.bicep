@@ -6,7 +6,7 @@ param directoryModel string
 
 param reconciliationToken string
 
-var gpoTemplatesZip = loadFileAsBase64('./templates/gpo/TemplateExports.zip')
+var gpoTemplatesZip = loadFileAsBase64('./templates/gpo/GpoTemplates.zip')
 
 var importGpoTemplateScript = loadTextContent('./scripts/Import-GPO-Templates.ps1')
 

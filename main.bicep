@@ -143,6 +143,7 @@ var reconciliationToken = deployment().name
 var gpoNames = {
   serverAdministration: 'Server Administration'
   clientAdministration: 'Client Administration'
+  windowsLaps: 'Windows LAPS'
 }
 
 // ========================================

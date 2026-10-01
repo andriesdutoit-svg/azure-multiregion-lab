@@ -7,7 +7,7 @@
 #              every run so the exported SID and NetBIOS name match this domain.
 #
 # Idempotency limitation: because import is skipped once the GPO exists,
-# editing TemplateExports.zip does NOT update an already-created GPO. Remove
+# editing GpoTemplates.zip does NOT update an already-created GPO. Remove
 # the GPO, or rename it via the directory model, to pick up template changes.
 
 param(
@@ -24,15 +24,15 @@ Write-Host "AMRL GPO Template Import"
 
 Import-Module GroupPolicy -ErrorAction Stop
 
-$templateRoot = 'C:\Temp\TemplateExports'
+$templateRoot = 'C:\Temp\GpoTemplates'
 
 $gpoTemplateRepositoryPath = $templateRoot
 
 $zipPath =
-    'C:\Temp\TemplateExports.zip'
+    'C:\Temp\GpoTemplates.zip'
 
 if ([string]::IsNullOrWhiteSpace($GpoTemplatesZip)) {
-    throw "GpoTemplatesZip is empty. Confirm templates/gpo/TemplateExports.zip exists and is committed."
+    throw "GpoTemplatesZip is empty. Confirm templates/gpo/GpoTemplates.zip exists and is committed."
 }
 
 # Run Command parameters are strings, so the zip crosses as base64.
@@ -55,21 +55,22 @@ Remove-Item `
 
 Expand-Archive `
     -LiteralPath $zipPath `
-    -DestinationPath 'C:\Temp' `
+    -DestinationPath 'C:\Temp\' `
     -Force `
     -ErrorAction Stop
 
-# Expand-Archive writes into C:\Temp, so the zip must contain a TemplateExports root folder.
+# Expand-Archive writes into C:\Temp\GpoTemplates, so the zip must contain a GpoTemplates root folder.
 if (-not (Test-Path -LiteralPath $templateRoot)) {
-    throw "Expanded archive does not contain the expected '$templateRoot' folder."
+    throw "Expanded archive does not contain the expected 'C:\Temp\GpoTemplates' folder."
 }
 
 $model = $DirectoryModel | ConvertFrom-Json
 
 if (-not $model.gpoNames -or
     [string]::IsNullOrWhiteSpace($model.gpoNames.serverAdministration) -or
-    [string]::IsNullOrWhiteSpace($model.gpoNames.clientAdministration)) {
-    throw "directoryModel.gpoNames must define serverAdministration and clientAdministration."
+    [string]::IsNullOrWhiteSpace($model.gpoNames.clientAdministration) -or
+    [string]::IsNullOrWhiteSpace($model.gpoNames.windowsLaps)) {
+    throw "directoryModel.gpoNames must define serverAdministration, clientAdministration, and windowsLaps."
 }
 
 $domainDn = (($DomainName -split '\.') | ForEach-Object {
@@ -88,6 +89,9 @@ $serverAdministrationGpoName =
 $clientAdministrationGpoName =
     $model.gpoNames.clientAdministration
 
+$windowsLapsGpoName =
+    $model.gpoNames.windowsLaps
+
 Write-Host "Template Root = $templateRoot"
 
 function Ensure-GpoLink {
@@ -103,7 +107,11 @@ function Ensure-GpoLink {
             -ErrorAction Stop
     }
     catch {
-        throw "Cannot link '$GpoName'. Target OU '$TargetDn' was not found; confirm directory population completed: $($_.Exception.Message)"
+        throw (
+            "Cannot link '$GpoName'. Target OU '$TargetDn' " +
+            "was not found; confirm directory population completed: " +
+            "$($_.Exception.Message)"
+        )
     }
 
     $existingLink = $inheritance.GpoLinks |
@@ -119,6 +127,16 @@ function Ensure-GpoLink {
             Out-Null
 
         Write-Host "[Link] $GpoName"
+    }
+    elseif ($existingLink.Enabled -ne 'Yes') {
+
+        Set-GPLink `
+            -Name $GpoName `
+            -Target $TargetDn `
+            -LinkEnabled Yes `
+            -ErrorAction Stop
+
+        Write-Host "[Enable] Link $GpoName"
     }
     else {
 
@@ -274,28 +292,104 @@ function Update-GpoGroupReference {
         throw "Expected a single Member entry in '$groupsXmlPath' for '$GpoName', found $(@($member).Count)."
     }
 
-    $member.sid =
-        $currentSid
-
-    $member.name =
+    $desiredName =
         "$netbiosDomainName\$windowsAdminsGroupName"
 
-    $xml.Groups.Group.changed =
-        (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    $needsUpdate =
+        ($member.sid -ne $currentSid) -or
+        ($member.name -ne $desiredName)
 
-    $xml.Save($groupsXmlPath)
+    if ($needsUpdate) {
 
-    Write-Host (
-        "[Reference Updated] $GpoName"
+        $member.sid =
+            $currentSid
+
+        $member.name =
+            $desiredName
+
+        $xml.Groups.Group.changed =
+            (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+
+        $xml.Save($groupsXmlPath)
+
+        Write-Host (
+            "[Reference Updated] $GpoName"
+        )
+
+        Write-Host (
+            "Name = $($member.name)"
+        )
+
+        Write-Host (
+            "SID  = $currentSid"
+        )
+    }
+    else {
+
+        Write-Host (
+            "[Reference Verified] $GpoName"
+        )
+
+        Write-Host (
+            "Name = $desiredName"
+        )
+
+        Write-Host (
+            "SID  = $currentSid"
+        )
+    }
+}
+
+# Keep the LAPS GPO's AD password decryptor aligned with the live domain and directory model.
+function Update-LapsGpoDecryptor {
+    param(
+        [string]$GpoName,
+        [object]$DirectoryModel
     )
 
-    Write-Host (
-        "Name = $($member.name)"
+    $gpo = Get-GPO `
+        -Name $GpoName `
+        -ErrorAction Stop
+
+    $domain = Get-ADDomain -ErrorAction Stop
+
+    $windowsAdminsGroupName = (
+        "$($DirectoryModel.groupNaming.globalSecurityPrefix)_" +
+        $DirectoryModel.platformAdminGroups.windowsAdmins
     )
 
-    Write-Host (
-        "SID  = $currentSid"
+    $windowsAdminsGroup = Get-ADGroup `
+        -Identity $windowsAdminsGroupName `
+        -ErrorAction Stop
+
+    $expectedDecryptor = (
+        $domain.NetBIOSName + "\" + $windowsAdminsGroup.SamAccountName
     )
+
+    $lapsPolicyKey = 'HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\LAPS'
+    $decryptorValueName = 'ADPasswordEncryptionPrincipal'
+
+    $currentSetting = Get-GPRegistryValue `
+        -Guid $gpo.Id `
+        -Key $lapsPolicyKey `
+        -ValueName $decryptorValueName `
+        -ErrorAction SilentlyContinue
+
+    if ($null -ne $currentSetting -and $currentSetting.Value -eq $expectedDecryptor) {
+        Write-Host "[=] LAPS authorized decryptor is current: $expectedDecryptor"
+        return
+    }
+
+    Set-GPRegistryValue `
+        -Guid $gpo.Id `
+        -Key $lapsPolicyKey `
+        -ValueName $decryptorValueName `
+        -Type String `
+        -Value $expectedDecryptor `
+        -ErrorAction Stop |
+        Out-Null
+
+    Write-Host "[Reconciled] LAPS authorized decryptor: $expectedDecryptor"
 }
 
 Ensure-GpoFromTemplate `
@@ -312,12 +406,28 @@ Ensure-GpoFromTemplate `
 Update-GpoGroupReference `
     -GpoName $clientAdministrationGpoName
 
+Ensure-GpoFromTemplate `
+    -GpoName $windowsLapsGpoName `
+    -TemplatePath $gpoTemplateRepositoryPath
+
+Update-LapsGpoDecryptor `
+    -GpoName $windowsLapsGpoName `
+    -DirectoryModel $model
+
 Ensure-GpoLink `
     -GpoName $serverAdministrationGpoName `
     -TargetDn $serversOuDn
 
 Ensure-GpoLink `
     -GpoName $clientAdministrationGpoName `
+    -TargetDn $clientsOuDn
+
+Ensure-GpoLink `
+    -GpoName $windowsLapsGpoName `
+    -TargetDn $serversOuDn
+
+Ensure-GpoLink `
+    -GpoName $windowsLapsGpoName `
     -TargetDn $clientsOuDn
 
 Write-Host "AMRL GPO Template Import Completed"
