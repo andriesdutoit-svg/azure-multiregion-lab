@@ -7,6 +7,7 @@ targetScope = 'subscription'
 // - AD Forest deployment
 // - Replica DC deployment
 // - AD population
+// - Group Policy provisioning
 // - Windows domain join
 // - Linux domain join
 // - File services
@@ -30,6 +31,7 @@ targetScope = 'subscription'
 // adForest
 // replicaDcs
 // adPopulate
+// adGpo
 //
 // domainJoinWindows
 // domainJoinLinux
@@ -61,6 +63,7 @@ targetScope = 'subscription'
 // fileServerName
 //
 // domainName
+// gpoNames
 //
 // usersPerDepartment
 // departmentCount
@@ -72,8 +75,6 @@ targetScope = 'subscription'
 //
 // serverAdminUsername
 // serverAdminPassword
-//
-// clientAdminPassword
 //
 // reconciliationToken
 
@@ -117,6 +118,8 @@ param finalVmPlacements array
 
 param domainName string
 
+param gpoNames object
+
 param usersPerDepartment int
 
 param departmentCount int
@@ -135,9 +138,6 @@ param serverAdminUsername string
 
 @secure()
 param serverAdminPassword string
-
-@secure()
-param clientAdminPassword string
 
 // Directory shape passed (as a JSON string) to every identity Run Command script.
 // It centralizes OU paths, group naming, and admin group names so scripts never hardcode AD structure.
@@ -181,8 +181,8 @@ var directoryModel = {
   }
 
   gpoNames: {
-    serverAdministration: 'Server Administration'
-    clientAdministration: 'Client Administration'
+    serverAdministration: gpoNames.serverAdministration
+    clientAdministration: gpoNames.clientAdministration
   }
 
 
@@ -253,7 +253,6 @@ module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
     usersPerDepartment: usersPerDepartment
     sysAdminDepartment: sysAdminDepartment
     additionalDepartments: additionalDepartments
-    clientAdminPassword: clientAdminPassword
     departmentCount: departmentCount
     directoryModel: string(directoryModel)
     enableFileServices: enableFileServices

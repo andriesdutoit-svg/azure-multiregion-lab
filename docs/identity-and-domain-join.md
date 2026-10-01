@@ -61,6 +61,7 @@ The directory model is not parameterised; it represents a stable architectural d
 - **Reporting lines**: unmanaged users are assigned to their department's manager; users with invalid or cross-department reporting lines are reassigned.
 - **User targets**: `usersPerDepartment` is enforced as a minimum for standard users (managers counted separately). Under-populated departments are topped up; over-populated departments are left as-is.
 - **New user addition**: added round-robin across departments that still need users; username collisions are skipped, and population stops with a warning when unique CSV names are exhausted.
+- **New account passwords**: each newly created manager or standard AD user receives an independent 24-character password generated with a cryptographic random-number generator. Existing users' passwords are not reset. Generated passwords are not written to Run Command output or retained for retrieval, so user onboarding needs a separate secure password-reset or delivery process.
 - **Platform administrator groups**: Windows and Linux administrator groups are reconciled to the configured `platformAdminGroups.sourceDepartmentCode`; memberships from a previous source department are removed when the configuration changes.
 - **Department removal**: removing a department from `additionalDepartments` does not delete its OU or users; the OU becomes unmanaged rather than deleted.
 
@@ -103,6 +104,8 @@ gpoNames.clientAdministration   ->  linked to OU=Clients,OU=Computers
 
 The backups ship as `modules/identity/templates/gpo/TemplateExports.zip`, embedded in the template with `loadFileAsBase64` and passed to the Run Command as a string parameter. The script writes the zip to the DC, expands it to `C:\Temp\TemplateExports`, and discards any previous extraction first.
 
+The template validation engine reports flags for a malformed `domainName`, a missing or blank system-administration department code, a missing primary-DC target, and blank GPO names. These flags are diagnostic outputs and do not by themselves block deployment. On the DC, the script checks that the zip is present and decodable, that it expands to the expected folder, and that each requested GPO has a matching `Backup.xml` display name. It also checks for the target OUs and an existing `Groups.xml` with exactly one member entry before rewriting the Windows administrators reference. Run Command failures fail the deployment.
+
 Each run performs three steps per GPO:
 
 1. **Import** — only when the GPO does not already exist. `Import-GPO` resolves the backup by the `DisplayName` recorded inside its `Backup.xml`, and `-Path` is the backup root containing the GUID folders.
@@ -116,7 +119,7 @@ Each run performs three steps per GPO:
 The zipped template is a creation-time seed, not a desired-state definition. Be aware of these boundaries:
 
 - **Template edits do not reach existing GPOs.** Import is skipped once the GPO exists, so updating `TemplateExports.zip` and redeploying leaves an already-created GPO unchanged. Remove the GPO, or change the name in `gpoNames`, to import a revised template. This preserves in-place policy edits, consistent with the wider reconciliation model.
-- **GPO names are coupled to the backups.** `Import-GPO` looks the backup up by display name, so renaming `gpoNames` without re-exporting the backups breaks the import. The script fails fast with an explicit message when no backup carries the requested name.
+- **GPO names are coupled to the backups.** `Import-GPO` looks the backup up by display name, so renaming `gpoNames` without re-exporting the backups breaks the import. Template validation reports blank names; at run time, the script fails fast when no backup carries a requested name.
 - **The group reference is rewritten in SYSVOL without a version increment.** Step 2 edits `Groups.xml` directly, so clients may not reprocess the preference until the GPO version changes. Only the Windows administrators member is reconciled; other preference content is left as exported.
 - **Re-running requires a new Run Command definition.** As with the other identity scripts, use a new deployment name so the Run Command is reapplied.
 

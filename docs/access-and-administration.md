@@ -141,6 +141,8 @@ az keyvault secret set --vault-name <key-vault-name> --name serverAdminPassword 
 az keyvault secret set --vault-name <key-vault-name> --name clientAdminPassword --value "<password>"
 ```
 
+These Key Vault passwords remain deployment credentials, not passwords for generated AD users. In particular, `clientAdminPassword` remains wired through the compute stage to initialize the local client VM account; it is not passed to directory population. `Populate-AD.ps1` creates an independent random password for each new AD user and does not expose or retain it, so arrange a separate secure password-reset or delivery process for users.
+
 After the vault and secrets are recreated, update every `reference.keyVault.id` in the parameter file to the new vault's resource ID.
 
 [Back to README](../README.md)

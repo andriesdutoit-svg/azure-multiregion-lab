@@ -64,10 +64,6 @@ if (-not (Test-Path -LiteralPath $templateRoot)) {
     throw "Expanded archive does not contain the expected '$templateRoot' folder."
 }
 
-if (-not (Get-ChildItem -LiteralPath $templateRoot -Filter 'Backup.xml' -File -Recurse -ErrorAction SilentlyContinue)) {
-    throw "No GPO backups were found under '$templateRoot'. The zip must hold exported GPMC backup folders."
-}
-
 $model = $DirectoryModel | ConvertFrom-Json
 
 if (-not $model.gpoNames -or
@@ -91,8 +87,6 @@ $serverAdministrationGpoName =
 
 $clientAdministrationGpoName =
     $model.gpoNames.clientAdministration
-
-$gpoTemplateRepositoryPath = $templateRoot
 
 Write-Host "Template Root = $templateRoot"
 
@@ -155,14 +149,8 @@ function Ensure-GpoFromTemplate {
         )
 
         Write-Host (
-            "[Validate] Template path exists: $TemplatePath"
+            "[Import] Template path exists: $TemplatePath"
         )
-
-        Get-ChildItem `
-            $TemplatePath `
-            -Recurse |
-            Select-Object FullName |
-            Out-Host
 
         # Import-GPO matches a backup by the DisplayName recorded inside its
         # Backup.xml, so the directory model's gpoNames must equal the exported
@@ -273,25 +261,6 @@ function Update-GpoGroupReference {
             $groupsXmlPath `
             -Raw
 
-    $members =
-        @($xml.Groups.Group.Properties.Members.Member)
-
-    foreach ($existingMember in $members) {
-
-        if (
-            $existingMember.name -eq "$netbiosDomainName\$windowsAdminsGroupName" -and
-            $existingMember.sid -ne $currentSid
-        ) {
-
-            $existingMember.ParentNode.RemoveChild($existingMember) |
-                Out-Null
-
-            Write-Host (
-                "[Removed Stale Reference] SID = $($existingMember.sid)"
-            )
-        }
-    }
-
     $member =
         $xml.Groups.Group.Properties.Members.Member
 
@@ -312,7 +281,7 @@ function Update-GpoGroupReference {
         "$netbiosDomainName\$windowsAdminsGroupName"
 
     $xml.Groups.Group.changed =
-    (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
 
     $xml.Save($groupsXmlPath)
 
@@ -350,12 +319,5 @@ Ensure-GpoLink `
 Ensure-GpoLink `
     -GpoName $clientAdministrationGpoName `
     -TargetDn $clientsOuDn
-
-Get-ChildItem `
-    $templateRoot `
-    -Recurse |
-    Select-Object FullName |
-    Out-File `
-        "$templateRoot\TemplateInventory.txt"
 
 Write-Host "AMRL GPO Template Import Completed"

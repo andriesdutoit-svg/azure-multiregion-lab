@@ -16,8 +16,6 @@ param usersPerDepartment int
 param sysAdminDepartment object
 param additionalDepartments object
 param departmentCount int
-@secure()
-param clientAdminPassword string
 param directoryModel string
 param enableFileServices bool
 
@@ -70,10 +68,6 @@ resource populateDirectory 'Microsoft.Compute/virtualMachines/runCommands@2023-0
       {
         name: 'NamesCsvContent'
         value: namesCsvContent
-      }
-      {
-        name: 'ClientAdminPassword'
-        value: clientAdminPassword
       }
       {
         name: 'SysAdminDepartmentJson'

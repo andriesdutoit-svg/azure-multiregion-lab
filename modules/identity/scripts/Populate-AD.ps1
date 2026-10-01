@@ -18,10 +18,6 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
-    [string]$ClientAdminPassword,
-
-    [Parameter(Mandatory = $true)]
-    [ValidateNotNullOrEmpty()]
     [string]$SysAdminDepartmentJson,
 
     [Parameter(Mandatory = $true)]
@@ -245,6 +241,29 @@ function Ensure-ADPrincipalGroupMembership {
 
 # User management: create missing users and reconcile selected attributes.
 
+# Generate an independent password for each newly created account.
+function New-RandomPassword {
+    param(
+        [int]$Length = 24
+    )
+
+    $upper   = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+    $lower   = 'abcdefghijkmnopqrstuvwxyz'
+    $numbers = '23456789'
+    $special = '!@#$%^&*_-+=?'
+
+    $allChars = ($upper + $lower + $numbers + $special).ToCharArray()
+
+    $bytes = New-Object byte[] ($Length)
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+
+    $passwordChars = for ($i = 0; $i -lt $Length; $i++) {
+        $allChars[$bytes[$i] % $allChars.Length]
+    }
+
+    -join $passwordChars
+}
+
 function Ensure-ADUser {
     param(
         [string]$SamAccountName,
@@ -255,7 +274,6 @@ function Ensure-ADUser {
         [string]$UserPrincipalName,
         [string]$Department,
         [string]$Title,
-        [SecureString]$Password,
         [string]$Manager
     )
     
@@ -309,6 +327,13 @@ if ($existingUser) {
 
 Write-Host "[+] Creating User: $SamAccountName"
 
+$generatedPassword = New-RandomPassword
+
+$securePassword = ConvertTo-SecureString `
+    $generatedPassword `
+    -AsPlainText `
+    -Force
+
     $params = @{
         Name                  = $DisplayName
         DisplayName           = $DisplayName
@@ -318,7 +343,7 @@ Write-Host "[+] Creating User: $SamAccountName"
         UserPrincipalName     = $UserPrincipalName
         EmailAddress          = $UserPrincipalName
         Path                  = $Path
-        AccountPassword       = $Password
+        AccountPassword       = $securePassword
         ChangePasswordAtLogon = $false
         PasswordNeverExpires  = $true
         Enabled               = $true
@@ -770,7 +795,6 @@ function Reconcile-DepartmentManagers {
         [object[]]$SelectedDepartments,
         [object]$UsersOu,
         [System.Collections.ArrayList]$CsvNames,
-        [SecureString]$Password,
         [string]$DomainName,
         [object]$PopulationModel
     )
@@ -992,7 +1016,6 @@ if ($existingDepartmentManagers.Count -eq 0) {
         -UserPrincipalName $managerUpn `
         -Department $department.Name `
         -Title "$($department.Name) Manager" `
-        -Password $Password `
         -Manager ""
 
     Ensure-ADPrincipalGroupMembership `
@@ -1304,7 +1327,6 @@ function Populate-DepartmentUsers {
         [hashtable]$DepartmentTargets,
         [System.Collections.ArrayList]$CsvNames,
         [object]$ConnectedDomain,
-        [SecureString]$Password,
         [object]$PopulationModel
     )
 
@@ -1441,7 +1463,6 @@ function Populate-DepartmentUsers {
                 -Surname $userRecord.LastName `
                 -UserPrincipalName $userUpn `
                 -Department $department.Name `
-                -Password $Password `
                 -Manager $managerDn
 
             $existingSamAccounts.Add($userSam) | Out-Null
@@ -1590,21 +1611,8 @@ Ensure-DepartmentGroupNesting `
 
 Write-Host "[i] User generation starting"
 
-# Password is supplied through Azure Run Command
-# protected parameters and arrives as plaintext.
-# Conversion to SecureString must occur locally.
-
-$password = ConvertTo-SecureString `
-    $ClientAdminPassword `
-    -AsPlainText `
-    -Force
-
 if ([string]::IsNullOrWhiteSpace($NamesCsvContent)) {
     throw "NamesCsvContent parameter is empty."
-}
-
-if ([string]::IsNullOrWhiteSpace($ClientAdminPassword)) {
-    throw "ClientAdminPassword parameter is empty."
 }
 
 $requiredUsers =
@@ -1623,7 +1631,6 @@ $departmentInfo = Reconcile-DepartmentManagers `
     -SelectedDepartments $departments `
     -UsersOu $usersOU `
     -CsvNames $CSVNames `
-    -Password $password `
     -DomainName $DomainName `
     -PopulationModel $model
 
@@ -1639,7 +1646,6 @@ Populate-DepartmentUsers `
     -DepartmentTargets $departmentTargets `
     -CsvNames $CSVNames `
     -ConnectedDomain $currentDomain `
-    -Password $password `
     -PopulationModel $model
 
 Write-Host "[i] Directory population completed"

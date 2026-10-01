@@ -22,6 +22,7 @@
 - **v2.4.1**: Brownfield networking and cross-spoke routing fixes.
 - **v2.4.2**: Identity reconciliation and directory population cleanup.
 - **v2.5**: Selectable `hubSpokeFirewall`, `hubSpoke`, and `fullMesh` topology creation; brownfield firewall introduction through `AzureFirewallSubnet` reconciliation; and documented non-transitive hub-spoke peering behavior.
+- **v2.6 (complete)**: Server and client administration GPO import, OU linking, and Windows administrators group-reference reconciliation; independently generated random passwords for newly created AD users.
 
 ## Learning Outcomes Demonstrated
 
