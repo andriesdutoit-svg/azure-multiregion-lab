@@ -134,9 +134,11 @@ identity: {
 | Stage | Behavior |
 |---|---|
 | `network` | Creates or reuses regional networking and peerings. |
-| `compute` | Creates missing DCs, jumpboxes, and workload VMs. |
+| `compute` | Creates missing DCs, jumpboxes, and workload VMs. All target VNets and role subnets must already exist; this stage does not create or repair networking. |
 | `identity` | Runs AD bootstrap, replica promotion, directory population, domain join automation, and optional departmental file-service provisioning. It may also create missing workload VMs needed by the identity flow. Existing control-plane DCs are required. |
 | `all` | Runs the complete workflow. |
+
+For a compute-only deployment, first ensure the project-managed VNet and required role subnets exist in every target region. When adding a region or missing networking, run `stage=network` before `stage=compute`, or use `stage=all` to run the complete workflow.
 
 Typical staged order:
 

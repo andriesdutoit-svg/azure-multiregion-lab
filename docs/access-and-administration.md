@@ -68,6 +68,37 @@ After domain join, Windows and Linux systems can use AD credentials. Linux uses 
 /etc/sudoers.d/linux-admins
 ```
 
+### Windows LAPS Break-Glass Access
+
+Windows LAPS rotates local administrator passwords on domain-joined Windows servers and clients. Members of `GGS_Windows_Admins` can retrieve a managed password when recovery access is needed; use normal domain accounts for routine administration.
+
+From a Windows administration host with the LAPS PowerShell module, retrieve a password record:
+
+```powershell
+$laps = Get-LapsADPassword -Identity 'A14-srvwin01'
+```
+
+To display the password as clear text:
+
+```powershell
+[System.Net.NetworkCredential]::new('', $laps.Password).Password
+```
+
+Treat the displayed password as a secret; do not put it in scripts, transcripts, tickets, or chat. To request immediate password processing, run this on the target Windows machine as an administrator:
+
+```powershell
+Invoke-LapsPolicyProcessing
+```
+
+Check retrieval status and the authorized decryptor with:
+
+```powershell
+Get-LapsADPassword -Identity 'A14-srvwin01' |
+  Format-List DecryptionStatus,AuthorizedDecryptor
+```
+
+For the default lab configuration, expect `DecryptionStatus: Success` and `AuthorizedDecryptor: AMRL\GGS_Windows_Admins`. If the NetBIOS domain or directory-model group names change, the expected decryptor changes accordingly.
+
 ## Key Vault Setup
 
 Parameter files reference admin passwords and SSH keys from Key Vault via `reference.keyVault.id` (see `main.parameters.*.json`). Run this once per subscription (for example, after moving the lab to a new subscription) to recreate the vault referenced by those parameter files.

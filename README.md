@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.6
+# Azure Multi-Region Lab (AMRL) v2.7
 
 AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, selectable network topologies, capacity-aware VM placement, and idempotent Active Directory automation.
 
@@ -77,6 +77,7 @@ See [Placement and Reconciliation](docs/placement-and-reconciliation.md) for the
 - v2.4.2 identity reconciliation improvements and responsibility-based directory population functions.
 - v2.5 selectable hub-and-spoke firewall, hub-and-spoke peering-only, and full-mesh topology creation.
 - v2.6 OU-targeted Server and Client Administration GPO provisioning, Windows administrators group-reference reconciliation, and unique random passwords for newly created AD users.
+- v2.7 AD-group-based Windows and Linux endpoint administration with selected GPO, SSSD, realm-login, home-directory, and sudoers reconciliation.
 
 ## Network Topology
 
@@ -199,4 +200,4 @@ The next engineering step is automated discovery and reconciliation for existing
 
 ## Release
 
-**v2.6 is complete.** It adds OU-targeted Server and Client Administration GPO provisioning, Windows administrators group-reference reconciliation, and unique random passwords for newly created AD users. Topology migration and resource retirement remain planned work.
+**v2.7 is complete.** It extends AD-group-based administration across Windows and Linux endpoints and reconciles selected endpoint settings during identity-stage reruns. A brownfield `stage=identity` drift-repair run completed successfully. Linux realm login remains permissive for domain users; `GGS_Linux_Admins` restricts sudo, not login. Full topology migration and resource retirement remain planned work.

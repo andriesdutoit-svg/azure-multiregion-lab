@@ -339,7 +339,7 @@ var hasEmptySysAdminDepartmentCode = enableIdentity && (empty(items(sysAdminDepa
 
 // Group Policy is provisioned on the primary DC, so a missing primary DC pin also breaks GPO import.
 var hasNoGpoTargetDc = enableIdentity && missingPinnedDc
-var hasInvalidGpoNames = enableIdentity && (empty(gpoNames.?serverAdministration) || empty(gpoNames.?clientAdministration))
+var hasInvalidGpoNames = enableIdentity && (empty(gpoNames.?serverAdministration) || empty(gpoNames.?clientAdministration) || empty(gpoNames.?windowsLaps))
 
 // ========================================
 // VALIDATION FLAG MODEL
@@ -501,7 +501,7 @@ var msg41 = hasNoGpoTargetDc
   ? 'Group Policy provisioning runs on the primary domain controller, which is not placed in the primary region. Correct dc01 placement or set enableIdentity to false.'
   : ''
 var msg42 = hasInvalidGpoNames
-  ? 'GPO names must define non-empty serverAdministration and clientAdministration values so the import script can match the exported backups.'
+  ? 'GPO names must define non-empty serverAdministration, clientAdministration, and windowsLaps values so the import script can match the exported backups.'
   : ''
 
 var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : msg23 != '' ? msg23 : msg24 != '' ? msg24 : msg25 != '' ? msg25 : msg26 != '' ? msg26 : msg27 != '' ? msg27 : msg28 != '' ? msg28 : msg29 != '' ? msg29 : msg30 != '' ? msg30 : msg31 != '' ? msg31 : msg32 != '' ? msg32 : msg33 != '' ? msg33 : msg34 != '' ? msg34 : msg35 != '' ? msg35 : msg36 != '' ? msg36 : msg37 != '' ? msg37 : msg38 != '' ? msg38 : msg39 != '' ? msg39 : msg40 != '' ? msg40 : msg41 != '' ? msg41 : msg42 != '' ? msg42 : 'All validation checks passed.'

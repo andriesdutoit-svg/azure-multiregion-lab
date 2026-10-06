@@ -1516,6 +1516,144 @@ function Populate-DepartmentUsers {
     }
 }
 
+# Prepare AD for the Windows LAPS GPO: extend the schema if needed and grant the GPO's authorized decryptor read access on both workload OUs.
+function Ensure-LapsConfiguration {
+    param(
+        [object]$DirectoryModel
+    )
+
+    $windowsAdminsGroup = (
+        "$($DirectoryModel.groupNaming.globalSecurityPrefix)_" +
+        $DirectoryModel.platformAdminGroups.windowsAdmins
+    )
+
+    $lapsSchema = Get-ADObject `
+        -SearchBase (Get-ADRootDSE).SchemaNamingContext `
+        -LDAPFilter "(name=ms-LAPS-Password)" `
+        -ErrorAction SilentlyContinue
+
+    if (-not $lapsSchema) {
+
+        Write-Host (
+            "[+] Windows LAPS schema not detected. " +
+            "Extending schema."
+        )
+
+        Update-LapsADSchema -Confirm:$false
+    }
+    else {
+
+        Write-Host (
+            "[=] Windows LAPS schema already present."
+        )
+    }
+
+    $domain = Get-ADDomain
+
+    $serversOuDn = (
+        "OU=Servers," +
+        "OU=Computers," +
+        "OU=$($DirectoryModel.rootOuName)," +
+        $domain.DistinguishedName
+    )
+
+    $clientsOuDn = (
+        "OU=Clients," +
+        "OU=Computers," +
+        "OU=$($DirectoryModel.rootOuName)," +
+        $domain.DistinguishedName
+    )
+
+    $qualifiedWindowsAdmins = (
+        $domain.NetBIOSName +
+        "\" +
+        $windowsAdminsGroup
+    )
+
+    Write-Host (
+        "[+] Configuring Windows LAPS self permissions: " +
+        "Servers OU"
+    )
+
+    try {
+
+        Set-LapsADComputerSelfPermission `
+            -Identity $serversOuDn
+
+    }
+    catch {
+
+        throw (
+            "Failed to configure Windows LAPS self permissions " +
+            "for Servers OU '$serversOuDn': " +
+            "$($_.Exception.Message)"
+        )
+
+    }
+
+    Write-Host (
+        "[+] Configuring Windows LAPS self permissions: " +
+        "Clients OU"
+    )
+
+    try {
+
+        Set-LapsADComputerSelfPermission `
+            -Identity $clientsOuDn
+
+    }
+    catch {
+
+        throw (
+            "Failed to configure Windows LAPS self permissions " +
+            "for Clients OU '$clientsOuDn': " +
+            "$($_.Exception.Message)"
+        )
+
+    }
+
+    Write-Host (
+        "[+] Configuring Windows LAPS read permissions: " +
+        $qualifiedWindowsAdmins
+    )
+
+    try {
+
+        Set-LapsADReadPasswordPermission `
+            -Identity $serversOuDn `
+            -AllowedPrincipals $qualifiedWindowsAdmins
+
+    }
+    catch {
+
+        throw (
+            "Failed to configure Windows LAPS read permissions " +
+            "for Servers OU '$serversOuDn' and principal " +
+            "'$qualifiedWindowsAdmins': " +
+            "$($_.Exception.Message)"
+        )
+
+    }
+
+    try {
+
+        Set-LapsADReadPasswordPermission `
+            -Identity $clientsOuDn `
+            -AllowedPrincipals $qualifiedWindowsAdmins
+
+    }
+    catch {
+
+        throw (
+            "Failed to configure Windows LAPS read permissions " +
+            "for Clients OU '$clientsOuDn' and principal " +
+            "'$qualifiedWindowsAdmins': " +
+            "$($_.Exception.Message)"
+        )
+
+    }
+}
+
 # Execute directory population workflow.
 # The script is designed to be idempotent and
 # may be executed repeatedly. Existing objects
@@ -1604,6 +1742,9 @@ Ensure-DepartmentSecurityGroups `
     -PopulationModel $model `
     -EnableFileServices $fileServicesEnabled
 
+Ensure-LapsConfiguration `
+    -DirectoryModel $model
+
 Ensure-DepartmentGroupNesting `
     -SelectedDepartments $departments `
     -PopulationModel $model `
@@ -1647,6 +1788,15 @@ Populate-DepartmentUsers `
     -CsvNames $CSVNames `
     -ConnectedDomain $currentDomain `
     -PopulationModel $model
+
+Remove-Item `
+    $usersCsvPath `
+    -Force `
+    -ErrorAction SilentlyContinue
+
+Write-Host (
+    "[Cleanup] Removed temporary names.csv"
+)
 
 Write-Host "[i] Directory population completed"
 

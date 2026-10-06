@@ -183,6 +183,7 @@ var directoryModel = {
   gpoNames: {
     serverAdministration: gpoNames.serverAdministration
     clientAdministration: gpoNames.clientAdministration
+    windowsLaps: gpoNames.windowsLaps
   }
 
 
