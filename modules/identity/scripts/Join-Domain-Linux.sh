@@ -299,10 +299,8 @@ log_info "Dynamic DNS update triggered"
 
 log_info "Configuring automatic home directory creation"
 
-DESIRED_MKHOMEDIR_ENTRY="session       optional                        pam_mkhomedir.so umask=0027"
-
 # Enable automatic home creation only if the required PAM session entry is absent, then verify it.
-if grep -Fq "${DESIRED_MKHOMEDIR_ENTRY}" /etc/pam.d/common-session; then
+if grep -q "pam_mkhomedir.so" /etc/pam.d/common-session; then
 
     log_info "[Verified] Automatic home directory creation"
 
@@ -310,7 +308,7 @@ else
 
     pam-auth-update --enable mkhomedir
 
-    if grep -Fq "${DESIRED_MKHOMEDIR_ENTRY}" /etc/pam.d/common-session; then
+    if grep -q "pam_mkhomedir.so" /etc/pam.d/common-session; then
 
         log_info "[Updated] Automatic home directory creation"
 
@@ -369,31 +367,46 @@ DESIRED_SUDOERS_CONTENT="%${LINUX_ADMINS_GROUP}@${DOMAIN_NAME} ALL=(ALL:ALL) ALL
 # Replace sudoers only when its desired rule differs; validate the file before accepting the change.
 CURRENT_SUDOERS_CONTENT=""
 
+CURRENT_SUDOERS_PERMS=""
+
+if [[ -f "${SUDOERS_PATH}" ]]; then
+
+    CURRENT_SUDOERS_PERMS=$(stat -c '%a' "${SUDOERS_PATH}")
+
+fi
+
 if [[ -f "${SUDOERS_PATH}" ]]; then
 
     CURRENT_SUDOERS_CONTENT=$(cat "${SUDOERS_PATH}")
 
 fi
 
-if [[ "${CURRENT_SUDOERS_CONTENT}" == "${DESIRED_SUDOERS_CONTENT}" ]]; then
+if [[ "${CURRENT_SUDOERS_CONTENT}" == "${DESIRED_SUDOERS_CONTENT}" ]] &&
+   [[ "${CURRENT_SUDOERS_PERMS}" == "440" ]]; then
 
     log_info "[Verified] Linux administrator sudo policy"
 
 else
 
-    cat >"${SUDOERS_PATH}" <<EOF
+    TEMP_SUDOERS=$(mktemp)
+
+    cat >"${TEMP_SUDOERS}" <<EOF
 ${DESIRED_SUDOERS_CONTENT}
 EOF
 
-    chmod 440 "${SUDOERS_PATH}"
+    chmod 440 "${TEMP_SUDOERS}"
 
-    if visudo -cf "${SUDOERS_PATH}"; then
+    if visudo -cf "${TEMP_SUDOERS}"; then
+
+        mv "${TEMP_SUDOERS}" "${SUDOERS_PATH}"
 
         log_info "[Updated] Linux administrator sudo policy"
 
     else
 
-        log_warn "Invalid sudoers configuration detected"
+        rm -f "${TEMP_SUDOERS}"
+
+        log_error "Invalid sudoers configuration detected"
         exit 1
 
     fi

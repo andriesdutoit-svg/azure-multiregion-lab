@@ -115,10 +115,7 @@ The backups ship as `modules/identity/templates/gpo/GpoTemplates.zip`, embedded 
 
 The template validation engine reports flags for a malformed `domainName`, a missing or blank system-administration department code, a missing primary-DC target, and missing or blank names for any of the three required GPOs. These flags are diagnostic outputs and do not by themselves block deployment. On the DC, the script checks that the zip is present and decodable, that it expands to the expected folder, and that each requested GPO has a matching `Backup.xml` display name. It also checks for the target OUs and an existing `Groups.xml` with exactly one member entry before rewriting the Windows administrators reference in the two administration GPOs. Run Command failures fail the deployment.
 
-For all three GPOs, each run performs these steps:
-
-1. **Import** — only when the GPO does not already exist. `Import-GPO` resolves the backup by the `DisplayName` recorded inside its `Backup.xml`, and `-Path` is the backup root containing the GUID folders.
-2. **Link** — the GPO is linked to its target OU when no link exists.
+For all three GPOs, a missing GPO is imported from the backup whose `Backup.xml` `DisplayName` matches the configured name. Existing GPO policy settings are not re-imported. The script ensures each link exists, enables a disabled link, and removes enforcement from an enforced link. Because those link repairs use `if`/`elseif`, a link that is both disabled and enforced may need a second identity-stage run to reach both desired properties.
 
 For Server Administration and Client Administration only, the `Groups.xml` preference is also rewritten on every run so the Windows administrators member matches this domain. Its SID and `NETBIOS\Group` name are derived from `groupNaming.globalSecurityPrefix`, `platformAdminGroups.windowsAdmins`, and the live domain NetBIOS name because the exported template carries values from the domain it was captured in.
 
@@ -149,6 +146,10 @@ Linux workload VMs use `realmd`, `adcli`, Kerberos, and SSSD. The script:
 8. Validates the resulting realm state.
 
 Already joined Linux VMs skip package installation, discovery, and joining but continue the SSSD, access, sudo, and validation steps. This preserves the healing path for partially configured machines.
+
+### Linux Endpoint Administration Reconciliation
+
+On every identity-stage run, the Linux script reconciles selected SSSD keys, restarts SSSD when one of those keys changes, ensures the `pam_mkhomedir.so` session module is present, and sets the realm login policy to `allow-realm-logins`. That realm policy allows all domain users to log in; administrative sudo is separately limited by the model-derived `GGS_Linux_Admins` sudoers rule. The script checks both the rule content and file mode (`0440`), writes changes to a temporary file, validates them with `visudo`, and then installs the file. This is selective reconciliation of those settings, not a replacement of the full SSSD or host configuration.
 
 ## Linux Client Desktop Installation
 
