@@ -1575,29 +1575,83 @@ function Ensure-LapsConfiguration {
         "Servers OU"
     )
 
-    Set-LapsADComputerSelfPermission `
-        -Identity $serversOuDn
+    try {
+
+        Set-LapsADComputerSelfPermission `
+            -Identity $serversOuDn
+
+    }
+    catch {
+
+        throw (
+            "Failed to configure Windows LAPS self permissions " +
+            "for Servers OU '$serversOuDn': " +
+            "$($_.Exception.Message)"
+        )
+
+    }
 
     Write-Host (
         "[+] Configuring Windows LAPS self permissions: " +
         "Clients OU"
     )
 
-    Set-LapsADComputerSelfPermission `
-        -Identity $clientsOuDn
+    try {
+
+        Set-LapsADComputerSelfPermission `
+            -Identity $clientsOuDn
+
+    }
+    catch {
+
+        throw (
+            "Failed to configure Windows LAPS self permissions " +
+            "for Clients OU '$clientsOuDn': " +
+            "$($_.Exception.Message)"
+        )
+
+    }
 
     Write-Host (
         "[+] Configuring Windows LAPS read permissions: " +
         $qualifiedWindowsAdmins
     )
 
-    Set-LapsADReadPasswordPermission `
-        -Identity $serversOuDn `
-        -AllowedPrincipals $qualifiedWindowsAdmins
+    try {
 
-    Set-LapsADReadPasswordPermission `
-        -Identity $clientsOuDn `
-        -AllowedPrincipals $qualifiedWindowsAdmins
+        Set-LapsADReadPasswordPermission `
+            -Identity $serversOuDn `
+            -AllowedPrincipals $qualifiedWindowsAdmins
+
+    }
+    catch {
+
+        throw (
+            "Failed to configure Windows LAPS read permissions " +
+            "for Servers OU '$serversOuDn' and principal " +
+            "'$qualifiedWindowsAdmins': " +
+            "$($_.Exception.Message)"
+        )
+
+    }
+
+    try {
+
+        Set-LapsADReadPasswordPermission `
+            -Identity $clientsOuDn `
+            -AllowedPrincipals $qualifiedWindowsAdmins
+
+    }
+    catch {
+
+        throw (
+            "Failed to configure Windows LAPS read permissions " +
+            "for Clients OU '$clientsOuDn' and principal " +
+            "'$qualifiedWindowsAdmins': " +
+            "$($_.Exception.Message)"
+        )
+
+    }
 }
 
 # Execute directory population workflow.
@@ -1734,6 +1788,15 @@ Populate-DepartmentUsers `
     -CsvNames $CSVNames `
     -ConnectedDomain $currentDomain `
     -PopulationModel $model
+
+Remove-Item `
+    $usersCsvPath `
+    -Force `
+    -ErrorAction SilentlyContinue
+
+Write-Host (
+    "[Cleanup] Removed temporary names.csv"
+)
 
 Write-Host "[i] Directory population completed"
 

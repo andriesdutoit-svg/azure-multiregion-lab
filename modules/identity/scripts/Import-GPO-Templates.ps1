@@ -128,7 +128,7 @@ function Ensure-GpoLink {
 
         Write-Host "[Link] $GpoName"
     }
-    elseif ($existingLink.Enabled -ne 'Yes') {
+    elseif (-not $existingLink.Enabled) {
 
         Set-GPLink `
             -Name $GpoName `
@@ -137,6 +137,16 @@ function Ensure-GpoLink {
             -ErrorAction Stop
 
         Write-Host "[Enable] Link $GpoName"
+    }
+    elseif ($existingLink.Enforced) {
+
+        Set-GPLink `
+            -Name $GpoName `
+            -Target $TargetDn `
+            -Enforced No `
+            -ErrorAction Stop
+
+        Write-Host "[Unenforce] Link $GpoName"
     }
     else {
 
@@ -310,7 +320,20 @@ function Update-GpoGroupReference {
         $xml.Groups.Group.changed =
             (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
 
-        $xml.Save($groupsXmlPath)
+        try {
+
+            $xml.Save($groupsXmlPath)
+
+        }
+        catch {
+
+            throw (
+                "Failed to update Groups.xml for '$GpoName' " +
+                "at '$groupsXmlPath': " +
+                "$($_.Exception.Message)"
+            )
+
+        }
 
         Write-Host (
             "[Reference Updated] $GpoName"
@@ -429,5 +452,38 @@ Ensure-GpoLink `
 Ensure-GpoLink `
     -GpoName $windowsLapsGpoName `
     -TargetDn $clientsOuDn
+
+if (Test-Path $templateRoot) {
+
+    Remove-Item `
+        $templateRoot `
+        -Recurse `
+        -Force `
+        -ErrorAction Stop
+
+    Write-Host "[Cleanup] Removed extracted GPO templates"
+
+}
+else {
+
+    Write-Host "[Cleanup] GPO template folder already absent"
+
+}
+
+if (Test-Path $zipPath) {
+
+    Remove-Item `
+        $zipPath `
+        -Force `
+        -ErrorAction Stop
+
+    Write-Host "[Cleanup] Removed GPO template archive"
+
+}
+else {
+
+    Write-Host "[Cleanup] GPO template archive already absent"
+
+}
 
 Write-Host "AMRL GPO Template Import Completed"
