@@ -106,6 +106,7 @@ else
     log_info "Skipping prerequisite installation because the computer is already joined"
 fi
 
+# Resolve the OU from the directory model for a new join; joined machines still continue through repair below.
 COMPUTER_OU=$(echo "${DIRECTORY_MODEL}" | jq -r \
     ".computerOuMapping.${VM_TYPE}")
 
@@ -203,15 +204,60 @@ fi
 
 log_info "Configuring SSSD"
 
-if ! grep -q "^ad_gpo_access_control = permissive" /etc/sssd/sssd.conf; then
-    cat >> /etc/sssd/sssd.conf <<EOF
+SSSD_CONFIG="/etc/sssd/sssd.conf"
 
-ad_gpo_access_control = permissive
-# Registers this VM's A/PTR records in AD-integrated DNS and keeps them current after IP changes.
-dyndns_update = True
-dyndns_refresh_interval = 43200
-dyndns_update_ptr = True
-EOF
+SSSD_UPDATED=false
+
+declare -A DESIRED_SSSD_SETTINGS=(
+    ["ad_gpo_access_control"]="permissive"
+    ["dyndns_update"]="True"
+    ["dyndns_refresh_interval"]="43200"
+    ["dyndns_update_ptr"]="True"
+)
+
+# Reconcile only these managed keys and preserve unrelated sssd.conf settings.
+for SETTING in "${!DESIRED_SSSD_SETTINGS[@]}"; do
+
+    DESIRED_VALUE="${DESIRED_SSSD_SETTINGS[$SETTING]}"
+
+    if grep -q "^${SETTING}[[:space:]]*=" "${SSSD_CONFIG}"; then
+
+        CURRENT_VALUE=$(grep "^${SETTING}[[:space:]]*=" "${SSSD_CONFIG}" |
+            head -n1 |
+            cut -d'=' -f2- |
+            xargs)
+
+        if [[ "${CURRENT_VALUE}" != "${DESIRED_VALUE}" ]]; then
+
+            sed -i \
+                "s|^${SETTING}[[:space:]]*=.*|${SETTING} = ${DESIRED_VALUE}|" \
+                "${SSSD_CONFIG}"
+
+            SSSD_UPDATED=true
+
+        fi
+
+    else
+
+        printf '\n%s = %s\n' \
+            "${SETTING}" \
+            "${DESIRED_VALUE}" \
+            >> "${SSSD_CONFIG}"
+
+        SSSD_UPDATED=true
+
+    fi
+
+done
+
+if [[ "${SSSD_UPDATED}" == "true" ]]; then
+
+    log_info "[Updated] SSSD configuration"
+
+else
+
+    log_info "[Verified] SSSD configuration"
+
 fi
 
 log_info "Configuring Linux hostname"
@@ -220,7 +266,7 @@ log_info "Configuring Linux hostname"
 CURRENT_HOSTNAME=$(hostname)
 
 if [[ "${CURRENT_HOSTNAME}" != *".${DOMAIN_NAME}" ]]; then
-hostnamectl set-hostname "${CURRENT_HOSTNAME}.${DOMAIN_NAME}"
+    hostnamectl set-hostname "${CURRENT_HOSTNAME}.${DOMAIN_NAME}"
 fi
 
 log_info "Hostname configured as $(hostname)"
@@ -228,7 +274,19 @@ log_info "Hostname configured as $(hostname)"
 chmod 600 /etc/sssd/sssd.conf
 
 systemctl enable sssd
-systemctl restart sssd
+
+if [[ "${SSSD_UPDATED}" == "true" ]]; then
+
+    # Restart only after a managed SSSD setting changes.
+    systemctl restart sssd
+
+    log_info "[Updated] SSSD service restarted"
+
+else
+
+    log_info "[Verified] SSSD service restart not required"
+
+fi
 
 log_info "SSSD configured"
 
@@ -241,35 +299,105 @@ log_info "Dynamic DNS update triggered"
 
 log_info "Configuring automatic home directory creation"
 
-pam-auth-update --enable mkhomedir
+DESIRED_MKHOMEDIR_ENTRY="session       optional                        pam_mkhomedir.so umask=0027"
 
-log_info "Home directory creation configured"
+# Enable automatic home creation only if the required PAM session entry is absent, then verify it.
+if grep -Fq "${DESIRED_MKHOMEDIR_ENTRY}" /etc/pam.d/common-session; then
+
+    log_info "[Verified] Automatic home directory creation"
+
+else
+
+    pam-auth-update --enable mkhomedir
+
+    if grep -Fq "${DESIRED_MKHOMEDIR_ENTRY}" /etc/pam.d/common-session; then
+
+        log_info "[Updated] Automatic home directory creation"
+
+    else
+
+        log_error "Failed to configure automatic home directory creation"
+        exit 1
+
+    fi
+
+fi
 
 #
 # Phase 7 - Access configuration
-# realm permit --all: Allows login for any domain user (permissive access model).
-# Sudo rights are controlled by AGDLP group membership configured in sudoers file.
-# %{LINUX_ADMINS_GROUP}@{DOMAIN_NAME}: Sudoers entry grants sudo to domain-based AGDLP group.
-# Example: %AMRL_LinuxAdmins@amrl.local ALL=(ALL:ALL) ALL → domain admins can sudo without password.
+# Realm login is intentionally permissive for domain users; administrative sudo remains restricted by the AGDLP sudoers entry below.
+# The sudoers principal uses the Linux administrators group and domain in %GROUP@DOMAIN form.
 #
 
-realm permit --all
+CURRENT_LOGIN_POLICY=$(realm list | awk -F': ' '
+/login-policy/ {
+    print $2
+}')
+
+if [[ "${CURRENT_LOGIN_POLICY}" == "allow-realm-logins" ]]; then
+
+    log_info "[Verified] Realm login policy"
+
+else
+
+    realm permit --all
+
+    UPDATED_LOGIN_POLICY=$(realm list | awk -F': ' '
+/login-policy/ {
+    print $2
+}')
+
+    if [[ "${UPDATED_LOGIN_POLICY}" == "allow-realm-logins" ]]; then
+
+        log_info "[Updated] Realm login policy"
+
+    else
+
+        log_error "Failed to configure realm login policy"
+        exit 1
+
+    fi
+
+fi
 
 log_info "Configuring Linux administrator sudo rights"
 
-if cat >/etc/sudoers.d/linux-admins <<EOF
-%${LINUX_ADMINS_GROUP}@${DOMAIN_NAME} ALL=(ALL:ALL) ALL
-EOF
-then
-    chmod 440 /etc/sudoers.d/linux-admins
+SUDOERS_PATH="/etc/sudoers.d/linux-admins"
 
-    if visudo -cf /etc/sudoers.d/linux-admins; then
-        log_info "Linux administrator sudo rights configured"
-    else
-        log_warn "Invalid sudoers configuration detected"
-    fi
+DESIRED_SUDOERS_CONTENT="%${LINUX_ADMINS_GROUP}@${DOMAIN_NAME} ALL=(ALL:ALL) ALL"
+
+# Replace sudoers only when its desired rule differs; validate the file before accepting the change.
+CURRENT_SUDOERS_CONTENT=""
+
+if [[ -f "${SUDOERS_PATH}" ]]; then
+
+    CURRENT_SUDOERS_CONTENT=$(cat "${SUDOERS_PATH}")
+
+fi
+
+if [[ "${CURRENT_SUDOERS_CONTENT}" == "${DESIRED_SUDOERS_CONTENT}" ]]; then
+
+    log_info "[Verified] Linux administrator sudo policy"
+
 else
-    log_warn "Failed to configure Linux administrator sudo rights"
+
+    cat >"${SUDOERS_PATH}" <<EOF
+${DESIRED_SUDOERS_CONTENT}
+EOF
+
+    chmod 440 "${SUDOERS_PATH}"
+
+    if visudo -cf "${SUDOERS_PATH}"; then
+
+        log_info "[Updated] Linux administrator sudo policy"
+
+    else
+
+        log_warn "Invalid sudoers configuration detected"
+        exit 1
+
+    fi
+
 fi
 
 #
