@@ -34,7 +34,7 @@ It checks:
 
 The current template requires `vmCounts.dc >= 1` for every deployment. It evaluates the primary DC and `fileServerName` before the identity and file-service feature flags can suppress their resource modules. With `vmCounts.dc=0`, template evaluation fails because no primary DC exists to supply `fileServerName`; set `dc` to at least `1` and redeploy.
 
-`vmCounts.jumpbox=0` produces the `invalidMinimums` validation flag and message, but does not currently block deployment.
+`hasNoDomainControllers` and `hasNoJumpboxes` are evaluated from the final VM placement model, which combines declared existing VM placements with planned placements. They distinguish the loss of the AD control plane from the loss of the supported jumpbox remote-access path; they do not query Azure to confirm that an inventoried VM exists. A zero-DC model can still fail earlier during root-template evaluation as described above, before validation outputs are returned.
 
 ## Useful Outputs
 
@@ -69,6 +69,8 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 
 - `hasRegionOverflow`: A region, including the hub, exceeds `maxVmsPerRegion`.
 - `invalidCapacity`: The total requested VM count exceeds `regionCount * maxVmsPerRegion`.
+- `hasNoDomainControllers`: The final placement model contains no DC, so the AD control plane will be unavailable. A jumpbox may still be present and accessible.
+- `hasNoJumpboxes`: The final placement model contains no jumpbox, so the supported remote-access path into the environment is unavailable.
 - `hasNonControlInHub`: A workload VM was placed in the hub.
 - `hasInsufficientWorkloadCapacity`: Control-plane placement left too few spoke slots for workloads.
 - `hasMissingNetworkPrerequisites`: Compute/identity is selected while networking is skipped and one or more selected regions are absent from `existingRegions`. Review `networkRegionsMissingFromInventory`; run `stage=network` first, or list a region only if its networking already exists.

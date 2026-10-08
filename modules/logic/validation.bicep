@@ -9,6 +9,12 @@ targetScope = 'subscription'
 // INPUTS
 // ========================================
 
+@allowed([
+  'advisory'
+  'strict'
+])
+param validationMode string
+
 param vmCounts object
 param vmSizes object
 param osDisks object
@@ -66,6 +72,8 @@ var regionOverflowFlags = [
 ]
 
 var hasRegionOverflow = contains(regionOverflowFlags, true)
+var hasNoDomainControllers = empty(filter(vmPlacements, vm => vm.type == 'dc'))
+var hasNoJumpboxes = empty(filter(vmPlacements, vm => vm.type == 'jmp'))
 var invalidMinimums = vmCounts.dc < 1 || vmCounts.jumpbox < 1
 var invalidRegionCount = regionCount > length(regionIndexMap)
 var hasInvalidExistingVmPlacements = invalidExistingVmPlacementCount > 0
@@ -357,6 +365,8 @@ var hasInvalidGpoNames = enableIdentity && (empty(gpoNames.?serverAdministration
 // ========================================
 
 var validationFlags = {
+  hasNoDomainControllers: hasNoDomainControllers
+  hasNoJumpboxes: hasNoJumpboxes
   invalidMinimums: invalidMinimums
   invalidRegionCount: invalidRegionCount
   invalidPrimaryPinning: invalidPrimaryPinning
@@ -402,6 +412,8 @@ var validationFlags = {
   hasEmptySysAdminDepartmentCode: hasEmptySysAdminDepartmentCode
   hasNoGpoTargetDc: hasNoGpoTargetDc
   hasInvalidGpoNames: hasInvalidGpoNames
+  blockingValidationFlags: blockingValidationFlags
+  hasBlockingValidationFailures: hasBlockingValidationFailures
 }
 
 // ========================================
@@ -411,7 +423,13 @@ var validationFlags = {
 // ========================================
 
 // Placement & Capacity Validation (msg1-5, msg10-11): VM placement logic, region capacity
-var msg1 = invalidMinimums ? 'At least 1 DC and 1 Jumpbox are required.' : ''
+var msg1 = hasNoDomainControllers
+  ? 'No domain controller is present in the final VM placement model. The Active Directory control plane will be unavailable.'
+  : hasNoJumpboxes
+    ? 'No jumpbox is present in the final VM placement model. The environment will have no jumpbox remote-access path.'
+    : invalidMinimums
+      ? 'At least 1 DC and 1 Jumpbox are required.'
+      : ''
 var msg2 = invalidRegionCount ? 'Region count exceeds available regions.' : ''
 var msg3 = invalidPrimaryPinning ? 'Primary pinning failed: dc01 and jmp01 must be placed in the primary region.' : ''
 var msg4 = hasNonControlInHub ? 'One or more non-control VMs were placed in the hub region.' : ''
@@ -521,11 +539,77 @@ var msg42 = hasInvalidGpoNames
 var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : msg23 != '' ? msg23 : msg24 != '' ? msg24 : msg25 != '' ? msg25 : msg26 != '' ? msg26 : msg27 != '' ? msg27 : msg28 != '' ? msg28 : msg29 != '' ? msg29 : msg30 != '' ? msg30 : msg31 != '' ? msg31 : msg32 != '' ? msg32 : msg33 != '' ? msg33 : msg34 != '' ? msg34 : msg35 != '' ? msg35 : msg36 != '' ? msg36 : msg37 != '' ? msg37 : msg38 != '' ? msg38 : msg39 != '' ? msg39 : msg40 != '' ? msg40 : msg41 != '' ? msg41 : msg42 != '' ? msg42 : 'All validation checks passed.'
 
 // ========================================
+// BLOCKING VALIDATION CANDIDATES
+// Deterministic model failures that are
+// candidates for deployment enforcement.
+// shouldBlockDeployment indicates if the deployment should be blocked based on strict validation mode and blocking validation failures.
+// ========================================
+
+var strictValidationEnabled = validationMode == 'strict'
+
+var shouldBlockDeployment = strictValidationEnabled && hasBlockingValidationFailures
+
+var deploymentBlockMessage = shouldBlockDeployment
+  ? 'Deployment blocked by strict validation mode. Blocking validation failures: ${join(blockingValidationFlags, ', ')}. Review validationFlags for full diagnostics.'
+  : 'Deployment not blocked.'
+
+
+var blockingValidationCandidates = [
+  { name: 'invalidMinimums', active: invalidMinimums }
+  { name: 'hasNoDomainControllers', active: hasNoDomainControllers }
+  { name: 'hasNoJumpboxes', active: hasNoJumpboxes }
+  { name: 'invalidRegionCount', active: invalidRegionCount }
+  { name: 'invalidCapacity', active: invalidCapacity }
+  { name: 'hasInsufficientWorkloadCapacity', active: hasInsufficientWorkloadCapacity }
+  { name: 'hasRegionOverflow', active: hasRegionOverflow }
+  { name: 'hasTooManyDcs', active: hasTooManyDcs }
+  { name: 'missingRegionIndex', active: missingRegionIndex }
+  { name: 'hasInvalidSubnetIndex', active: hasInvalidSubnetIndex }
+  { name: 'hasDuplicateRegionIndexes', active: hasDuplicateRegionIndexes }
+  { name: 'hasOutOfBoundsRegionIndex', active: hasOutOfBoundsRegionIndex }
+  { name: 'hasDuplicateSubnetIndexes', active: hasDuplicateSubnetIndexes }
+  { name: 'hasOutOfBoundsSubnetIndex', active: hasOutOfBoundsSubnetIndex }
+  { name: 'invalidIndexSequence', active: invalidIndexSequence }
+  { name: 'hasMissingVmSizeRole', active: hasMissingVmSizeRole }
+  { name: 'hasMissingOsDiskRole', active: hasMissingOsDiskRole }
+  { name: 'hasEmptyVmSizeRole', active: hasEmptyVmSizeRole }
+  { name: 'hasInvalidOsDiskConfiguration', active: hasInvalidOsDiskConfiguration }
+  { name: 'hasIncompleteImageReference', active: hasIncompleteImageReference }
+  { name: 'hasInvalidExistingRegions', active: length(invalidExistingRegions) > 0 }
+  { name: 'hasInvalidExistingVmPlacements', active: hasInvalidExistingVmPlacements }
+  { name: 'hasDuplicateExistingRegions', active: hasDuplicateExistingRegions }
+  { name: 'hasDuplicateExistingVmPlacements', active: hasDuplicateExistingVmPlacements }
+  { name: 'hasUnsupportedExistingVmType', active: hasUnsupportedExistingVmType }
+  { name: 'hasInvalidExistingVmIndex', active: hasInvalidExistingVmIndex }
+  { name: 'invalidDedicatedFileServerConfiguration', active: invalidDedicatedFileServerConfiguration }
+  { name: 'invalidFileServicesIdentityConfiguration', active: invalidFileServicesIdentityConfiguration }
+]
+
+var blockingValidationFlags = map(
+  filter(blockingValidationCandidates, item => item.active),
+  item => item.name
+)
+
+var hasBlockingValidationFailures = !empty(blockingValidationFlags)
+
+var blockingValidationMessage = empty(blockingValidationFlags)
+  ? 'No blocking validation failures detected.'
+  : 'Blocking validation failures detected: ${join(blockingValidationFlags, ', ')}'
+
+// ========================================
 // OUTPUTS
 // ========================================
 
 output validationFlags object = validationFlags
 output validationMessage string = validationMessage
+
+output hasBlockingValidationFailures bool = hasBlockingValidationFailures
+output blockingValidationFlags array = blockingValidationFlags
+output strictValidationEnabled bool = strictValidationEnabled
+output blockingValidationMessage string = blockingValidationMessage
+output shouldBlockDeployment bool = shouldBlockDeployment
+output deploymentBlockMessage string = deploymentBlockMessage
+
 output totalVMs int = totalVMs
 output totalCapacity int = totalCapacity
 output vmPerRegionCounts array = vmPerRegionCounts

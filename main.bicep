@@ -146,6 +146,12 @@ var gpoNames = {
   windowsLaps: 'Windows LAPS'
 }
 
+@allowed([
+  'advisory'
+  'strict'
+])
+param validationMode string
+
 // ========================================
 // 1.1 STAGE FLAGS
 // Determines which deployment stages are active for this run.
@@ -674,6 +680,16 @@ module validationEngine 'modules/logic/validation.bicep' = {
     fileServerVmAvailable: length(fileServerVmList) > 0
     domainName: domainName
     gpoNames: gpoNames
+    validationMode: validationMode
+  }
+}
+
+module validationGate 'modules/logic/validation-gate.bicep' = {
+  name: '${prefix}-validation-gate-${take(deployment().name, 20)}'
+
+  params: {
+    shouldBlockDeployment: validationEngine.outputs.shouldBlockDeployment
+    deploymentBlockMessage: validationEngine.outputs.deploymentBlockMessage
   }
 }
 
@@ -686,6 +702,9 @@ module validationEngine 'modules/logic/validation.bicep' = {
 // ========================================
 
 module networkStage 'modules/stages/network-stage.bicep' = {
+  dependsOn: [
+    validationGate
+  ]
   name: '${prefix}-network-stage-${take(deployment().name, 20)}'
 
   params: {
@@ -719,6 +738,9 @@ module networkStage 'modules/stages/network-stage.bicep' = {
 // ========================================
 
 module computeStage 'modules/stages/compute-stage.bicep' = {
+  dependsOn: [
+    validationGate
+  ]
   name: '${prefix}-compute-stage-${take(deployment().name, 20)}'
 
   params: {
@@ -768,6 +790,7 @@ module identityStage 'modules/stages/identity-stage.bicep' = {
   name: '${prefix}-identity-stage-${take(deployment().name, 20)}'
 
   dependsOn: [
+    validationGate
     computeStage
   ]
 
@@ -824,6 +847,13 @@ output validationMessage string = validationEngine.outputs.validationMessage
 output validationSummary string = empty(validationEngine.outputs.validationMessage)
   ? 'Validation passed.'
   : validationEngine.outputs.validationMessage
+
+output hasBlockingValidationFailures bool = validationEngine.outputs.hasBlockingValidationFailures
+output blockingValidationFlags array = validationEngine.outputs.blockingValidationFlags
+output blockingValidationMessage string = validationEngine.outputs.blockingValidationMessage
+output strictValidationEnabled bool = validationEngine.outputs.strictValidationEnabled
+output shouldBlockDeployment bool = validationEngine.outputs.shouldBlockDeployment
+output deploymentBlockMessage string = validationEngine.outputs.deploymentBlockMessage
 
 // Brownfield inventory details identify existing VM entries outside the active region set.
 output invalidExistingVmPlacementDetails array = invalidExistingVmPlacements
