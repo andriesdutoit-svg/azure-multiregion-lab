@@ -25,6 +25,8 @@ It checks:
 - Desired capacity and regional overflow.
 - VM size and OS disk role keys.
 - Existing region coverage for staged brownfield deployments.
+- Whether compute/identity deployments skip networking for selected regions absent from `existingRegions`.
+- Whether newly created VM placements in compute or identity stages target regions missing from `existingRegions` when network provisioning is skipped.
 - Remaining workload capacity after existing and new control-plane placement.
 - Department and identity configuration.
 - File services requiring identity automation.
@@ -39,6 +41,8 @@ The current template requires `vmCounts.dc >= 1` for every deployment. It evalua
 - `validationSummary`: Short status for quick review.
 - `validationMessage`: First detected validation message.
 - `validationFlags`: Boolean validation flags.
+- `networkRegionsMissingFromInventory`: Selected regions missing from `existingRegions` when compute/identity is selected and networking is skipped.
+- `newVmRegionsWithoutNetwork`: Target regions for newly created VMs that are not declared in `existingRegions` while the network stage is skipped.
 - `workloadCapacitySummary`: Workload demand versus remaining capacity.
 - `workloadCapacityByRegion`: Per-region control-plane and workload capacity.
 - `invalidExistingVmPlacementDetails`: Existing VM entries whose regions are not active.
@@ -55,15 +59,20 @@ After deployment, review the outputs before treating the deployment as valid:
 ```powershell
 az deployment sub show `
   --name <deployment-name> `
-  --query "properties.outputs.{summary:validationSummary.value,message:validationMessage.value,flags:validationFlags.value,capacity:capacityCheck.value,placements:vmPlacement.value}" `
+  --query "properties.outputs.{summary:validationSummary.value,message:validationMessage.value,flags:validationFlags.value,missingNetworkRegions:networkRegionsMissingFromInventory.value,newVmNetworkRegions:newVmRegionsWithoutNetwork.value,capacity:capacityCheck.value,placements:vmPlacement.value}" `
   --output json
 ```
+
+If the parent deployment fails before returning outputs, inspect the validation-engine nested deployment. Its name is `<prefix>-validation-engine-<first 20 characters of deployment name>`; query its `properties.outputs.validationMessage.value`, `validationFlags.value`, and `networkRegionsMissingFromInventory.value` outputs.
 
 A healthy result has `validationSummary` set to `All validation checks passed.` and `capacityCheck.withinLimit` set to `true`. In `validationFlags`, the following flags should be `false`:
 
 - `hasRegionOverflow`: A region, including the hub, exceeds `maxVmsPerRegion`.
+- `invalidCapacity`: The total requested VM count exceeds `regionCount * maxVmsPerRegion`.
 - `hasNonControlInHub`: A workload VM was placed in the hub.
 - `hasInsufficientWorkloadCapacity`: Control-plane placement left too few spoke slots for workloads.
+- `hasMissingNetworkPrerequisites`: Compute/identity is selected while networking is skipped and one or more selected regions are absent from `existingRegions`. Review `networkRegionsMissingFromInventory`; run `stage=network` first, or list a region only if its networking already exists.
+- `hasUncoveredNewVmNetworks`: A compute or identity deployment would create VMs in regions not declared as having existing networking. Run `stage=network` or `stage=all`, or correct `existingRegions` if that networking already exists.
 - `missingDedicatedFileServer`: `useDedicatedFileServer` is `true` but no `srvwin` VM exists. Target selection falls back to the primary DC so template evaluation can continue, but the configuration is invalid and should be corrected.
 - `invalidDedicatedFileServerConfiguration`: `useDedicatedFileServer` is `true` while `enableFileServices` is `false`.
 - `invalidFileServicesIdentityConfiguration`: `enableFileServices` or `useDedicatedFileServer` is `true` while `enableIdentity` is `false`.
@@ -74,7 +83,11 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 
 These four flags cover configuration that the template can see. Failures inside the Group Policy Run Command itself are reported by the deployment because `ad-gpo.bicep` sets `treatFailureAsDeploymentFailure`. The script fails fast with an explicit message when the base64 ZIP parameter is empty or not decodable, when the expanded archive lacks the `GpoTemplates` root folder or a named GPO backup, when `directoryModel.gpoNames` is incomplete, when a target OU is missing, or when `Groups.xml` does not hold exactly one member entry to reconcile.
 
+`validationFlags` reports each detected condition independently, while `validationMessage` contains only the first matching message in validation order. Capacity messages are evaluated before the stage-network prerequisite message, so inspect the flags and missing-region outputs when more than one condition is present.
+
 Validation flags and messages are diagnostic outputs; they do not by themselves block deployment, change resources, or roll back resources. Some invalid configurations can still fail earlier during template evaluation when later expressions require their values, such as `vmCounts.dc=0` when the template requires a primary DC. Also inspect VM Run Command results separately.
+
+The stage network check uses the declared `existingRegions` inventory; it does not discover VNets, confirm role subnets, or verify live connectivity. It checks every selected region because the current subnet contract is produced for the full region set, even when no VM is newly placed there. Validation flags are diagnostic and do not block deployment; when network provisioning is skipped, confirm that every required VNet and role subnet actually exists before deploying VMs.
 
 ## Azure Availability Checks
 

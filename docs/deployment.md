@@ -138,6 +138,8 @@ identity: {
 | `identity` | Runs AD bootstrap, replica promotion, directory population, domain join automation, and optional departmental file-service provisioning. It may also create missing workload VMs needed by the identity flow. Existing control-plane DCs are required. |
 | `all` | Runs the complete workflow. |
 
+Stages are dependency layers, not independent deployment products. Stage selection gates stage-owned resources, while shared placement and validation logic and the stage modules remain part of the evaluated template. `stage=all` is the end-to-end path when networking and VM creation are both required in the same deployment.
+
 For a compute-only deployment, first ensure the project-managed VNet and required role subnets exist in every target region. When adding a region or missing networking, run `stage=network` before `stage=compute`, or use `stage=all` to run the complete workflow.
 
 Typical staged order:
@@ -155,6 +157,8 @@ flowchart LR
 ```
 
 Use a new deployment name when rerunning identity automation so Azure reapplies the VM Run Command resources.
+
+A successful deployment stage is not by itself a guarantee of operational readiness. Review validation outputs and VM Run Command guest execution results, then verify required connectivity, administrative sign-in, and platform services independently.
 
 When enabling departmental file services:
 

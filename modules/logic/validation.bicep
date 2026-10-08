@@ -22,6 +22,7 @@ param jumpboxAllowedSources array
 param networkMode string
 param automationManagedIdentityResourceId string
 param vmPlacements array
+param newVmPlacements array
 param regionKeys array
 param maxVmsPerRegion int
 param primaryRegion string
@@ -226,6 +227,15 @@ var networkStageSkipped = !deployNetwork
 var insufficientBrownfieldCoverage = length(existingRegions) < regionCount
 var insufficientBrownfieldForStage = nonNetworkStageDeployed && networkStageSkipped && insufficientBrownfieldCoverage
 
+var networkRegionsMissingFromInventory = filter(regionKeys, region => nonNetworkStageDeployed && networkStageSkipped && !contains(existingRegions, region))
+var hasMissingNetworkPrerequisites = nonNetworkStageDeployed && !empty(networkRegionsMissingFromInventory)
+var networkRegionsMissingFromInventoryText = join(networkRegionsMissingFromInventory, ', ')
+
+var newVmPlacementsForStage = filter(newVmPlacements, vm => (deployControl && (vm.type == 'dc' || vm.type == 'jmp')) || (deployWorkload && !(vm.type == 'dc' || vm.type == 'jmp')))
+var newVmRegionsWithoutNetwork = filter(regionKeys, region => !deployNetwork && !contains(existingRegions, region) && !empty(filter(newVmPlacementsForStage, vm => vm.regionKey == region)))
+
+var hasUncoveredNewVmNetworks = !empty(newVmRegionsWithoutNetwork)
+
 // ----
 // Hub region availability validation
 // ----
@@ -380,6 +390,8 @@ var validationFlags = {
   hasInvalidExistingRegions: length(invalidExistingRegions) > 0
   hasInvalidExistingVmPlacements: hasInvalidExistingVmPlacements
   insufficientBrownfieldForStage: insufficientBrownfieldForStage
+  hasMissingNetworkPrerequisites: hasMissingNetworkPrerequisites
+  hasUncoveredNewVmNetworks: hasUncoveredNewVmNetworks
   hubRequiredButMissing: hubRequiredButMissing
   spokeRegionsCovered: !spokeRegionsCovered
   hasMixedCreationMode: hasMixedCreationMode
@@ -432,9 +444,11 @@ var msg18 = length(invalidExistingRegions) > 0
 var msg19 = hasInvalidExistingVmPlacements
   ? 'existingVmPlacements contains one or more regionKey values that are not present in the active regionKeys set. Remove stale inventory entries or include the missing regions in regionIndexMap.'
   : ''
-var msg20 = insufficientBrownfieldForStage
-  ? 'Stage deployment (compute/identity) requires either stage=network or existingRegions to include all deployed regions.'
-  : ''
+var msg20 = hasMissingNetworkPrerequisites
+  ? 'Network prerequisites are not declared for all selected regions during compute/identity deployment. Missing from existingRegions: ${networkRegionsMissingFromInventoryText}. Deploy stage=network first, or add the regions to existingRegions only if their networking already exists.'
+  : insufficientBrownfieldForStage
+    ? 'Stage deployment (compute/identity) requires either stage=network or existingRegions to include all deployed regions.'
+    : ''
 var msg21 = hubRequiredButMissing
   ? 'Hub region is required but not available. Either deploy stage=network or add hub region to existingRegions.'
   : ''
@@ -524,3 +538,5 @@ output requestedDirectoryAccounts int = requestedDirectoryAccounts
 output invalidExistingRegions array = invalidExistingRegions
 output invalidExistingVmPlacementCount int = invalidExistingVmPlacementCount
 output hasInvalidExistingVmPlacements bool = hasInvalidExistingVmPlacements
+output networkRegionsMissingFromInventory array = networkRegionsMissingFromInventory
+output newVmRegionsWithoutNetwork array = newVmRegionsWithoutNetwork

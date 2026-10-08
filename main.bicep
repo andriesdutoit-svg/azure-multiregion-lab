@@ -651,6 +651,7 @@ module validationEngine 'modules/logic/validation.bicep' = {
     networkMode: networkMode
     automationManagedIdentityResourceId: automationManagedIdentityResourceId
     vmPlacements: finalVmPlacements
+    newVmPlacements: missingVmList
     regionKeys: regionKeys
     maxVmsPerRegion: maxVmsPerRegion
     primaryRegion: primaryRegion
@@ -812,6 +813,8 @@ output vmPlacement array = finalVmPlacements
 // Validation message describing the first detected validation issue, or a success message when all checks pass.
 
 output validationFlags object = validationEngine.outputs.validationFlags
+output networkRegionsMissingFromInventory array = validationEngine.outputs.networkRegionsMissingFromInventory
+output newVmRegionsWithoutNetwork array = validationEngine.outputs.newVmRegionsWithoutNetwork
 output workloadCapacitySummary object = {
   nonControlVmCount: validationEngine.outputs.nonControlVmCount
   totalWorkloadRegionCapacity: validationEngine.outputs.totalWorkloadRegionCapacity

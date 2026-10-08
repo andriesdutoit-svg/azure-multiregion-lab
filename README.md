@@ -110,7 +110,7 @@ Typical staged order:
 network -> compute -> identity
 ```
 
-See [Deployment Guide](docs/deployment.md) for stage prerequisites and brownfield examples.
+Stages are dependency layers rather than isolated products: compute requires networking to exist, and identity may create missing workload VMs. See the [Deployment Guide](docs/deployment.md#stages) for sequencing, prerequisites, brownfield examples, and readiness checks.
 
 ## Identity and Domain Join
 
