@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.7
+# Azure Multi-Region Lab (AMRL) v2.7.1
 
 AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, selectable network topologies, capacity-aware VM placement, and idempotent Active Directory automation.
 

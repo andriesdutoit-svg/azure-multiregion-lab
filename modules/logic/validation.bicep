@@ -216,7 +216,7 @@ var incompleteImageReferenceFlags = [
 var hasIncompleteImageReference = contains(incompleteImageReferenceFlags, true)
 
 var hasMissingIndexes = [
-  for i in range(1, length(regionIndexMap) + 1): empty(filter(items(regionIndexMap), r => r.value == i))
+  for i in range(1, length(regionIndexMap)): empty(filter(items(regionIndexMap), r => r.value == i))
 ]
 
 var invalidIndexSequence = contains(hasMissingIndexes, true)
@@ -364,6 +364,7 @@ var hasInvalidGpoNames = enableIdentity && (empty(gpoNames.?serverAdministration
 // Consolidated rule state emitted for diagnostics.
 // ========================================
 
+/*
 var validationFlags = {
   hasNoDomainControllers: hasNoDomainControllers
   hasNoJumpboxes: hasNoJumpboxes
@@ -412,9 +413,8 @@ var validationFlags = {
   hasEmptySysAdminDepartmentCode: hasEmptySysAdminDepartmentCode
   hasNoGpoTargetDc: hasNoGpoTargetDc
   hasInvalidGpoNames: hasInvalidGpoNames
-  blockingValidationFlags: blockingValidationFlags
-  hasBlockingValidationFailures: hasBlockingValidationFailures
 }
+*/
 
 // ========================================
 // MESSAGE COMPOSITION
@@ -536,7 +536,28 @@ var msg42 = hasInvalidGpoNames
   ? 'GPO names must define non-empty serverAdministration, clientAdministration, and windowsLaps values so the import script can match the exported backups.'
   : ''
 
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : msg23 != '' ? msg23 : msg24 != '' ? msg24 : msg25 != '' ? msg25 : msg26 != '' ? msg26 : msg27 != '' ? msg27 : msg28 != '' ? msg28 : msg29 != '' ? msg29 : msg30 != '' ? msg30 : msg31 != '' ? msg31 : msg32 != '' ? msg32 : msg33 != '' ? msg33 : msg34 != '' ? msg34 : msg35 != '' ? msg35 : msg36 != '' ? msg36 : msg37 != '' ? msg37 : msg38 != '' ? msg38 : msg39 != '' ? msg39 : msg40 != '' ? msg40 : msg41 != '' ? msg41 : msg42 != '' ? msg42 : 'All validation checks passed.'
+var msg43 = hasUnsafeJumpboxAllowedSources
+  ? 'jumpboxAllowedSources is empty or contains 0.0.0.0/0. Remote access is broadly exposed and should be reviewed.'
+  : ''
+
+var msg44 = hasUncoveredNewVmNetworks
+  ? 'One or more virtual machines are assigned to regions that do not have corresponding network resources.'
+  : ''
+
+// ========================================
+// VALIDATION FINDINGS
+// Single source of truth for validation
+// metadata and classification.
+// ========================================
+
+var activeValidationFindings = filter(
+  validationFindings,
+  item => item.active
+)
+
+var validationMessage = empty(activeValidationFindings)
+  ? 'All validation checks passed.'
+  : activeValidationFindings[0].message
 
 // ========================================
 // BLOCKING VALIDATION CANDIDATES
@@ -550,44 +571,237 @@ var strictValidationEnabled = validationMode == 'strict'
 var shouldBlockDeployment = strictValidationEnabled && hasBlockingValidationFailures
 
 var deploymentBlockMessage = shouldBlockDeployment
-  ? 'Deployment blocked by strict validation mode. Blocking validation failures: ${join(blockingValidationFlags, ', ')}. Review validationFlags for full diagnostics.'
+  ? 'Deployment blocked by strict validation mode. Blocking validation failures: ${join(map(activeBlockingValidationFindings, item => '[${item.category}] ${item.flag}: ${item.message}'), ' | ')}'
   : 'Deployment not blocked.'
 
+// ========================================
+// BLOCKING VALIDATION FINDINGS
+// Single source of truth for blocking
+// validation metadata.
+// ========================================
 
-var blockingValidationCandidates = [
-  { name: 'invalidMinimums', active: invalidMinimums }
-  { name: 'hasNoDomainControllers', active: hasNoDomainControllers }
-  { name: 'hasNoJumpboxes', active: hasNoJumpboxes }
-  { name: 'invalidRegionCount', active: invalidRegionCount }
-  { name: 'invalidCapacity', active: invalidCapacity }
-  { name: 'hasInsufficientWorkloadCapacity', active: hasInsufficientWorkloadCapacity }
-  { name: 'hasRegionOverflow', active: hasRegionOverflow }
-  { name: 'hasTooManyDcs', active: hasTooManyDcs }
-  { name: 'missingRegionIndex', active: missingRegionIndex }
-  { name: 'hasInvalidSubnetIndex', active: hasInvalidSubnetIndex }
-  { name: 'hasDuplicateRegionIndexes', active: hasDuplicateRegionIndexes }
-  { name: 'hasOutOfBoundsRegionIndex', active: hasOutOfBoundsRegionIndex }
-  { name: 'hasDuplicateSubnetIndexes', active: hasDuplicateSubnetIndexes }
-  { name: 'hasOutOfBoundsSubnetIndex', active: hasOutOfBoundsSubnetIndex }
-  { name: 'invalidIndexSequence', active: invalidIndexSequence }
-  { name: 'hasMissingVmSizeRole', active: hasMissingVmSizeRole }
-  { name: 'hasMissingOsDiskRole', active: hasMissingOsDiskRole }
-  { name: 'hasEmptyVmSizeRole', active: hasEmptyVmSizeRole }
-  { name: 'hasInvalidOsDiskConfiguration', active: hasInvalidOsDiskConfiguration }
-  { name: 'hasIncompleteImageReference', active: hasIncompleteImageReference }
-  { name: 'hasInvalidExistingRegions', active: length(invalidExistingRegions) > 0 }
-  { name: 'hasInvalidExistingVmPlacements', active: hasInvalidExistingVmPlacements }
-  { name: 'hasDuplicateExistingRegions', active: hasDuplicateExistingRegions }
-  { name: 'hasDuplicateExistingVmPlacements', active: hasDuplicateExistingVmPlacements }
-  { name: 'hasUnsupportedExistingVmType', active: hasUnsupportedExistingVmType }
-  { name: 'hasInvalidExistingVmIndex', active: hasInvalidExistingVmIndex }
-  { name: 'invalidDedicatedFileServerConfiguration', active: invalidDedicatedFileServerConfiguration }
-  { name: 'invalidFileServicesIdentityConfiguration', active: invalidFileServicesIdentityConfiguration }
+var blockingValidationFindings = [
+  {
+    flag: 'invalidMinimums'
+    active: invalidMinimums
+    severity: 'block'
+    category: 'Platform'
+    message: msg1
+  }
+  {
+    flag: 'hasNoDomainControllers'
+    active: hasNoDomainControllers
+    severity: 'block'
+    category: 'Platform'
+    message: msg1
+  }
+  {
+    flag: 'hasNoJumpboxes'
+    active: hasNoJumpboxes
+    severity: 'block'
+    category: 'Platform'
+    message: msg1
+  }
+
+  {
+    flag: 'invalidRegionCount'
+    active: invalidRegionCount
+    severity: 'block'
+    category: 'Capacity'
+    message: msg2
+  }
+  {
+    flag: 'invalidCapacity'
+    active: invalidCapacity
+    severity: 'block'
+    category: 'Capacity'
+    message: msg11
+  }
+  {
+    flag: 'hasInsufficientWorkloadCapacity'
+    active: hasInsufficientWorkloadCapacity
+    severity: 'block'
+    category: 'Capacity'
+    message: msg9
+  }
+  {
+    flag: 'hasRegionOverflow'
+    active: hasRegionOverflow
+    severity: 'block'
+    category: 'Capacity'
+    message: msg10
+  }
+  {
+    flag: 'hasTooManyDcs'
+    active: hasTooManyDcs
+    severity: 'block'
+    category: 'Capacity'
+    message: msg13
+  }
+
+  {
+    flag: 'missingRegionIndex'
+    active: missingRegionIndex
+    severity: 'block'
+    category: 'Addressing'
+    message: msg5
+  }
+  {
+    flag: 'hasInvalidSubnetIndex'
+    active: hasInvalidSubnetIndex
+    severity: 'block'
+    category: 'Addressing'
+    message: msg6
+  }
+  {
+    flag: 'hasDuplicateRegionIndexes'
+    active: hasDuplicateRegionIndexes
+    severity: 'block'
+    category: 'Addressing'
+    message: msg27
+  }
+  {
+    flag: 'hasOutOfBoundsRegionIndex'
+    active: hasOutOfBoundsRegionIndex
+    severity: 'block'
+    category: 'Addressing'
+    message: msg28
+  }
+  {
+    flag: 'hasDuplicateSubnetIndexes'
+    active: hasDuplicateSubnetIndexes
+    severity: 'block'
+    category: 'Addressing'
+    message: msg29
+  }
+  {
+    flag: 'hasOutOfBoundsSubnetIndex'
+    active: hasOutOfBoundsSubnetIndex
+    severity: 'block'
+    category: 'Addressing'
+    message: msg30
+  }
+  {
+    flag: 'invalidIndexSequence'
+    active: invalidIndexSequence
+    severity: 'block'
+    category: 'Addressing'
+    message: msg12
+  }
+
+  {
+    flag: 'hasMissingVmSizeRole'
+    active: hasMissingVmSizeRole
+    severity: 'block'
+    category: 'Compute'
+    message: msg7
+  }
+  {
+    flag: 'hasMissingOsDiskRole'
+    active: hasMissingOsDiskRole
+    severity: 'block'
+    category: 'Compute'
+    message: msg8
+  }
+  {
+    flag: 'hasEmptyVmSizeRole'
+    active: hasEmptyVmSizeRole
+    severity: 'block'
+    category: 'Compute'
+    message: msg36
+  }
+  {
+    flag: 'hasInvalidOsDiskConfiguration'
+    active: hasInvalidOsDiskConfiguration
+    severity: 'block'
+    category: 'Compute'
+    message: msg37
+  }
+  {
+    flag: 'hasIncompleteImageReference'
+    active: hasIncompleteImageReference
+    severity: 'block'
+    category: 'Compute'
+    message: msg38
+  }
+
+  {
+    flag: 'hasInvalidExistingRegions'
+    active: length(invalidExistingRegions) > 0
+    severity: 'block'
+    category: 'Brownfield'
+    message: msg18
+  }
+  {
+    flag: 'hasInvalidExistingVmPlacements'
+    active: hasInvalidExistingVmPlacements
+    severity: 'block'
+    category: 'Brownfield'
+    message: msg19
+  }
+  {
+    flag: 'hasDuplicateExistingRegions'
+    active: hasDuplicateExistingRegions
+    severity: 'block'
+    category: 'Brownfield'
+    message: msg31
+  }
+  {
+    flag: 'hasDuplicateExistingVmPlacements'
+    active: hasDuplicateExistingVmPlacements
+    severity: 'block'
+    category: 'Brownfield'
+    message: msg32
+  }
+  {
+    flag: 'hasUnsupportedExistingVmType'
+    active: hasUnsupportedExistingVmType
+    severity: 'block'
+    category: 'Brownfield'
+    message: msg33
+  }
+  {
+    flag: 'hasInvalidExistingVmIndex'
+    active: hasInvalidExistingVmIndex
+    severity: 'block'
+    category: 'Brownfield'
+    message: msg34
+  }
+
+  {
+    flag: 'invalidDedicatedFileServerConfiguration'
+    active: invalidDedicatedFileServerConfiguration
+    severity: 'block'
+    category: 'FileServices'
+    message: msg25
+  }
+  {
+    flag: 'invalidFileServicesIdentityConfiguration'
+    active: invalidFileServicesIdentityConfiguration
+    severity: 'block'
+    category: 'FileServices'
+    message: msg26
+  }
 ]
 
+var activeBlockingValidationFindings = filter(
+  validationFindings,
+  item => item.active && item.severity == 'block'
+)
+
+var activeAdvisoryValidationFindings = filter(
+  validationFindings,
+  item => item.active && item.severity == 'advisory'
+)
+
+var advisoryValidationFlags = map(
+  activeAdvisoryValidationFindings,
+  item => item.flag
+)
+
 var blockingValidationFlags = map(
-  filter(blockingValidationCandidates, item => item.active),
-  item => item.name
+  activeBlockingValidationFindings,
+  item => item.flag
 )
 
 var hasBlockingValidationFailures = !empty(blockingValidationFlags)
@@ -595,6 +809,158 @@ var hasBlockingValidationFailures = !empty(blockingValidationFlags)
 var blockingValidationMessage = empty(blockingValidationFlags)
   ? 'No blocking validation failures detected.'
   : 'Blocking validation failures detected: ${join(blockingValidationFlags, ', ')}'
+
+var blockingValidationSummary = empty(blockingValidationFlags)
+  ? 'No blocking validation failures detected.'
+  : 'Blocking validation failures detected: ${join(blockingValidationFlags, ', ')}'
+
+// ========================================
+// ADVISORY VALIDATION FINDINGS
+// Non-blocking validation findings that
+// provide design and operational guidance.
+// ========================================
+
+var advisoryValidationFindings = [
+  {
+    flag: 'invalidPrimaryPinning'
+    active: invalidPrimaryPinning
+    severity: 'advisory'
+    category: 'Placement'
+    message: msg3
+  }
+  {
+    flag: 'hasNonControlInHub'
+    active: hasNonControlInHub
+    severity: 'advisory'
+    category: 'Placement'
+    message: msg4
+  }
+  {
+    flag: 'invalidDepartmentCount'
+    active: invalidDepartmentCount
+    severity: 'advisory'
+    category: 'Identity'
+    message: msg14
+  }
+  {
+    flag: 'invalidMinimumDepartments'
+    active: invalidMinimumDepartments
+    severity: 'advisory'
+    category: 'Identity'
+    message: msg15
+  }
+  {
+    flag: 'invalidUsersPerDepartment'
+    active: invalidUsersPerDepartment
+    severity: 'advisory'
+    category: 'Identity'
+    message: msg16
+  }
+  {
+    flag: 'duplicateDepartmentCodes'
+    active: duplicateDepartmentCodes
+    severity: 'advisory'
+    category: 'Identity'
+    message: msg17
+  }
+  {
+    flag: 'hasMissingNetworkPrerequisites'
+    active: hasMissingNetworkPrerequisites
+    severity: 'advisory'
+    category: 'Brownfield'
+    message: msg20
+  }
+  {
+    flag: 'hubRequiredButMissing'
+    active: hubRequiredButMissing
+    severity: 'advisory'
+    category: 'Brownfield'
+    message: msg21
+  }
+  {
+    flag: 'spokeRegionsCovered'
+    active: !spokeRegionsCovered
+    severity: 'advisory'
+    category: 'Brownfield'
+    message: msg22
+  }
+  {
+    flag: 'hasMixedCreationMode'
+    active: hasMixedCreationMode
+    severity: 'advisory'
+    category: 'Brownfield'
+    message: msg23
+  }
+  {
+    flag: 'missingDedicatedFileServer'
+    active: missingDedicatedFileServer
+    severity: 'advisory'
+    category: 'FileServices'
+    message: msg24
+  }
+  {
+    flag: 'hasInvalidPeeringCleanupIdentity'
+    active: hasInvalidPeeringCleanupIdentity
+    severity: 'advisory'
+    category: 'Operations'
+    message: msg35
+  }
+  {
+    flag: 'hasMalformedDomainName'
+    active: hasMalformedDomainName
+    severity: 'advisory'
+    category: 'GroupPolicy'
+    message: msg39
+  }
+  {
+    flag: 'hasEmptySysAdminDepartmentCode'
+    active: hasEmptySysAdminDepartmentCode
+    severity: 'advisory'
+    category: 'GroupPolicy'
+    message: msg40
+  }
+  {
+    flag: 'hasNoGpoTargetDc'
+    active: hasNoGpoTargetDc
+    severity: 'advisory'
+    category: 'GroupPolicy'
+    message: msg41
+  }
+  {
+    flag: 'hasInvalidGpoNames'
+    active: hasInvalidGpoNames
+    severity: 'advisory'
+    category: 'GroupPolicy'
+    message: msg42
+  }
+    {
+    flag: 'hasUnsafeJumpboxAllowedSources'
+    active: hasUnsafeJumpboxAllowedSources
+    severity: 'advisory'
+    category: 'Security'
+    message: msg43
+  }
+  {
+    flag: 'hasUncoveredNewVmNetworks'
+    active: hasUncoveredNewVmNetworks
+    severity: 'advisory'
+    category: 'Networking'
+    message: msg44
+  }
+]
+
+var validationFindings = concat(
+  blockingValidationFindings,
+  advisoryValidationFindings
+)
+
+var validationFlagsFromFindings = toObject(
+  validationFindings,
+  item => item.flag,
+  item => item.active
+)
+
+var validationFlags = validationFlagsFromFindings
 
 // ========================================
 // OUTPUTS
@@ -609,6 +975,8 @@ output strictValidationEnabled bool = strictValidationEnabled
 output blockingValidationMessage string = blockingValidationMessage
 output shouldBlockDeployment bool = shouldBlockDeployment
 output deploymentBlockMessage string = deploymentBlockMessage
+output blockingValidationSummary string = blockingValidationSummary
+output advisoryValidationFlags array = advisoryValidationFlags
 
 output totalVMs int = totalVMs
 output totalCapacity int = totalCapacity
@@ -624,3 +992,6 @@ output invalidExistingVmPlacementCount int = invalidExistingVmPlacementCount
 output hasInvalidExistingVmPlacements bool = hasInvalidExistingVmPlacements
 output networkRegionsMissingFromInventory array = networkRegionsMissingFromInventory
 output newVmRegionsWithoutNetwork array = newVmRegionsWithoutNetwork
+
+
+output validationFlagsFromFindings object = validationFlagsFromFindings

@@ -854,6 +854,8 @@ output blockingValidationMessage string = validationEngine.outputs.blockingValid
 output strictValidationEnabled bool = validationEngine.outputs.strictValidationEnabled
 output shouldBlockDeployment bool = validationEngine.outputs.shouldBlockDeployment
 output deploymentBlockMessage string = validationEngine.outputs.deploymentBlockMessage
+output blockingValidationSummary string = validationEngine.outputs.blockingValidationSummary
+output advisoryValidationFlags array = validationEngine.outputs.advisoryValidationFlags
 
 // Brownfield inventory details identify existing VM entries outside the active region set.
 output invalidExistingVmPlacementDetails array = invalidExistingVmPlacements
