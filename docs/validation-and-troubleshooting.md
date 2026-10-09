@@ -55,6 +55,7 @@ The current template requires `vmCounts.dc >= 1` for every deployment. It evalua
 - `newVmRegionsWithoutNetwork`: Target regions for newly created VMs that are not declared in `existingRegions` while the network stage is skipped.
 - `workloadCapacitySummary`: Workload demand versus remaining capacity.
 - `workloadCapacityByRegion`: Per-region control-plane and workload capacity.
+- `capacityCheck`: Overall requested capacity check: `totalVMs` is the requested VM count, `capacity` is `regionCount * maxVmsPerRegion`, and `withinLimit` indicates whether the requested count fits that total capacity. It does not confirm per-region or spoke workload capacity; review the regional outputs and validation flags separately.
 - `invalidExistingVmPlacementDetails`: Existing VM entries whose regions are not active.
 - `invalidExistingVmPlacementCount`: Number of invalid existing VM placement entries.
 - `hasInvalidExistingVmPlacements`: Whether invalid existing VM placement entries were found.
