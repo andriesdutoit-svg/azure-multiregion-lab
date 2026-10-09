@@ -24,6 +24,7 @@
 - **v2.5**: Selectable network topologies and brownfield firewall support.
 - **v2.6**: Windows administration GPOs and unique passwords for new AD users.
 - **v2.7**: Windows/Linux endpoint administration and configuration reconciliation.
+- **v2.8 (complete)**: Blocking/advisory validation findings, `reportOnly`/`enforce` modes, pre-stage deployment gating, and remediation details.
 
 ## Learning Outcomes Demonstrated
 

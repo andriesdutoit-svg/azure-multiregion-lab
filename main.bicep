@@ -147,9 +147,10 @@ var gpoNames = {
 }
 
 @allowed([
-  'advisory'
-  'strict'
+  'reportOnly'
+  'enforce'
 ])
+@description('Validation behavior: report findings only, or fail the validation gate when blocking findings are active.')
 param validationMode string
 
 // ========================================
@@ -850,12 +851,13 @@ output validationSummary string = empty(validationEngine.outputs.validationMessa
 
 output hasBlockingValidationFailures bool = validationEngine.outputs.hasBlockingValidationFailures
 output blockingValidationFlags array = validationEngine.outputs.blockingValidationFlags
-output blockingValidationMessage string = validationEngine.outputs.blockingValidationMessage
-output strictValidationEnabled bool = validationEngine.outputs.strictValidationEnabled
+output blockingValidationSummary string = validationEngine.outputs.blockingValidationSummary
+output enforcementEnabled bool = validationEngine.outputs.enforcementEnabled
 output shouldBlockDeployment bool = validationEngine.outputs.shouldBlockDeployment
 output deploymentBlockMessage string = validationEngine.outputs.deploymentBlockMessage
-output blockingValidationSummary string = validationEngine.outputs.blockingValidationSummary
+output blockingValidationDetails array = validationEngine.outputs.blockingValidationDetails
 output advisoryValidationFlags array = validationEngine.outputs.advisoryValidationFlags
+output advisoryValidationDetails array = validationEngine.outputs.advisoryValidationDetails
 
 // Brownfield inventory details identify existing VM entries outside the active region set.
 output invalidExistingVmPlacementDetails array = invalidExistingVmPlacements
