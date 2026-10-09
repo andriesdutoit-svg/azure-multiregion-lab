@@ -12,6 +12,10 @@
       "value": "all"
     },
 
+    "validationMode": {
+      "value": "reportOnly"
+    },
+
     "networkMode": {
       "value": "fullMesh"
     },

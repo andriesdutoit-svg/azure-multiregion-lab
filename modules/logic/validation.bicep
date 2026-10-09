@@ -9,6 +9,12 @@ targetScope = 'subscription'
 // INPUTS
 // ========================================
 
+@allowed([
+  'reportOnly'
+  'enforce'
+])
+param validationMode string
+
 param vmCounts object
 param vmSizes object
 param osDisks object
@@ -66,6 +72,8 @@ var regionOverflowFlags = [
 ]
 
 var hasRegionOverflow = contains(regionOverflowFlags, true)
+var hasNoDomainControllers = empty(filter(vmPlacements, vm => vm.type == 'dc'))
+var hasNoJumpboxes = empty(filter(vmPlacements, vm => vm.type == 'jmp'))
 var invalidMinimums = vmCounts.dc < 1 || vmCounts.jumpbox < 1
 var invalidRegionCount = regionCount > length(regionIndexMap)
 var hasInvalidExistingVmPlacements = invalidExistingVmPlacementCount > 0
@@ -208,7 +216,7 @@ var incompleteImageReferenceFlags = [
 var hasIncompleteImageReference = contains(incompleteImageReferenceFlags, true)
 
 var hasMissingIndexes = [
-  for i in range(1, length(regionIndexMap) + 1): empty(filter(items(regionIndexMap), r => r.value == i))
+  for i in range(1, length(regionIndexMap)): empty(filter(items(regionIndexMap), r => r.value == i))
 ]
 
 var invalidIndexSequence = contains(hasMissingIndexes, true)
@@ -224,8 +232,6 @@ var invalidIndexSequence = contains(hasMissingIndexes, true)
 
 var nonNetworkStageDeployed = deployControl || deployWorkload
 var networkStageSkipped = !deployNetwork
-var insufficientBrownfieldCoverage = length(existingRegions) < regionCount
-var insufficientBrownfieldForStage = nonNetworkStageDeployed && networkStageSkipped && insufficientBrownfieldCoverage
 
 var networkRegionsMissingFromInventory = filter(regionKeys, region => nonNetworkStageDeployed && networkStageSkipped && !contains(existingRegions, region))
 var hasMissingNetworkPrerequisites = nonNetworkStageDeployed && !empty(networkRegionsMissingFromInventory)
@@ -352,189 +358,518 @@ var hasNoGpoTargetDc = enableIdentity && missingPinnedDc
 var hasInvalidGpoNames = enableIdentity && (empty(gpoNames.?serverAdministration) || empty(gpoNames.?clientAdministration) || empty(gpoNames.?windowsLaps))
 
 // ========================================
-// VALIDATION FLAG MODEL
-// Consolidated rule state emitted for diagnostics.
+// VALIDATION FINDING CATALOG
+// Each finding owns its flag state, severity, category, and message.
+// Blocking findings are defined first, followed by advisory findings.
 // ========================================
 
-var validationFlags = {
-  invalidMinimums: invalidMinimums
-  invalidRegionCount: invalidRegionCount
-  invalidPrimaryPinning: invalidPrimaryPinning
-  hasNonControlInHub: hasNonControlInHub
-  invalidCapacity: invalidCapacity
-  missingRegionIndex: missingRegionIndex
-  hasInvalidSubnetIndex: hasInvalidSubnetIndex
-  hasDuplicateRegionIndexes: hasDuplicateRegionIndexes
-  hasOutOfBoundsRegionIndex: hasOutOfBoundsRegionIndex
-  hasDuplicateSubnetIndexes: hasDuplicateSubnetIndexes
-  hasOutOfBoundsSubnetIndex: hasOutOfBoundsSubnetIndex
-  hasDuplicateExistingRegions: hasDuplicateExistingRegions
-  hasDuplicateExistingVmPlacements: hasDuplicateExistingVmPlacements
-  hasUnsupportedExistingVmType: hasUnsupportedExistingVmType
-  hasInvalidExistingVmIndex: hasInvalidExistingVmIndex
-  hasUnsafeJumpboxAllowedSources: hasUnsafeJumpboxAllowedSources
-  hasInvalidPeeringCleanupIdentity: hasInvalidPeeringCleanupIdentity
-  hasMissingVmSizeRole: hasMissingVmSizeRole
-  hasMissingOsDiskRole: hasMissingOsDiskRole
-  hasEmptyVmSizeRole: hasEmptyVmSizeRole
-  hasInvalidOsDiskConfiguration: hasInvalidOsDiskConfiguration
-  hasIncompleteImageReference: hasIncompleteImageReference
-  hasInsufficientWorkloadCapacity: hasInsufficientWorkloadCapacity
-  invalidIndexSequence: invalidIndexSequence
-  hasRegionOverflow: hasRegionOverflow
-  hasTooManyDcs: hasTooManyDcs
-  invalidDepartmentCount: invalidDepartmentCount
-  invalidMinimumDepartments: invalidMinimumDepartments
-  invalidUsersPerDepartment: invalidUsersPerDepartment
-  duplicateDepartmentCodes: duplicateDepartmentCodes
-  hasInvalidExistingRegions: length(invalidExistingRegions) > 0
-  hasInvalidExistingVmPlacements: hasInvalidExistingVmPlacements
-  insufficientBrownfieldForStage: insufficientBrownfieldForStage
-  hasMissingNetworkPrerequisites: hasMissingNetworkPrerequisites
-  hasUncoveredNewVmNetworks: hasUncoveredNewVmNetworks
-  hubRequiredButMissing: hubRequiredButMissing
-  spokeRegionsCovered: !spokeRegionsCovered
-  hasMixedCreationMode: hasMixedCreationMode
-  missingDedicatedFileServer: missingDedicatedFileServer
-  invalidDedicatedFileServerConfiguration: invalidDedicatedFileServerConfiguration
-  invalidFileServicesIdentityConfiguration: invalidFileServicesIdentityConfiguration
-  hasMalformedDomainName: hasMalformedDomainName
-  hasEmptySysAdminDepartmentCode: hasEmptySysAdminDepartmentCode
-  hasNoGpoTargetDc: hasNoGpoTargetDc
-  hasInvalidGpoNames: hasInvalidGpoNames
-}
+// Blocking findings.
+
+var blockingValidationFindings = [
+  {
+    flag: 'invalidMinimums'
+    active: invalidMinimums
+    severity: 'block'
+    category: 'Platform'
+    message: 'At least 1 DC and 1 Jumpbox are required.'
+    remediation: 'Set vmCounts.dc and vmCounts.jumpbox to at least 1, and inventory any retained instances in existingVmPlacements.'
+  }
+  {
+    flag: 'hasNoDomainControllers'
+    active: hasNoDomainControllers
+    severity: 'block'
+    category: 'Platform'
+    message: 'No domain controller is present in the final VM placement model. The Active Directory control plane will be unavailable.'
+    remediation: 'Request at least one DC and, for a retained DC, add its valid dc placement to existingVmPlacements in an active region.'
+  }
+  {
+    flag: 'hasNoJumpboxes'
+    active: hasNoJumpboxes
+    severity: 'block'
+    category: 'Platform'
+    message: 'No jumpbox is present in the final VM placement model. The environment will have no jumpbox remote-access path.'
+    remediation: 'Request at least one jumpbox and, for a retained jumpbox, add its valid jmp placement to existingVmPlacements in an active region.'
+  }
+
+  {
+    flag: 'invalidRegionCount'
+    active: invalidRegionCount
+    severity: 'block'
+    category: 'Capacity'
+    message: 'Region count exceeds available regions.'
+    remediation: 'Reduce regionCount to the number of entries in regionIndexMap, or add the required region entries.'
+  }
+  {
+    flag: 'invalidCapacity'
+    active: invalidCapacity
+    severity: 'block'
+    category: 'Capacity'
+    message: 'Too many VMs for the allowed capacity per region.'
+    remediation: 'Reduce VM counts, add regions, or increase maxVmsPerRegion.'
+  }
+  {
+    flag: 'hasInsufficientWorkloadCapacity'
+    active: hasInsufficientWorkloadCapacity
+    severity: 'block'
+    category: 'Capacity'
+    message: 'Insufficient spoke capacity. Requested workload VMs require ${newNonControlVmCount} spoke slots, but only ${totalWorkloadRegionCapacity} remain after DC/jumpbox placement. Reduce VM counts, add regions, or increase maxVmsPerRegion.'
+    remediation: 'Reduce workload VM counts, add spoke regions, or increase maxVmsPerRegion.'
+  }
+  {
+    flag: 'hasRegionOverflow'
+    active: hasRegionOverflow
+    severity: 'block'
+    category: 'Capacity'
+    message: 'One or more regions exceed the maximum allowed VMs per region.'
+    remediation: 'Reduce the VM count in overflowing regions, add regions to redistribute placement, or increase maxVmsPerRegion.'
+  }
+  {
+    flag: 'hasTooManyDcs'
+    active: hasTooManyDcs
+    severity: 'block'
+    category: 'Capacity'
+    message: 'Too many DCs for the available regions.'
+    remediation: 'Reduce vmCounts.dc, add regions, or increase maxVmsPerRegion so all requested domain controllers can be placed.'
+  }
+
+  {
+    flag: 'missingRegionIndex'
+    active: missingRegionIndex
+    severity: 'block'
+    category: 'Addressing'
+    message: 'One or more regions are missing in regionIndexMap.'
+    remediation: 'Add an address index for every selected region in regionIndexMap.'
+  }
+  {
+    flag: 'hasInvalidSubnetIndex'
+    active: hasInvalidSubnetIndex
+    severity: 'block'
+    category: 'Addressing'
+    message: 'Subnet index map must include firewall, dc, jumpbox, server, and client.'
+    remediation: 'Add all required subnet role keys to subnetIndexMap.'
+  }
+  {
+    flag: 'hasDuplicateRegionIndexes'
+    active: hasDuplicateRegionIndexes
+    severity: 'block'
+    category: 'Addressing'
+    message: 'regionIndexMap contains duplicate index values, which would create overlapping VNet address spaces.'
+    remediation: 'Assign a unique address index to each region; avoid renumbering deployed regions unless planning the resulting address-space migration.'
+  }
+  {
+    flag: 'hasOutOfBoundsRegionIndex'
+    active: hasOutOfBoundsRegionIndex
+    severity: 'block'
+    category: 'Addressing'
+    message: 'regionIndexMap values must be between 1 and 255.'
+    remediation: 'Change out-of-range region indexes to unique values between 1 and 255, preserving deployed region indexes where possible.'
+  }
+  {
+    flag: 'hasDuplicateSubnetIndexes'
+    active: hasDuplicateSubnetIndexes
+    severity: 'block'
+    category: 'Addressing'
+    message: 'subnetIndexMap contains duplicate index values, which would create overlapping subnet address spaces.'
+    remediation: 'Assign a unique subnet index to each subnet role and plan address migration before changing deployed subnet indexes.'
+  }
+  {
+    flag: 'hasOutOfBoundsSubnetIndex'
+    active: hasOutOfBoundsSubnetIndex
+    severity: 'block'
+    category: 'Addressing'
+    message: 'subnetIndexMap values must be between 0 and 255.'
+    remediation: 'Change out-of-range subnet indexes to values between 0 and 255.'
+  }
+  {
+    flag: 'invalidIndexSequence'
+    active: invalidIndexSequence
+    severity: 'block'
+    category: 'Addressing'
+    message: 'Region index map must have continuous values starting at 1.'
+    remediation: 'Reassign regionIndexMap values to a continuous sequence from 1 through the number of mapped regions, preserving deployed address assignments where possible.'
+  }
+
+  {
+    flag: 'hasMissingVmSizeRole'
+    active: hasMissingVmSizeRole
+    severity: 'block'
+    category: 'Compute'
+    message: 'vmSizes must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.'
+    remediation: 'Add a vmSizes entry for every required VM role.'
+  }
+  {
+    flag: 'hasMissingOsDiskRole'
+    active: hasMissingOsDiskRole
+    severity: 'block'
+    category: 'Compute'
+    message: 'osDisks must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.'
+    remediation: 'Add an osDisks entry for every required VM role.'
+  }
+  {
+    flag: 'hasEmptyVmSizeRole'
+    active: hasEmptyVmSizeRole
+    severity: 'block'
+    category: 'Compute'
+    message: 'vmSizes values must be non-empty for all required roles.'
+    remediation: 'Set a non-empty, Azure-supported VM size for every required role.'
+  }
+  {
+    flag: 'hasInvalidOsDiskConfiguration'
+    active: hasInvalidOsDiskConfiguration
+    severity: 'block'
+    category: 'Compute'
+    message: 'osDisks entries must include a storageAccountType and a positive diskSizeGB for all required roles.'
+    remediation: 'Set a supported storageAccountType and positive diskSizeGB for each required role.'
+  }
+  {
+    flag: 'hasIncompleteImageReference'
+    active: hasIncompleteImageReference
+    severity: 'block'
+    category: 'Compute'
+    message: 'Image references must include publisher, offer, sku, and version.'
+    remediation: 'Provide non-empty publisher, offer, sku, and version values for each image reference.'
+  }
+
+  {
+    flag: 'hasInvalidExistingRegions'
+    active: length(invalidExistingRegions) > 0
+    severity: 'block'
+    category: 'Brownfield'
+    message: 'existingRegions contains regions that are not selected for the current deployment.'
+    remediation: 'Remove stale region entries from existingRegions or include those regions in the active region selection.'
+  }
+  {
+    flag: 'hasInvalidExistingVmPlacements'
+    active: hasInvalidExistingVmPlacements
+    severity: 'block'
+    category: 'Brownfield'
+    message: 'existingVmPlacements contains one or more regionKey values that are not present in the active regionKeys set. Remove stale inventory entries or include the missing regions in regionIndexMap.'
+    remediation: 'Correct each regionKey to an active region, or add the VM region to regionIndexMap and increase regionCount as needed.'
+  }
+  {
+    flag: 'hasDuplicateExistingRegions'
+    active: hasDuplicateExistingRegions
+    severity: 'block'
+    category: 'Brownfield'
+    message: 'existingRegions contains duplicate region entries.'
+    remediation: 'Remove duplicate region names from existingRegions.'
+  }
+  {
+    flag: 'hasDuplicateExistingVmPlacements'
+    active: hasDuplicateExistingVmPlacements
+    severity: 'block'
+    category: 'Brownfield'
+    message: 'existingVmPlacements contains duplicate type and index entries.'
+    remediation: 'Keep only one existingVmPlacements entry for each VM type and index.'
+  }
+  {
+    flag: 'hasUnsupportedExistingVmType'
+    active: hasUnsupportedExistingVmType
+    severity: 'block'
+    category: 'Brownfield'
+    message: 'existingVmPlacements contains an unsupported VM type.'
+    remediation: 'Use one of the supported VM types: dc, jmp, srvwin, cliwin, srvlin, or clilin; remove entries for other types.'
+  }
+  {
+    flag: 'hasInvalidExistingVmIndex'
+    active: hasInvalidExistingVmIndex
+    severity: 'block'
+    category: 'Brownfield'
+    message: 'existingVmPlacements contains an index outside the requested vmCounts range.'
+    remediation: 'Increase the corresponding vmCounts value to include the retained VM index, or remove the stale inventory entry.'
+  }
+
+  {
+    flag: 'invalidDedicatedFileServerConfiguration'
+    active: invalidDedicatedFileServerConfiguration
+    severity: 'block'
+    category: 'FileServices'
+    message: 'useDedicatedFileServer cannot be true when enableFileServices is false.'
+    remediation: 'Enable file services or set useDedicatedFileServer to false.'
+  }
+  {
+    flag: 'invalidFileServicesIdentityConfiguration'
+    active: invalidFileServicesIdentityConfiguration
+    severity: 'block'
+    category: 'FileServices'
+    message: 'enableIdentity must be true when enableFileServices or useDedicatedFileServer is true. File services depend on Active Directory users and groups.'
+    remediation: 'Enable identity or disable file services and dedicated file-server mode.'
+  }
+]
 
 // ========================================
-// MESSAGE COMPOSITION
-// First-match message preserves stable and concise feedback.
-// Messages are categorized by validation concern; only the first error is returned.
+// ADVISORY VALIDATION FINDINGS
+// Non-blocking validation findings that
+// provide design and operational guidance.
 // ========================================
 
-// Placement & Capacity Validation (msg1-5, msg10-11): VM placement logic, region capacity
-var msg1 = invalidMinimums ? 'At least 1 DC and 1 Jumpbox are required.' : ''
-var msg2 = invalidRegionCount ? 'Region count exceeds available regions.' : ''
-var msg3 = invalidPrimaryPinning ? 'Primary pinning failed: dc01 and jmp01 must be placed in the primary region.' : ''
-var msg4 = hasNonControlInHub ? 'One or more non-control VMs were placed in the hub region.' : ''
-var msg5 = missingRegionIndex ? 'One or more regions are missing in regionIndexMap.' : ''
+var advisoryValidationFindings = [
+  {
+    flag: 'invalidPrimaryPinning'
+    active: invalidPrimaryPinning
+    severity: 'advisory'
+    category: 'Placement'
+    message: 'Primary pinning failed: dc01 and jmp01 must be placed in the primary region.'
+    remediation: 'Correct existingVmPlacements so retained dc01 and jmp01 are in the primary region; otherwise let the placement model assign them there.'
+  }
+  {
+    flag: 'hasNonControlInHub'
+    active: hasNonControlInHub
+    severity: 'advisory'
+    category: 'Placement'
+    message: 'One or more non-control VMs were placed in the hub region.'
+    remediation: 'Move retained workload VMs to a spoke and update existingVmPlacements; keep workload placements out of the hub.'
+  }
+  {
+    flag: 'invalidDepartmentCount'
+    active: invalidDepartmentCount
+    severity: 'advisory'
+    category: 'Identity'
+    message: 'Department count exceeds the number of available mandatory and additional departments.'
+    remediation: 'Reduce departmentCount or add enough department definitions to sysAdminDepartment and additionalDepartments.'
+  }
+  {
+    flag: 'invalidMinimumDepartments'
+    active: invalidMinimumDepartments
+    severity: 'advisory'
+    category: 'Identity'
+    message: 'At least one department is required.'
+    remediation: 'Set departmentCount to include every required system-administration department.'
+  }
+  {
+    flag: 'invalidUsersPerDepartment'
+    active: invalidUsersPerDepartment
+    severity: 'advisory'
+    category: 'Identity'
+    message: 'Users per department must be at least 1.'
+    remediation: 'Set usersPerDepartment to 1 or greater.'
+  }
+  {
+    flag: 'duplicateDepartmentCodes'
+    active: duplicateDepartmentCodes
+    severity: 'advisory'
+    category: 'Identity'
+    message: 'Department codes must be unique.'
+    remediation: 'Assign a unique code to every department across sysAdminDepartment and additionalDepartments.'
+  }
+  {
+    flag: 'hasMissingNetworkPrerequisites'
+    active: hasMissingNetworkPrerequisites
+    severity: 'advisory'
+    category: 'Brownfield'
+    message: 'Network prerequisites are not declared for all selected regions during compute/identity deployment. Missing from existingRegions: ${networkRegionsMissingFromInventoryText}. Deploy stage=network first, or add the regions to existingRegions only if their networking already exists.'
+    remediation: 'Run stage=network before compute/identity, or add each missing region to existingRegions only after confirming its VNet and required subnets already exist.'
+  }
+  {
+    flag: 'hubRequiredButMissing'
+    active: hubRequiredButMissing
+    severity: 'advisory'
+    category: 'Brownfield'
+    message: 'Hub region is required but not available. Either deploy stage=network or add hub region to existingRegions.'
+    remediation: 'Run stage=network or include the hub in existingRegions after confirming its networking exists.'
+  }
+  {
+    flag: 'spokeRegionsNotCovered'
+    active: !spokeRegionsCovered
+    severity: 'advisory'
+    category: 'Brownfield'
+    message: 'One or more spoke regions are not available. Either deploy stage=network or add all spoke regions to existingRegions.'
+    remediation: 'Run stage=network or include every existing spoke in existingRegions after confirming its networking exists.'
+  }
+  {
+    flag: 'hasMixedCreationMode'
+    active: hasMixedCreationMode
+    severity: 'advisory'
+    category: 'Brownfield'
+    message: 'Mixing greenfield (create) and brownfield (reuse) regions in same deployment. Ensure consistent creation mode across all regions.'
+    remediation: 'Check existingRegions against Azure: list every region whose networking already exists and omit regions intended for network creation.'
+  }
+  {
+    flag: 'missingDedicatedFileServer'
+    active: missingDedicatedFileServer
+    severity: 'advisory'
+    category: 'FileServices'
+    message: 'useDedicatedFileServer is true but no srvwin virtual machine exists. Add a Windows server (vmCounts.windowsServer) or set useDedicatedFileServer to false.'
+    remediation: 'Add or retain at least one srvwin VM, or disable dedicated file-server mode.'
+  }
+  {
+    flag: 'hasInvalidPeeringCleanupIdentity'
+    active: hasInvalidPeeringCleanupIdentity
+    severity: 'advisory'
+    category: 'Operations'
+    message: 'automationManagedIdentityResourceId must be a User Assigned Managed Identity resource ID when brownfield peering cleanup is applicable.'
+    remediation: 'Provide the resource ID of a User Assigned Managed Identity with the required subscription-scope Network Contributor role.'
+  }
+  {
+    flag: 'hasMalformedDomainName'
+    active: hasMalformedDomainName
+    severity: 'advisory'
+    category: 'GroupPolicy'
+    message: 'domainName must be a multi-label DNS name (for example amrl.lab) without spaces, slashes, or @. Group Policy provisioning derives the domain DN and the SYSVOL path to Groups.xml from this value.'
+    remediation: 'Set domainName to a valid multi-label DNS name such as amrl.lab.'
+  }
+  {
+    flag: 'hasEmptySysAdminDepartmentCode'
+    active: hasEmptySysAdminDepartmentCode
+    severity: 'advisory'
+    category: 'GroupPolicy'
+    message: 'sysAdminDepartment must define a non-empty department code. Group Policy provisioning resolves the Windows admins group that directory population creates from this code.'
+    remediation: 'Add a non-empty department code to sysAdminDepartment.'
+  }
+  {
+    flag: 'hasNoGpoTargetDc'
+    active: hasNoGpoTargetDc
+    severity: 'advisory'
+    category: 'GroupPolicy'
+    message: 'Group Policy provisioning runs on the primary domain controller, which is not placed in the primary region. Correct dc01 placement or set enableIdentity to false.'
+    remediation: 'Pin dc01 to the primary region in existingVmPlacements, or enable identity only when a primary-DC target is available.'
+  }
+  {
+    flag: 'hasInvalidGpoNames'
+    active: hasInvalidGpoNames
+    severity: 'advisory'
+    category: 'GroupPolicy'
+    message: 'GPO names must define non-empty serverAdministration, clientAdministration, and windowsLaps values so the import script can match the exported backups.'
+    remediation: 'Set all three gpoNames values to the corresponding display names in the exported GPO backups.'
+  }
+    {
+    flag: 'hasUnsafeJumpboxAllowedSources'
+    active: hasUnsafeJumpboxAllowedSources
+    severity: 'advisory'
+    category: 'Security'
+    message: 'jumpboxAllowedSources is empty or contains 0.0.0.0/0. Remote access is broadly exposed and should be reviewed.'
+    remediation: 'Specify trusted source CIDRs and remove 0.0.0.0/0.'
+  }
+  {
+    flag: 'hasUncoveredNewVmNetworks'
+    active: hasUncoveredNewVmNetworks
+    severity: 'advisory'
+    category: 'Networking'
+    message: 'One or more virtual machines are assigned to regions that do not have corresponding network resources.'
+    remediation: 'Run stage=network before creating the VMs, or include the regions in existingRegions only if their required networking already exists.'
+  }
+]
 
-// Configuration & Role Validation (msg6-8, msg12): VM role sizing, region indexing, OS disk definitions
-var msg6 = hasInvalidSubnetIndex ? 'Subnet index map must include firewall, dc, jumpbox, server, and client.' : ''
-var msg7 = hasMissingVmSizeRole ? 'vmSizes must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.' : ''
-var msg8 = hasMissingOsDiskRole ? 'osDisks must include dc, jumpbox, windowsServer, windowsClient, linuxServer, and linuxClient.' : ''
-var msg9 = hasInsufficientWorkloadCapacity
-  ? 'Insufficient spoke capacity. Requested workload VMs require ${newNonControlVmCount} spoke slots, but only ${totalWorkloadRegionCapacity} remain after DC/jumpbox placement. Reduce VM counts, add regions, or increase maxVmsPerRegion.'
-  : ''
-var msg10 = hasRegionOverflow ? 'One or more regions exceed the maximum allowed VMs per region.' : ''
-var msg11 = invalidCapacity ? 'Too many VMs for the allowed capacity per region.' : ''
-var msg12 = invalidIndexSequence ? 'Region index map must have continuous values starting at 1.' : ''
-var msg13 = hasTooManyDcs ? 'Too many DCs for the available regions.' : ''
+var blockingValidationDetails = map(
+  activeBlockingValidationFindings,
+  item => {
+    category: item.category
+    flag: item.flag
+    message: item.message
+    remediation: item.remediation
+  }
+)
 
-// Identity & Directory Population Validation (msg14-17): Department configuration, user counts
-var msg14 = invalidDepartmentCount
-  ? 'Department count exceeds the number of available mandatory and additional departments.' : ''
-var msg15 = invalidMinimumDepartments ? 'At least one department is required.' : ''
-var msg16 = invalidUsersPerDepartment ? 'Users per department must be at least 1.' : ''
-var msg17 = duplicateDepartmentCodes ? 'Department codes must be unique.' : ''
+var validationFindings = concat(
+  blockingValidationFindings,
+  advisoryValidationFindings
+)
 
-// Brownfield & Deployment Stage Validation (msg18-23): Region reuse, hub/spoke availability for incremental deployments
-var msg18 = length(invalidExistingRegions) > 0
-  ? 'existingRegions contains regions that are not selected for the current deployment.'
-  : ''
+// Derive the public Boolean flag object from the complete finding catalog.
+var validationFlags = toObject(
+  validationFindings,
+  item => item.flag,
+  item => item.active
+)
 
-var msg19 = hasInvalidExistingVmPlacements
-  ? 'existingVmPlacements contains one or more regionKey values that are not present in the active regionKeys set. Remove stale inventory entries or include the missing regions in regionIndexMap.'
-  : ''
-var msg20 = hasMissingNetworkPrerequisites
-  ? 'Network prerequisites are not declared for all selected regions during compute/identity deployment. Missing from existingRegions: ${networkRegionsMissingFromInventoryText}. Deploy stage=network first, or add the regions to existingRegions only if their networking already exists.'
-  : insufficientBrownfieldForStage
-    ? 'Stage deployment (compute/identity) requires either stage=network or existingRegions to include all deployed regions.'
-    : ''
-var msg21 = hubRequiredButMissing
-  ? 'Hub region is required but not available. Either deploy stage=network or add hub region to existingRegions.'
-  : ''
-var msg22 = !spokeRegionsCovered
-  ? 'One or more spoke regions are not available. Either deploy stage=network or add all spoke regions to existingRegions.'
-  : ''
-var msg23 = hasMixedCreationMode
-  ? 'Mixing greenfield (create) and brownfield (reuse) regions in same deployment. Ensure consistent creation mode across all regions.'
-  : ''
-var msg24 = missingDedicatedFileServer
-  ? 'useDedicatedFileServer is true but no srvwin virtual machine exists. Add a Windows server (vmCounts.windowsServer) or set useDedicatedFileServer to false.'
-  : ''
-var msg25 = invalidDedicatedFileServerConfiguration
-    ? 'useDedicatedFileServer cannot be true when enableFileServices is false.'
-    : ''
-var msg26 = invalidFileServicesIdentityConfiguration
-  ? 'enableIdentity must be true when enableFileServices or useDedicatedFileServer is true. File services depend on Active Directory users and groups.'
-  : ''
-var msg27 = hasDuplicateRegionIndexes
-  ? 'regionIndexMap contains duplicate index values, which would create overlapping VNet address spaces.'
-  : ''
-var msg28 = hasOutOfBoundsRegionIndex
-  ? 'regionIndexMap values must be between 1 and 255.'
-  : ''
-var msg29 = hasDuplicateSubnetIndexes
-  ? 'subnetIndexMap contains duplicate index values, which would create overlapping subnet address spaces.'
-  : ''
-var msg30 = hasOutOfBoundsSubnetIndex
-  ? 'subnetIndexMap values must be between 0 and 255.'
-  : ''
-var msg31 = hasDuplicateExistingRegions
-  ? 'existingRegions contains duplicate region entries.'
-  : ''
-var msg32 = hasDuplicateExistingVmPlacements
-  ? 'existingVmPlacements contains duplicate type and index entries.'
-  : ''
-var msg33 = hasUnsupportedExistingVmType
-  ? 'existingVmPlacements contains an unsupported VM type.'
-  : ''
-var msg34 = hasInvalidExistingVmIndex
-  ? 'existingVmPlacements contains an index outside the requested vmCounts range.'
-  : ''
-var msg35 = hasInvalidPeeringCleanupIdentity
-  ? 'automationManagedIdentityResourceId must be a User Assigned Managed Identity resource ID when brownfield peering cleanup is applicable.'
-  : ''
-var msg36 = hasEmptyVmSizeRole
-  ? 'vmSizes values must be non-empty for all required roles.'
-  : ''
-var msg37 = hasInvalidOsDiskConfiguration
-  ? 'osDisks entries must include a storageAccountType and a positive diskSizeGB for all required roles.'
-  : ''
-var msg38 = hasIncompleteImageReference
-  ? 'Image references must include publisher, offer, sku, and version.'
-  : ''
+// Select active findings and derive the overall validation message and severity summaries.
+var activeValidationFindings = filter(
+  validationFindings,
+  item => item.active
+)
 
-// Group Policy Provisioning Validation (msg39-42): inputs the GPO Run Command derives paths and group names from
-var msg39 = hasMalformedDomainName
-  ? 'domainName must be a multi-label DNS name (for example amrl.lab) without spaces, slashes, or @. Group Policy provisioning derives the domain DN and the SYSVOL path to Groups.xml from this value.'
-  : ''
-var msg40 = hasEmptySysAdminDepartmentCode
-  ? 'sysAdminDepartment must define a non-empty department code. Group Policy provisioning resolves the Windows admins group that directory population creates from this code.'
-  : ''
-var msg41 = hasNoGpoTargetDc
-  ? 'Group Policy provisioning runs on the primary domain controller, which is not placed in the primary region. Correct dc01 placement or set enableIdentity to false.'
-  : ''
-var msg42 = hasInvalidGpoNames
-  ? 'GPO names must define non-empty serverAdministration, clientAdministration, and windowsLaps values so the import script can match the exported backups.'
-  : ''
+// The primary validation message is the first active finding
+// in catalog order. Blocking findings are evaluated before
+// advisory findings because validationFindings is assembled
+// as blockingValidationFindings followed by advisoryValidationFindings.
 
-var validationMessage = msg1 != '' ? msg1 : msg2 != '' ? msg2 : msg3 != '' ? msg3 : msg4 != '' ? msg4 : msg5 != '' ? msg5 : msg6 != '' ? msg6 : msg7 != '' ? msg7 : msg8 != '' ? msg8 : msg9 != '' ? msg9 : msg10 != '' ? msg10 : msg11 != '' ? msg11 : msg12 != '' ? msg12 : msg13 != '' ? msg13 : msg14 != '' ? msg14 : msg15 != '' ? msg15 : msg16 != '' ? msg16 : msg17 != '' ? msg17 : msg18 != '' ? msg18 : msg19 != '' ? msg19 : msg20 != '' ? msg20 : msg21 != '' ? msg21 : msg22 != '' ? msg22 : msg23 != '' ? msg23 : msg24 != '' ? msg24 : msg25 != '' ? msg25 : msg26 != '' ? msg26 : msg27 != '' ? msg27 : msg28 != '' ? msg28 : msg29 != '' ? msg29 : msg30 != '' ? msg30 : msg31 != '' ? msg31 : msg32 != '' ? msg32 : msg33 != '' ? msg33 : msg34 != '' ? msg34 : msg35 != '' ? msg35 : msg36 != '' ? msg36 : msg37 != '' ? msg37 : msg38 != '' ? msg38 : msg39 != '' ? msg39 : msg40 != '' ? msg40 : msg41 != '' ? msg41 : msg42 != '' ? msg42 : 'All validation checks passed.'
+var validationMessage = empty(activeValidationFindings)
+  ? 'All validation checks passed.'
+  : activeValidationFindings[0].message
+
+var activeBlockingValidationFindings = filter(
+  validationFindings,
+  item => item.active && item.severity == 'block'
+)
+
+var activeAdvisoryValidationFindings = filter(
+  validationFindings,
+  item => item.active && item.severity == 'advisory'
+)
+
+var advisoryValidationFlags = map(
+  activeAdvisoryValidationFindings,
+  item => item.flag
+)
+
+var advisoryValidationDetails = map(
+  activeAdvisoryValidationFindings,
+  item => {
+    category: item.category
+    flag: item.flag
+    message: item.message
+    remediation: item.remediation
+  }
+)
+
+var blockingValidationFlags = map(
+  activeBlockingValidationFindings,
+  item => item.flag
+)
+
+var hasBlockingValidationFailures = !empty(blockingValidationFlags)
+
+var blockingValidationSummary = empty(blockingValidationFlags)
+  ? 'No blocking validation failures detected.'
+  : 'Blocking validation failures detected: ${join(blockingValidationFlags, ', ')}'
+
+// ========================================
+// ENFORCEMENT MODE DECISION
+// Combine blocking findings with validationMode to determine
+// whether the deployment gate should fail.
+// ========================================
+
+var enforcementEnabled = validationMode == 'enforce'
+
+var shouldBlockDeployment = enforcementEnabled && hasBlockingValidationFailures
+
+var deploymentBlockMessage = shouldBlockDeployment
+  ? 'Deployment blocked by validation enforcement. ${length(activeBlockingValidationFindings)} blocking validation finding(s) detected. Review blockingValidationDetails for full diagnostics.'
+  : 'Deployment not blocked.'
 
 // ========================================
 // OUTPUTS
 // ========================================
 
+// Validation findings and deployment enforcement outputs.
+
 output validationFlags object = validationFlags
 output validationMessage string = validationMessage
+
+output hasBlockingValidationFailures bool = hasBlockingValidationFailures
+output blockingValidationFlags array = blockingValidationFlags
+output enforcementEnabled bool = enforcementEnabled
+output shouldBlockDeployment bool = shouldBlockDeployment
+output deploymentBlockMessage string = deploymentBlockMessage
+output blockingValidationSummary string = blockingValidationSummary
+output blockingValidationDetails array = blockingValidationDetails
+output advisoryValidationFlags array = advisoryValidationFlags
+output advisoryValidationDetails array = advisoryValidationDetails
+
+// Capacity and placement summaries.
 output totalVMs int = totalVMs
 output totalCapacity int = totalCapacity
 output vmPerRegionCounts array = vmPerRegionCounts
 output nonControlVmCount int = nonControlVmCount
 output totalWorkloadRegionCapacity int = totalWorkloadRegionCapacity
 output workloadCapacityByRegion array = workloadCapacityByRegion
+
+// Identity population metrics.
 output departmentCount int = departmentCount
 output usersPerDepartment int = usersPerDepartment
 output requestedDirectoryAccounts int = requestedDirectoryAccounts
+
+// Brownfield inventory and network diagnostics.
 output invalidExistingRegions array = invalidExistingRegions
 output invalidExistingVmPlacementCount int = invalidExistingVmPlacementCount
 output hasInvalidExistingVmPlacements bool = hasInvalidExistingVmPlacements

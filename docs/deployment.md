@@ -138,6 +138,15 @@ identity: {
 | `identity` | Runs AD bootstrap, replica promotion, directory population, domain join automation, and optional departmental file-service provisioning. It may also create missing workload VMs needed by the identity flow. Existing control-plane DCs are required. |
 | `all` | Runs the complete workflow. |
 
+### Validation Mode
+
+`validationMode` controls how findings affect deployment:
+
+- `reportOnly` reports blocking and advisory findings, then allows the selected stages to run.
+- `enforce` fails the validation gate when any blocking finding is active. Network, compute, and identity stages depend on the gate and do not run after it fails. Advisory findings do not block enforcement mode.
+
+The validation engine completes before the gate evaluates its results, so its nested deployment retains diagnostic outputs after an enforcement failure. See [Deployment Results and Troubleshooting](validation-and-troubleshooting.md) for retrieving them.
+
 Stages are dependency layers, not independent deployment products. Stage selection gates stage-owned resources, while shared placement and validation logic and the stage modules remain part of the evaluated template. `stage=all` is the end-to-end path when networking and VM creation are both required in the same deployment.
 
 For a compute-only deployment, first ensure the project-managed VNet and required role subnets exist in every target region. When adding a region or missing networking, run `stage=network` before `stage=compute`, or use `stage=all` to run the complete workflow.

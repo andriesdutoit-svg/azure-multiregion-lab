@@ -16,6 +16,8 @@ flowchart LR
 
 `modules/logic/validation.bicep` evaluates configuration and placement rules and returns outputs used by `main.bicep`.
 
+Findings are classified as `block` or `advisory`. With `validationMode=reportOnly`, findings are reported and deployment continues. With `validationMode=enforce`, an active blocking finding makes `validationGate` fail; network, compute, and identity stages depend on that gate and do not execute. Advisory findings do not block enforcement mode.
+
 It checks:
 
 - Required DC and jumpbox counts.
@@ -34,13 +36,21 @@ It checks:
 
 The current template requires `vmCounts.dc >= 1` for every deployment. It evaluates the primary DC and `fileServerName` before the identity and file-service feature flags can suppress their resource modules. With `vmCounts.dc=0`, template evaluation fails because no primary DC exists to supply `fileServerName`; set `dc` to at least `1` and redeploy.
 
-`vmCounts.jumpbox=0` produces the `invalidMinimums` validation flag and message, but does not currently block deployment.
+`hasNoDomainControllers` and `hasNoJumpboxes` are evaluated from the final VM placement model, which combines declared existing VM placements with planned placements. They distinguish the loss of the AD control plane from the loss of the supported jumpbox remote-access path; they do not query Azure to confirm that an inventoried VM exists. A zero-DC model can still fail earlier during root-template evaluation as described above, before validation outputs are returned.
 
 ## Useful Outputs
 
 - `validationSummary`: Short status for quick review.
 - `validationMessage`: First detected validation message.
 - `validationFlags`: Boolean validation flags.
+- `enforcementEnabled`: Whether `validationMode` is set to `enforce`.
+- `shouldBlockDeployment`: Whether enforcement is enabled and blocking findings are active.
+- `blockingValidationFlags`: Names of active blocking findings.
+- `blockingValidationDetails`: Active blocking findings with category, flag, message, and remediation guidance.
+- `blockingValidationSummary`: Summary of active blocking findings.
+- `deploymentBlockMessage`: Message used when the enforcement gate fails.
+- `advisoryValidationFlags`: Names of active advisory findings.
+- `advisoryValidationDetails`: Active advisory findings with category, flag, message, and remediation guidance.
 - `networkRegionsMissingFromInventory`: Selected regions missing from `existingRegions` when compute/identity is selected and networking is skipped.
 - `newVmRegionsWithoutNetwork`: Target regions for newly created VMs that are not declared in `existingRegions` while the network stage is skipped.
 - `workloadCapacitySummary`: Workload demand versus remaining capacity.
@@ -52,6 +62,8 @@ The current template requires `vmCounts.dc >= 1` for every deployment. It evalua
 - `vmCountPerRegion`: Final count by region.
 - `regionSummary`: Addressing, subnet, and regional VM summary.
 
+Each entry in `blockingValidationDetails` and `advisoryValidationDetails` includes `category`, `flag`, `message`, and `remediation`. The `remediation` property contains a recommended corrective action; it does not change parameters or repair resources automatically.
+
 ## Post-Deployment Review
 
 After deployment, review the outputs before treating the deployment as valid:
@@ -59,16 +71,25 @@ After deployment, review the outputs before treating the deployment as valid:
 ```powershell
 az deployment sub show `
   --name <deployment-name> `
-  --query "properties.outputs.{summary:validationSummary.value,message:validationMessage.value,flags:validationFlags.value,missingNetworkRegions:networkRegionsMissingFromInventory.value,newVmNetworkRegions:newVmRegionsWithoutNetwork.value,capacity:capacityCheck.value,placements:vmPlacement.value}" `
+  --query "properties.outputs.{summary:validationSummary.value,message:validationMessage.value,flags:validationFlags.value,enforcement:enforcementEnabled.value,blocked:shouldBlockDeployment.value,blocking:blockingValidationDetails.value,advisory:advisoryValidationFlags.value,advisoryDetails:advisoryValidationDetails.value,missingNetworkRegions:networkRegionsMissingFromInventory.value,newVmNetworkRegions:newVmRegionsWithoutNetwork.value,capacity:capacityCheck.value,placements:vmPlacement.value}" `
   --output json
 ```
 
-If the parent deployment fails before returning outputs, inspect the validation-engine nested deployment. Its name is `<prefix>-validation-engine-<first 20 characters of deployment name>`; query its `properties.outputs.validationMessage.value`, `validationFlags.value`, and `networkRegionsMissingFromInventory.value` outputs.
+When enforcement fails, the parent deployment may not return its outputs. The validation-engine nested deployment completes before the gate and retains its outputs. Its name is `<prefix>-validation-engine-<first 20 characters of deployment name>`; inspect it directly:
+
+```powershell
+az deployment sub show `
+  --name <prefix>-validation-engine-<deployment-name-prefix> `
+  --query "properties.outputs.blockingValidationDetails.value" `
+  --output jsonc
+```
 
 A healthy result has `validationSummary` set to `All validation checks passed.` and `capacityCheck.withinLimit` set to `true`. In `validationFlags`, the following flags should be `false`:
 
 - `hasRegionOverflow`: A region, including the hub, exceeds `maxVmsPerRegion`.
 - `invalidCapacity`: The total requested VM count exceeds `regionCount * maxVmsPerRegion`.
+- `hasNoDomainControllers`: The final placement model contains no DC, so the AD control plane will be unavailable. A jumpbox may still be present and accessible.
+- `hasNoJumpboxes`: The final placement model contains no jumpbox, so the supported remote-access path into the environment is unavailable.
 - `hasNonControlInHub`: A workload VM was placed in the hub.
 - `hasInsufficientWorkloadCapacity`: Control-plane placement left too few spoke slots for workloads.
 - `hasMissingNetworkPrerequisites`: Compute/identity is selected while networking is skipped and one or more selected regions are absent from `existingRegions`. Review `networkRegionsMissingFromInventory`; run `stage=network` first, or list a region only if its networking already exists.
@@ -81,11 +102,11 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 - `hasNoGpoTargetDc`: `enableIdentity` is `true` but `dc01` is not pinned to the primary region. Group Policy is provisioned on the primary domain controller, so there is no target for the import.
 - `hasInvalidGpoNames`: `enableIdentity` is `true` but one or more of `serverAdministration`, `clientAdministration`, or `windowsLaps` is empty. The import script uses these names to find the corresponding exported backups.
 
-These four flags cover configuration that the template can see. Failures inside the Group Policy Run Command itself are reported by the deployment because `ad-gpo.bicep` sets `treatFailureAsDeploymentFailure`. The script fails fast with an explicit message when the base64 ZIP parameter is empty or not decodable, when the expanded archive lacks the `GpoTemplates` root folder or a named GPO backup, when `directoryModel.gpoNames` is incomplete, when a target OU is missing, or when `Groups.xml` does not hold exactly one member entry to reconcile.
+The template findings cover configuration it can evaluate; they do not replace guest-side checks. Failures inside the Group Policy Run Command itself are reported by the deployment because `ad-gpo.bicep` sets `treatFailureAsDeploymentFailure`. The script fails fast with an explicit message when the base64 ZIP parameter is empty or not decodable, when the expanded archive lacks the `GpoTemplates` root folder or a named GPO backup, when `directoryModel.gpoNames` is incomplete, when a target OU is missing, or when `Groups.xml` does not hold exactly one member entry to reconcile.
 
 `validationFlags` reports each detected condition independently, while `validationMessage` contains only the first matching message in validation order. Capacity messages are evaluated before the stage-network prerequisite message, so inspect the flags and missing-region outputs when more than one condition is present.
 
-Validation flags and messages are diagnostic outputs; they do not by themselves block deployment, change resources, or roll back resources. Some invalid configurations can still fail earlier during template evaluation when later expressions require their values, such as `vmCounts.dc=0` when the template requires a primary DC. Also inspect VM Run Command results separately.
+`validationFlags` reports each finding independently. `validationMessage` contains only the first active finding in catalog order, with blocking findings listed before advisory findings. In `reportOnly` mode, findings do not block deployment. In `enforce` mode, active blocking findings fail the validation gate before stage modules execute; advisory findings remain non-blocking. This gate does not roll back resources from earlier successful deployments. Some invalid configurations can still fail earlier during template evaluation, such as `vmCounts.dc=0` when the root template requires a primary DC. Also inspect VM Run Command results separately.
 
 The stage network check uses the declared `existingRegions` inventory; it does not discover VNets, confirm role subnets, or verify live connectivity. It checks every selected region because the current subnet contract is produced for the full region set, even when no VM is newly placed there. Validation flags are diagnostic and do not block deployment; when network provisioning is skipped, confirm that every required VNet and role subnet actually exists before deploying VMs.
 

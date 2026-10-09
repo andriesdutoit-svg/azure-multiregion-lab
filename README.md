@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL) v2.7
+# Azure Multi-Region Lab (AMRL) v2.8
 
 AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, selectable network topologies, capacity-aware VM placement, and idempotent Active Directory automation.
 
@@ -78,6 +78,7 @@ See [Placement and Reconciliation](docs/placement-and-reconciliation.md) for the
 - v2.5 selectable hub-and-spoke firewall, hub-and-spoke peering-only, and full-mesh topology creation.
 - v2.6 OU-targeted Server and Client Administration GPO provisioning, Windows administrators group-reference reconciliation, and unique random passwords for newly created AD users.
 - v2.7 AD-group-based Windows and Linux endpoint administration with selected GPO, SSSD, realm-login, home-directory, and sudoers reconciliation.
+- v2.8 validation findings classified as blocking or advisory, with `reportOnly` and `enforce` modes, pre-stage enforcement, and remediation details.
 
 ## Network Topology
 
@@ -111,6 +112,8 @@ network -> compute -> identity
 ```
 
 Stages are dependency layers rather than isolated products: compute requires networking to exist, and identity may create missing workload VMs. See the [Deployment Guide](docs/deployment.md#stages) for sequencing, prerequisites, brownfield examples, and readiness checks.
+
+`validationMode=reportOnly` reports findings and continues; `validationMode=enforce` fails the validation gate when blocking findings are active. See [Deployment Results and Troubleshooting](docs/validation-and-troubleshooting.md) for validation outputs.
 
 ## Identity and Domain Join
 
@@ -200,4 +203,4 @@ The next engineering step is automated discovery and reconciliation for existing
 
 ## Release
 
-**v2.7 is complete.** It extends AD-group-based administration across Windows and Linux endpoints and reconciles selected endpoint settings during identity-stage reruns. A brownfield `stage=identity` drift-repair run completed successfully. Linux realm login remains permissive for domain users; `GGS_Linux_Admins` restricts sudo, not login. Full topology migration and resource retirement remain planned work.
+**v2.8 is complete.** It adds a classified validation findings catalog, `reportOnly` and `enforce` modes, and a validation gate that blocks network, compute, and identity stages when blocking findings are active. Blocking and advisory findings include remediation guidance. Full topology migration and resource retirement remain planned work.
