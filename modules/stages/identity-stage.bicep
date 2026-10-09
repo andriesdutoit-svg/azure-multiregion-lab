@@ -311,7 +311,7 @@ module domainJoinWindows '../identity/domain-join.bicep' = [
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
     dependsOn: [
-      adPopulate
+      adGpo
     ]
 
     params: {
@@ -340,7 +340,7 @@ module domainJoinLinux '../identity/domain-join-linux.bicep' = [
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
     dependsOn: [
-      adPopulate
+      adGpo
       linuxDesktop
     ]
 

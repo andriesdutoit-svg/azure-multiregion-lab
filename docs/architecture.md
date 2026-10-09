@@ -22,7 +22,7 @@ The primary region is always the hub and control-plane anchor. It hosts `dc01` a
 - Separation of concerns: networking, compute, security, and placement logic are clearly separated into modules.
 - Data-driven design: deployment behaviour is controlled through parameter configuration, not template edits.
 - Validation before deployment: invalid configurations are surfaced through validation outputs.
-- Balanced multi-region distribution: workloads are evenly distributed while respecting regional capacity constraints.
+- Deterministic, capacity-aware placement: in multi-region deployments, new workloads fill remaining spoke capacity slots in region-index order rather than being evenly balanced. Validation reports insufficient capacity and regional overflow; blocking findings stop stages only in `enforce` mode.
 - Security-first approach: minimal exposure, controlled access paths (jumpboxes), and Key Vault-backed credentials.
 
 ## Infrastructure as Code
@@ -113,17 +113,28 @@ All rules use `protocol: '*'` and `sourcePortRange: '*'`, relying on Azure NSG s
 
 ### IP Addressing Strategy
 
-All VMs use dynamic private IP allocation. DCs are deployed first into their dedicated per-region DC subnets, so each region's primary DC consistently receives the subnet's first usable address (`.4`; `.0`–`.3` are reserved by Azure). This removes the need for static IP calculations while keeping addressing predictable.
+All VM NICs, including DC NICs, use dynamic private IP allocation. Because AMRL uses dedicated DC-only subnets, a DC is highly likely to receive `.4`, the first usable address, in a fresh, otherwise untouched subnet. The template does not explicitly reserve or verify that address.
+
+Multiple DCs in the same subnet are not inherently a problem: one would normally receive `.4` and another `.5`, and either can serve domain DNS after successful promotion. Concurrent creation does not guarantee which named DC receives `.4`, but DNS does not require a particular DC identity there.
+
+The `.4` assumption can fail, or cease to provide a usable DNS endpoint, when:
+
+- The DC and NIC occupying `.4` are deleted while another DC remains at a different address, such as `.5`.
+- A DC is moved, recreated, or manually readdressed and its actual address differs from the calculated candidate; declared inventory may also be stale or incomplete.
+- An unrelated NIC occupies `.4`, contrary to the DC-only subnet design.
+- A DC occupies `.4` but AD promotion or DNS startup fails, the service later becomes unavailable, or the selected topology or network rules prevent clients from reaching it. These are service or connectivity failures, not address-allocation failures.
 
 ### DNS Configuration and Strategy
 
-Each VNet is configured with up to three DNS servers, derived from `.4` addresses in DC subnets (see `dnsCandidates`/`dnsServers` in `main.bicep`):
+The template calculates up to three DNS server candidates from `.4` addresses in regions containing declared DC placements (see `dnsCandidates`/`dnsServers` in `main.bicep`). It does not discover actual NIC addresses or verify that a working DC occupies each candidate address:
 
 1. The hub region's DC is prioritised when present.
 2. Remaining regions containing DCs are appended in deterministic order.
 3. The list is truncated to a maximum of three DNS servers.
 
 Greenfield VNets receive the current DNS server list derived from DC placement. Brownfield (reused) VNets retain their existing DNS configuration; DNS normalisation across previously deployed VNets is not performed automatically.
+
+Verify actual DC private IPs and VNet DNS settings during operational readiness checks, particularly after brownfield changes. Explicit DC IP allocation and safe DNS reconciliation are deferred to v4.x Discovery & Full Reconciliation, with architecture and migration scope to be defined during that work. Existing DC addresses must not be changed implicitly.
 
 ## VM Security Features
 

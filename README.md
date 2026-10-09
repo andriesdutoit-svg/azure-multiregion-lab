@@ -19,10 +19,11 @@ Trial and Student subscriptions may restrict regions, VM sizes, images, or quota
 ## Quick Start: Greenfield
 
 1. Copy `main.parameters.demo.json` to a local parameter file.
-2. Replace its placeholders with your public IP, SSH public key, and Key Vault ID.
-3. Set `existingRegions` and `existingVmPlacements` to empty arrays.
-4. Set `vmCounts.dc` to at least `1`.
-5. Deploy the Bicep template:
+2. Replace `<YOUR_PUBLIC_IP>` with your public IPv4 address (the demo adds `/32`), `<KEYVAULT_ID>` with your Key Vault resource ID, and `<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>` with your User Assigned Managed Identity resource ID.
+3. Ensure the Key Vault contains the referenced `sshPublicKey`, `sshPrivateKey`, `jumpboxAdminPassword`, `serverAdminPassword`, and `clientAdminPassword` secrets. Keep the Key Vault references in the parameter file; do not paste SSH keys or passwords into it.
+4. Set `existingRegions` and `existingVmPlacements` to empty arrays.
+5. Set `vmCounts.dc` to at least `1`.
+6. Deploy the Bicep template:
 
 ```powershell
 az deployment sub create `
@@ -32,7 +33,7 @@ az deployment sub create `
         --parameters <parameters-file>.json
 ```
 
-For Key Vault setup and parameter details, see [Deployment Guide](docs/deployment.md) and [Configuration Parameters Reference](docs/configuration-parameters-reference.md).
+The managed identity is used only for applicable brownfield peering cleanup during `stage=network` or `stage=all`; the cleanup script is not deployed for greenfield deployments. For Key Vault setup and parameter details, see [Deployment Guide](docs/deployment.md) and [Configuration Parameters Reference](docs/configuration-parameters-reference.md).
 
 ## Quick Start: Brownfield
 
@@ -187,7 +188,14 @@ docs/                              Detailed project documentation
 
 ## Planned Future Work
 
-The next engineering step is automated discovery and reconciliation for existing environments. See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification) for the detailed cleanup boundary and roadmap.
+The planned roadmap is:
+
+- **v2.8.1:** Engineering hardening, including drift tests, SSH-key reconciliation, deployment logging, and safe configuration updates.
+- **v2.9-v2.12:** Azure Bastion, Azure Arc, service accounts and file-server reconciliation, then monitoring and observability. The service-account and file-migration architecture will be scoped during v2.11 development.
+- **v3.0-v3.3:** Security enhancements and policy baselines, public key infrastructure, hybrid identity, then multi-forest support.
+- **v4.x:** Automatic discovery, explicit DC IP allocation and safe DNS reconciliation, full topology reconciliation, reverse transitions, and zero-VM deployment support. Advanced networking, security, and lab lifecycle automation remain stretch goals.
+
+See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification) for current topology-cleanup boundaries.
 
 ## Detailed Documentation
 

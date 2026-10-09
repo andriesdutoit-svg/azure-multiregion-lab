@@ -34,21 +34,23 @@ Connect to a jumpbox with RDP, then connect to Windows servers and clients using
 
 ## Linux
 
-Linux administration uses the `azureadmin` account and SSH key authentication. The private key is deployed to jumpboxes at:
+Linux administration uses SSH key authentication with the local account configured by `serverAdminUsername` for Linux servers (`srvlin`) or `clientAdminUsername` for Linux clients (`clilin`). When Linux VMs are requested, the private key is installed on newly created jumpboxes at:
 
 ```text
 C:\ProgramData\ssh\ssh-key
 ```
 
-From a jumpbox:
+Retained jumpboxes are excluded from this installation step. Adding Linux VMs later or changing the key does not install or reconcile it on existing jumpboxes; securely provision the matching key there separately until SSH-key reconciliation is implemented.
+
+From a jumpbox, replace `<configured-admin-username>` with the corresponding parameter value for the target VM:
 
 ```powershell
-ssh -i C:\ProgramData\ssh\ssh-key azureadmin@<linux-vm-private-ip>
+ssh -i C:\ProgramData\ssh\ssh-key <configured-admin-username>@<linux-vm-private-ip>
 ```
 
 Linux client SSH access from jumpboxes is always enabled and is not gated by a parameter.
 
-Direct SSH authentication using Active Directory credentials (e.g. `ssh user@amrl.lab@<ip>`) is not supported. Linux VMs are deployed with `disablePasswordAuthentication: true`, which intentionally keeps infrastructure administration (SSH keys via `azureadmin`) and user authentication (Active Directory credentials, via `su -` after SSH access) as separate security models.
+Direct SSH authentication using Active Directory credentials (e.g. `ssh user@amrl.lab@<ip>`) is not supported. Linux VMs are deployed with `disablePasswordAuthentication: true`, which intentionally keeps infrastructure administration (SSH keys via the configured local administrator account) and user authentication (Active Directory credentials, via `su -` after SSH access) as separate security models.
 
 ### Linux Client GUI (RDP)
 
