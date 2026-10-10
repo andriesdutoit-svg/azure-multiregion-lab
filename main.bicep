@@ -478,6 +478,10 @@ var finalVmPlacements = concat(
   vmPlacements
 )
 
+var sshKeyJumpboxPlacements = filter(finalVmPlacements, vm =>
+  vm.type == 'jmp'
+)
+
 var primaryDc = first(filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index == 0
 ))!
@@ -755,6 +759,8 @@ module computeStage 'modules/stages/compute-stage.bicep' = {
 
     windowsVMList: windowsVMList
     linuxVMList: linuxVMList
+
+    sshKeyJumpboxPlacements: sshKeyJumpboxPlacements
 
     hasLinuxVMs: hasLinuxVMs
 

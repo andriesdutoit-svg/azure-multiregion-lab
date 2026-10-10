@@ -94,6 +94,8 @@ param windowsVMList array
 param linuxVMList array
 param hasLinuxVMs bool
 
+param sshKeyJumpboxPlacements array
+
 // Compute configuration
 param roleSizingMap object
 param finalTags object
@@ -173,7 +175,7 @@ var activeLinuxVMs = deployIdentityTargets
   : []
 
 var jumpboxLinuxSshKeyVMs = (deployControl || deployWorkload || deployIdentity) && hasLinuxVMs
-  ? filter(controlWindowsVMs, item => item.type == 'jmp')
+  ? sshKeyJumpboxPlacements
   : []
 
 var subnetMapByRegion = toObject(subnetMap, item => item.regionKey, item => item.subnets)
