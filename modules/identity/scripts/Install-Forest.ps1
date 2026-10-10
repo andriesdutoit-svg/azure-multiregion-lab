@@ -18,7 +18,7 @@ param(
 )
 
 # Logs are surfaced by VM Run Command output.
-Write-Host "DomainName = $DomainName"
+Write-Host "[Info] Requested Active Directory domain: $DomainName."
 
 if ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {
     throw "ServerAdminPassword was not supplied"
@@ -30,19 +30,19 @@ $DsrmPassword = ConvertTo-SecureString `
     -Force
 
 if ((Get-WindowsFeature AD-Domain-Services).Installed) {
-    Write-Host "AD DS role already installed"
+    Write-Host '[Verified] Active Directory Domain Services role is installed.'
 }
 else {
     Install-WindowsFeature `
         AD-Domain-Services `
         -IncludeManagementTools
 
-    Write-Host "AD DS role installation complete"
+    Write-Host '[Info] Active Directory Domain Services role installation command completed.'
 }
 
 Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 
-Write-Host "Preparing Active Directory installation for: $DomainName"
+Write-Host "[Info] Checking for an existing Active Directory forest before creating $DomainName."
 
 # ============================================================================
 # IDEMPOTENCY CHECK: VERIFY FOREST DOES NOT ALREADY EXIST
@@ -51,12 +51,11 @@ Write-Host "Preparing Active Directory installation for: $DomainName"
 try {
     $CurrentDomain = Get-ADDomain -ErrorAction Stop
 
-    Write-Host "Domain already exists: $($CurrentDomain.Forest)"
+    Write-Host "[Info] Existing Active Directory forest detected: $($CurrentDomain.Forest). No new forest will be created."
     exit 0
 }
 catch {
-    Write-Host $_
-    Write-Host "No Active Directory forest detected"
+    Write-Host '[Info] No existing Active Directory forest was detected.'
 }
 
 # ============================================================================
@@ -65,7 +64,7 @@ catch {
 # Azure VM Run Command handles reconnection and completion detection.
 # ============================================================================
 
-Write-Host "Creating Active Directory forest: $DomainName"
+Write-Host "[Info] Starting Active Directory forest creation for $DomainName."
 
 Install-ADDSForest `
     -DomainName $DomainName `
@@ -73,4 +72,4 @@ Install-ADDSForest `
     -SafeModeAdministratorPassword $DsrmPassword `
     -Force
 
-Write-Host "Active Directory forest creation initiated. The server will automatically reboot to complete installation."
+Write-Host '[Info] Active Directory forest creation was initiated; the server will reboot to complete installation.'

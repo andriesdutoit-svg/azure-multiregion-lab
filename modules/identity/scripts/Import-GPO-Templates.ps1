@@ -18,9 +18,75 @@ param(
     [string]$ReconciliationToken
 )
 
-Write-Host "Template files received successfully"
+$script:logCounts = @{
+    Created = 0
+    Verified = 0
+    Updated = 0
+    Removed = 0
+    Skipped = 0
+    Warning = 0
+    Error = 0
+}
 
-Write-Host "AMRL GPO Template Import"
+function Write-AmrlLog {
+    param(
+        [Parameter(Mandatory, Position = 0)][string]$Message,
+        [string]$Status = 'Info'
+    )
+
+    if ($Message -match '^\[(Created|Verified|Updated|Removed|Skipped|Warning|Error|Info)\]\s*(.*)$') {
+        $Status = $Matches[1]
+        $Message = $Matches[2]
+    }
+    elseif ($Message -match '^\[(?<legacy>Link|Enable|Unenforce|Exists|Create|Import|Validate|Success|Reference Updated|Reference Verified|Reconciled|Cleanup|=)\]\s*(?<body>.*)$') {
+        $legacy = $Matches.legacy
+        $Message = $Matches.body
+        switch -Exact ($legacy) {
+            Link { $Status = 'Created' }
+            Enable { $Status = 'Updated' }
+            Unenforce { $Status = 'Updated' }
+            Exists {
+                if ($Message -match '^Link\b') { $Status = 'Verified' }
+                else { $Status = 'Info' }
+                break
+            }
+            Validate {
+                if ($Message -match '^Imported GPO exists') { $Status = 'Verified' }
+                else { $Status = 'Info' }
+                break
+            }
+            Success {
+                if ($Message -match '^Imported\b') { $Status = 'Created' }
+                else { $Status = 'Info' }
+                break
+            }
+            'Reference Updated' { $Status = 'Updated' }
+            'Reference Verified' { $Status = 'Verified' }
+            Reconciled { $Status = 'Updated' }
+            Cleanup {
+                if ($Message -match '^Removed\b') { $Status = 'Removed' }
+                elseif ($Message -match 'already absent') { $Status = 'Verified' }
+                else { $Status = 'Info' }
+                break
+            }
+            '=' {
+                if ($Message -match '^LAPS authorized decryptor is current') { $Status = 'Verified' }
+                else { $Status = 'Info' }
+                break
+            }
+            default { $Status = 'Info' }
+        }
+    }
+
+    if ($script:logCounts.ContainsKey($Status)) {
+        $script:logCounts[$Status]++
+    }
+
+    Microsoft.PowerShell.Utility\Write-Host "[$Status] $Message"
+}
+
+Write-AmrlLog '[Info] GPO template files were received.'
+Write-AmrlLog '[Info] GPO template import and reconciliation started.'
 
 Import-Module GroupPolicy -ErrorAction Stop
 
@@ -92,7 +158,7 @@ $clientAdministrationGpoName =
 $windowsLapsGpoName =
     $model.gpoNames.windowsLaps
 
-Write-Host "Template Root = $templateRoot"
+Write-AmrlLog "Template Root = $templateRoot"
 
 function Ensure-GpoLink {
     param(
@@ -126,7 +192,7 @@ function Ensure-GpoLink {
             -ErrorAction Stop |
             Out-Null
 
-        Write-Host "[Link] $GpoName"
+        Write-AmrlLog "[Link] $GpoName"
     }
     elseif (-not $existingLink.Enabled) {
 
@@ -136,7 +202,7 @@ function Ensure-GpoLink {
             -LinkEnabled Yes `
             -ErrorAction Stop
 
-        Write-Host "[Enable] Link $GpoName"
+        Write-AmrlLog "[Enable] Link $GpoName"
     }
     elseif ($existingLink.Enforced) {
 
@@ -146,11 +212,11 @@ function Ensure-GpoLink {
             -Enforced No `
             -ErrorAction Stop
 
-        Write-Host "[Unenforce] Link $GpoName"
+        Write-AmrlLog "[Unenforce] Link $GpoName"
     }
     else {
 
-        Write-Host "[Exists] Link $GpoName"
+        Write-AmrlLog "[Exists] Link $GpoName"
 
     }
 }
@@ -168,15 +234,15 @@ function Ensure-GpoFromTemplate {
 
     if ($null -eq $existing) {
 
-        Write-Host (
+        Write-AmrlLog (
             "[Create] $GpoName from template"
         )
         
-        Write-Host (
+        Write-AmrlLog (
             "[Import] Using template path: $TemplatePath"
         )
 
-        Write-Host (
+        Write-AmrlLog (
             "[Import] Template path exists: $TemplatePath"
         )
 
@@ -213,7 +279,7 @@ function Ensure-GpoFromTemplate {
             throw "No Backup.xml for '$GpoName' was found under '$TemplatePath'"
         }
 
-        Write-Host "[Validate] Matched backup: $($matchingBackup.FullName)"
+        Write-AmrlLog "[Validate] Matched backup: $($matchingBackup.FullName)"
 
         # -Path is the backup root holding the GUID folders, not the matched
         # folder itself; -BackupGpoName selects which backup inside it to use.
@@ -225,7 +291,7 @@ function Ensure-GpoFromTemplate {
             -ErrorAction Stop |
             Out-Null
 
-        Write-Host (
+        Write-AmrlLog (
             "[Success] Imported $GpoName"
         )
 
@@ -233,12 +299,12 @@ function Ensure-GpoFromTemplate {
             -Name $GpoName `
             -ErrorAction Stop
 
-        Write-Host "[Validate] Imported GPO exists: $($importedGpo.DisplayName) ($($importedGpo.Id))"
+        Write-AmrlLog "[Validate] Imported GPO exists: $($importedGpo.DisplayName) ($($importedGpo.Id))"
 
     }
     else {
 
-        Write-Host (
+        Write-AmrlLog (
             "[Exists] $GpoName"
         )
 
@@ -335,30 +401,14 @@ function Update-GpoGroupReference {
 
         }
 
-        Write-Host (
-            "[Reference Updated] $GpoName"
-        )
-
-        Write-Host (
-            "Name = $($member.name)"
-        )
-
-        Write-Host (
-            "SID  = $currentSid"
+        Write-AmrlLog (
+            "[Reference Updated] $GpoName administrators member is $($member.name)."
         )
     }
     else {
 
-        Write-Host (
-            "[Reference Verified] $GpoName"
-        )
-
-        Write-Host (
-            "Name = $desiredName"
-        )
-
-        Write-Host (
-            "SID  = $currentSid"
+        Write-AmrlLog (
+            "[Reference Verified] $GpoName administrators member is $desiredName."
         )
     }
 }
@@ -399,7 +449,7 @@ function Update-LapsGpoDecryptor {
         -ErrorAction SilentlyContinue
 
     if ($null -ne $currentSetting -and $currentSetting.Value -eq $expectedDecryptor) {
-        Write-Host "[=] LAPS authorized decryptor is current: $expectedDecryptor"
+        Write-AmrlLog "[=] LAPS authorized decryptor is current: $expectedDecryptor"
         return
     }
 
@@ -412,7 +462,7 @@ function Update-LapsGpoDecryptor {
         -ErrorAction Stop |
         Out-Null
 
-    Write-Host "[Reconciled] LAPS authorized decryptor: $expectedDecryptor"
+    Write-AmrlLog "[Reconciled] LAPS authorized decryptor: $expectedDecryptor"
 }
 
 Ensure-GpoFromTemplate `
@@ -461,12 +511,12 @@ if (Test-Path $templateRoot) {
         -Force `
         -ErrorAction Stop
 
-    Write-Host "[Cleanup] Removed extracted GPO templates"
+    Write-AmrlLog "[Cleanup] Removed extracted GPO templates"
 
 }
 else {
 
-    Write-Host "[Cleanup] GPO template folder already absent"
+    Write-AmrlLog "[Cleanup] GPO template folder already absent"
 
 }
 
@@ -477,13 +527,16 @@ if (Test-Path $zipPath) {
         -Force `
         -ErrorAction Stop
 
-    Write-Host "[Cleanup] Removed GPO template archive"
+    Write-AmrlLog "[Cleanup] Removed GPO template archive"
 
 }
 else {
 
-    Write-Host "[Cleanup] GPO template archive already absent"
+    Write-AmrlLog "[Cleanup] GPO template archive already absent"
 
 }
 
-Write-Host "AMRL GPO Template Import Completed"
+Write-AmrlLog (
+    "[Info] GPO reconciliation summary: Created=$($script:logCounts.Created); Verified=$($script:logCounts.Verified); Updated=$($script:logCounts.Updated); Removed=$($script:logCounts.Removed); Skipped=$($script:logCounts.Skipped); Warnings=$($script:logCounts.Warning); Errors=$($script:logCounts.Error)."
+)
+Write-AmrlLog '[Info] GPO template import and reconciliation completed.'

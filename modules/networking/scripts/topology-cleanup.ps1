@@ -8,12 +8,11 @@ $executePeeringCleanup = $env:EXECUTE_PEERING_CLEANUP -eq 'True'
 
 Disable-AzContextAutosave -Scope Process
 
-Connect-AzAccount -Identity
+Connect-AzAccount -Identity | Out-Null
 
 $context = Get-AzContext
 
-Write-Output "Authenticated Subscription: $($context.Subscription.Id)"
-Write-Output "Authenticated Account: $($context.Account.Id)"
+Write-Output '[Info] Deployment script authenticated with its managed identity.'
 
 $peeringsToRemove = @()
 
@@ -70,15 +69,15 @@ foreach ($peering in $peeringsToRemove)
             catch
             {
                 $deleteFailures += $peering.PeeringName
+                Write-Output "[Warning] Failed to remove candidate peering $($peering.PeeringName); review deployment diagnostics."
             }
         }
     }
 
 }
 
-Write-Output "NetworkMode: $networkMode"
-Write-Output "HubRegion: $hubRegion"
-Write-Output "ExistingRegions: $($existingRegions -join ', ')"
+Write-Output "[Info] Cleanup mode: network=$networkMode; hub=$hubRegion; declared regions=$($existingRegions.Count)."
+Write-Output "[Info] Cleanup summary: candidates=$($peeringsToRemove.Count); found=$($foundPeerings.Count); removed=$($deletedPeerings.Count); failures=$($deleteFailures.Count)."
 
 # This is the Azure Deployment Scripts output contract.
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(

@@ -17,10 +17,9 @@ $windowsAdminsGroup = (
     "$($model.groupNaming.globalSecurityPrefix)_$($model.platformAdminGroups.windowsAdmins)"
 )
 
-Write-Host "Starting AMRL Domain Join"
+Write-Host '[Info] Starting Windows domain join.'
 
-Write-Host "DomainName = $DomainName"
-Write-Host "VMType = $VMType"
+Write-Host "[Info] Target domain: $DomainName; VM type: $VMType."
 
 # ============================================================================
 # PHASE 1: VALIDATE OU MAPPING FOR VM TYPE
@@ -28,7 +27,7 @@ Write-Host "VMType = $VMType"
 
 $computerOu = $model.computerOuMapping.$VMType
 
-Write-Host "ComputerOu = $computerOu"
+Write-Host "[Info] Target computer OU: $computerOu."
 
 if ([string]::IsNullOrWhiteSpace($computerOu)) {
     throw "No OU mapping defined for VM type: $VMType"
@@ -48,23 +47,23 @@ $domainDn = (($DomainName -split '\.') | ForEach-Object {
 
 $fullOuPath = "$ouDn,OU=$($model.rootOuName),$domainDn"
 
-Write-Host "Full OU Path = $fullOuPath"
+Write-Host "[Info] Constructed target OU distinguished name for $VMType."
 
 if ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {
     throw "ServerAdminPassword was not supplied"
 }
 
-Write-Host "Domain join script loaded successfully"
+Write-Host '[Info] Domain join inputs were parsed.'
 
 # Check if the computer is already joined to a domain
 
 $computerSystem = Get-CimInstance Win32_ComputerSystem
 
-Write-Host "Computer Name: $($computerSystem.Name)"
-Write-Host "Part Of Domain: $($computerSystem.PartOfDomain)"
+Write-Host "[Info] Current computer name: $($computerSystem.Name)."
+Write-Host "[Info] Current domain-membership flag: $($computerSystem.PartOfDomain)."
 
 if ($computerSystem.PartOfDomain) {
-    Write-Host "Computer is already joined to a domain."
+    Write-Host '[Info] Computer already reports domain membership; no join command will run.'
     return
 }
 
@@ -96,13 +95,13 @@ for ($attempt = 1; $attempt -le 30; $attempt++) {
     try {
         Resolve-DnsName $DomainName -ErrorAction Stop | Out-Null
 
-        Write-Host "Successfully resolved domain DNS name."
+        Write-Host "[Verified] Domain DNS name $DomainName resolved."
 
         $dnsResolved = $true
         break
     }
     catch {
-        Write-Host "Attempt $attempt of 30: Unable to resolve $DomainName"
+        Write-Host "[Info] Domain DNS is not yet resolvable (attempt $attempt of 30)."
 
         Start-Sleep -Seconds 10
     }
@@ -116,7 +115,7 @@ if (-not $dnsResolved) {
 # PHASE 4: EXECUTE DOMAIN JOIN
 # ============================================================================
 
-Write-Host "Joining computer to domain $DomainName"
+Write-Host "[Info] Joining computer to domain $DomainName."
 
 if ($null -ne $fullOuPath) {
     Add-Computer `
@@ -132,7 +131,7 @@ else {
         -ErrorAction Stop
 }
 
-Write-Host "Domain join completed successfully."
+Write-Host '[Info] Domain join command completed.'
 
 # Verify domain membership
 
@@ -142,20 +141,16 @@ if (-not $computerSystem.PartOfDomain) {
     throw "Domain join operation completed, but the computer is still not reporting domain membership."
 }
 
-Write-Host "Domain membership verified."
+Write-Host "[Verified] Computer reports domain membership after the join."
 
 # ============================================================================
 # PHASE 5: CONFIGURE LOCAL ADMINISTRATOR ACCESS
 # ============================================================================
 
-Write-Host "Configuring local administrator access"
+Write-Host '[Info] Local administrator assignment is managed by Group Policy.'
 
 $netbiosName = $DomainName.Split('.')[0].ToUpper()
 
-Write-Host (
-    "Local administrator assignment handled by Group Policy."
-)
-
-Write-Host "Restarting computer to complete domain join."
+Write-Host '[Info] Restarting computer to complete the domain join.'
 
 Restart-Computer -Force

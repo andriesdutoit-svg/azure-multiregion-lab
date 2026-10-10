@@ -39,8 +39,65 @@ param(
     [string]$EnableFileServices
 )
 
-Write-Host "Starting AMRL Directory Population"
-Write-Host "DomainName = $DomainName"
+$script:logCounts = @{
+    Info = 0
+    Created = 0
+    Verified = 0
+    Updated = 0
+    Removed = 0
+    Skipped = 0
+    Warning = 0
+    Error = 0
+}
+
+function Write-AmrlLog {
+    param(
+        [Parameter(Mandatory, Position = 0)][string]$Message,
+        [string]$Status = 'Info'
+    )
+
+    if ($Message -match '^\[(Created|Verified|Updated|Removed|Skipped|Warning|Error|Info)\]\s*(.*)$') {
+        $Status = $Matches[1]
+        $Message = $Matches[2]
+    }
+    elseif ($Message -match '^\[(?<legacy>\+|=|i|INFO|WARN|ERROR|DEBUG|Cleanup)\]\s*(?<body>.*)$') {
+        $legacy = $Matches.legacy
+        $Message = $Matches.body
+        switch ($legacy) {
+            '+' {
+                if ($Message -match '^Created\b') { $Status = 'Created' }
+                elseif ($Message -match '^(Creating|Adding|Configuring)\b') { $Status = 'Info' }
+                elseif ($Message -match '^Removed\b') { $Status = 'Removed' }
+                else { $Status = 'Info' }
+                break
+            }
+            '=' {
+                if ($Message -match '^(Membership already exists|Windows LAPS schema already present)') { $Status = 'Verified' }
+                else { $Status = 'Info' }
+                break
+            }
+            'WARN' { $Status = 'Warning'; break }
+            'ERROR' { $Status = 'Error'; break }
+            'Cleanup' { $Status = 'Removed'; break }
+            'DEBUG' { return }
+            default { $Status = 'Info' }
+        }
+    }
+
+    if ($script:logCounts.ContainsKey($Status)) {
+        $script:logCounts[$Status]++
+    }
+
+    $formattedMessage = "[$Status] $Message"
+    switch ($Status) {
+        'Warning' { Microsoft.PowerShell.Utility\Write-Warning $formattedMessage }
+        'Error' { Microsoft.PowerShell.Utility\Write-Error $formattedMessage }
+        default { Microsoft.PowerShell.Utility\Write-Host $formattedMessage }
+    }
+}
+
+Write-AmrlLog '[Info] Starting AMRL directory population.'
+Write-AmrlLog "[Info] Target domain: $DomainName."
 
 Import-Module ActiveDirectory -ErrorAction Stop
 
@@ -56,7 +113,7 @@ Start-Transcript `
     -Path $logFile `
     -Force
 
-Write-Host "[i] Log file: $logFile"
+Write-AmrlLog "[Info] Transcript log: $logFile."
 
 # Helper functions: idempotent Ensure-* operations.
 # All functions check for existing objects before creation to support re-execution.
@@ -102,17 +159,18 @@ function Ensure-OrganizationalUnit {
         -ErrorAction SilentlyContinue
 
     if ($existingOu) {
-        Write-Host "[=] OU already exists: $Name"
+        Write-AmrlLog "[=] OU already exists: $Name"
         return $existingOu
     }
 
-    Write-Host "[+] Creating OU: $Name"
+    Write-AmrlLog "[Info] Creating OU $Name."
 
     New-ADOrganizationalUnit `
         -Name $Name `
         -Path $Path `
         -ProtectedFromAccidentalDeletion $ProtectedFromAccidentalDeletion
 
+    Write-AmrlLog "[Created] OU $Name."
     return Get-ADOrganizationalUnit `
         -LDAPFilter "(ou=$Name)" `
         -SearchBase $Path `
@@ -137,11 +195,11 @@ function Ensure-ADGroup {
         -ErrorAction SilentlyContinue
 
     if ($existingGroup) {
-        Write-Host "[=] Group already exists: $Name"
+        Write-AmrlLog "[=] Group already exists: $Name"
         return $existingGroup
     }
 
-    Write-Host "[+] Creating Group: $Name"
+    Write-AmrlLog "[Info] Creating group $Name."
 
     New-ADGroup `
         -Name $Name `
@@ -149,6 +207,7 @@ function Ensure-ADGroup {
         -GroupScope $GroupScope `
         -Path $Path
 
+    Write-AmrlLog "[Created] Group $Name."
     return Get-ADGroup `
         -LDAPFilter "(cn=$Name)" `
         -SearchBase $Path `
@@ -167,15 +226,17 @@ function Ensure-ADGroupMember {
         Where-Object Name -eq $MemberName
 
     if ($existingMember) {
-        Write-Host "[=] Membership already exists: $MemberName -> $GroupName"
+        Write-AmrlLog "[=] Membership already exists: $MemberName -> $GroupName"
         return
     }
 
-    Write-Host "[+] Adding membership: $MemberName -> $GroupName"
+    Write-AmrlLog "[Info] Adding membership $MemberName -> $GroupName."
 
     Add-ADGroupMember `
         -Identity $GroupName `
         -Members $MemberName
+
+    Write-AmrlLog "[Created] Membership $MemberName -> $GroupName."
 }
 
 function Set-ADGroupMembersAuthoritative {
@@ -192,7 +253,7 @@ function Set-ADGroupMembersAuthoritative {
 
         if ($member.Name -notin $DesiredMembers) {
 
-            Write-Host (
+            Write-AmrlLog (
                 "[INFO] Removing stale membership: " +
                 $member.Name +
                 " -> " +
@@ -228,15 +289,17 @@ function Ensure-ADPrincipalGroupMembership {
         Where-Object SamAccountName -eq $MemberName
 
     if ($existingMember) {
-        Write-Host "[=] Membership already exists: $MemberName -> $GroupName"
+        Write-AmrlLog "[=] Membership already exists: $MemberName -> $GroupName"
         return
     }
 
-    Write-Host "[+] Adding membership: $MemberName -> $GroupName"
+    Write-AmrlLog "[Info] Adding membership $MemberName -> $GroupName."
 
     Add-ADGroupMember `
         -Identity $GroupName `
         -Members $MemberName
+
+    Write-AmrlLog "[Created] Membership $MemberName -> $GroupName."
 }
 
 # User management: create missing users and reconcile selected attributes.
@@ -325,7 +388,7 @@ if ($existingUser) {
     )
 }
 
-Write-Host "[+] Creating User: $SamAccountName"
+Write-AmrlLog "[Info] Creating AD user account $SamAccountName."
 
 $generatedPassword = New-RandomPassword
 
@@ -356,27 +419,11 @@ $securePassword = ConvertTo-SecureString `
 
     try {
 
-        Write-Host (
-            "[DEBUG] Creating user: " +
-            "Name='$DisplayName', " +
-            "GivenName='$GivenName', " +
-            "Surname='$Surname', " +
-            "SamAccountName='$SamAccountName', " +
-            "UPN='$UserPrincipalName', " +
-            "Length=$($SamAccountName.Length)"
-        )
-
         New-ADUser @params -ErrorAction Stop
     }
     catch {
 
-        Write-Error (
-            "Failed AD user creation. " +
-            "Name='$DisplayName', " +
-            "SamAccountName='$SamAccountName', " +
-            "Length=$($SamAccountName.Length), " +
-            "UPN='$UserPrincipalName'"
-        )
+        Write-AmrlLog -Status Error -Message 'Failed to create an AD user account.'
 
         throw
     }
@@ -400,6 +447,8 @@ $securePassword = ConvertTo-SecureString `
             "SamAccountName='$SamAccountName'"
         )
     }
+
+    Write-AmrlLog '[Created] AD user account creation completed.'
 
     if ($Manager) {
         Set-ADUser `
@@ -510,7 +559,7 @@ function Get-SamAccountName {
         $sam = $sam.Substring(0, 20)
     }
 
-    Write-Host (
+    Write-AmrlLog (
         "[DEBUG] Generated sAMAccountName: " +
         $sam +
         " Length=" +
@@ -526,7 +575,7 @@ function Ensure-DirectoryOuStructure {
         [string]$DomainDn
     )
 
-    Write-Host "[i] OU generation starting"
+    Write-AmrlLog "[i] OU generation starting"
 
     $rootOU = Ensure-OrganizationalUnit `
         -Name $PopulationModel.rootOuName `
@@ -563,7 +612,7 @@ function Ensure-DirectoryOuStructure {
         }
     }
 
-    Write-Host "[i] OU generation completed"
+    Write-AmrlLog "[i] OU generation completed"
 
     return $rootOUdn
 }
@@ -576,7 +625,7 @@ function Ensure-DepartmentOUs {
         [object]$PopulationModel
     )
 
-    Write-Host "[i] Department OU generation starting"
+    Write-AmrlLog "[i] Department OU generation starting"
 
     $usersOU = Get-ManagedOU `
         -OuPath $PopulationModel.coreOuMapping.users `
@@ -591,7 +640,7 @@ function Ensure-DepartmentOUs {
             Out-Null
     }
 
-    Write-Host "[i] Department OU generation completed"
+    Write-AmrlLog "[i] Department OU generation completed"
 
     return $usersOU
 }
@@ -599,8 +648,8 @@ function Ensure-DepartmentOUs {
 $fileServicesEnabled =
     [System.Convert]::ToBoolean($EnableFileServices)
 
-Write-Host "EnableFileServices raw value = [$EnableFileServices]"
-Write-Host "EnableFileServices converted value = [$fileServicesEnabled]"
+Write-AmrlLog "EnableFileServices raw value = [$EnableFileServices]"
+Write-AmrlLog "EnableFileServices converted value = [$fileServicesEnabled]"
 
 function Ensure-DepartmentSecurityGroups {
     param(
@@ -621,7 +670,7 @@ function Ensure-DepartmentSecurityGroups {
         "${ggsPrefix}_$($PopulationModel.platformAdminGroups.linuxAdmins)"
     )
 
-    Write-Host "[i] Department security group generation starting"
+    Write-AmrlLog "[i] Department security group generation starting"
 
     $ggsOU = Get-ManagedOU `
         -OuPath $PopulationModel.groupOuMapping.globalSecurity `
@@ -673,7 +722,7 @@ function Ensure-DepartmentSecurityGroups {
             -GroupCategory Security `
             -GroupScope Global
            
-        Write-Host "Department security group file-service setting = [$EnableFileServices]"
+        Write-AmrlLog "Department security group file-service setting = [$EnableFileServices]"
 
         if ($EnableFileServices) {
 
@@ -695,7 +744,7 @@ function Ensure-DepartmentSecurityGroups {
         }
     }
 
-    Write-Host "[i] Department security group generation completed"
+    Write-AmrlLog "[i] Department security group generation completed"
 }
 
 function Ensure-DepartmentGroupNesting {
@@ -716,7 +765,7 @@ function Ensure-DepartmentGroupNesting {
         "${ggsPrefix}_$($PopulationModel.platformAdminGroups.linuxAdmins)"
     )
 
-    Write-Host "[i] Department group nesting starting"
+    Write-AmrlLog "[i] Department group nesting starting"
 
     # Nests Managers/Users into Share_RW/Share_RO so the file server's ACLs (Populate-Shares.ps1) resolve correct membership.
 
@@ -741,13 +790,13 @@ function Ensure-DepartmentGroupNesting {
             )
     }
     else {
-        Write-Warning (
+        Write-AmrlLog -Status Warning -Message (
             "$platformAdminUsersGroup not found. " +
             "Skipping platform admin group nesting."
         )
     }
 
-    Write-Host "Department group nesting file-service setting = [$EnableFileServices]"
+    Write-AmrlLog "Department group nesting file-service setting = [$EnableFileServices]"
 
     if ($EnableFileServices) {
 
@@ -765,7 +814,7 @@ function Ensure-DepartmentGroupNesting {
         }
     }
 
-    Write-Host "[i] Department group nesting completed"
+    Write-AmrlLog "[i] Department group nesting completed"
 }
 
 # Department manager reconciliation.
@@ -834,7 +883,7 @@ function Reconcile-DepartmentManagers {
 
             foreach ($duplicateManager in $duplicateManagers) {
 
-                Write-Host (
+                Write-AmrlLog (
                     "[INFO] Demoting duplicate manager: " +
                     $duplicateManager.SamAccountName
                 )
@@ -864,7 +913,7 @@ function Reconcile-DepartmentManagers {
 
             foreach ($managerObject in $existingDepartmentManagers) {
 
-                Write-Host (
+                Write-AmrlLog (
                     "[INFO] Reconciling manager: " +
                     $managerObject.SamAccountName +
                     " Department=" +
@@ -882,7 +931,7 @@ function Reconcile-DepartmentManagers {
                 } |
                 ForEach-Object {
 
-                    Write-Host (
+                    Write-AmrlLog (
                         "[INFO] Removing manager from user group: " +
                         $_.Name
                     )
@@ -901,7 +950,7 @@ function Reconcile-DepartmentManagers {
                 } |
                 ForEach-Object {
 
-                    Write-Host (
+                    Write-AmrlLog (
                         "[INFO] Removing manager from incorrect manager group: " +
                         $_.Name
                     )
@@ -920,7 +969,7 @@ function Reconcile-DepartmentManagers {
                 } |
                 ForEach-Object {
 
-                    Write-Host (
+                    Write-AmrlLog (
                         "[INFO] Removing manager from incorrect ALL group: " +
                         $_.Name
                     )
@@ -942,7 +991,7 @@ function Reconcile-DepartmentManagers {
                     -GroupName "${ggsPrefix}_$($department.Value)_Managers" `
                     -MemberName $managerSam
 
-                Write-Host (
+                Write-AmrlLog (
                     "[INFO] Manager groups reconciled: " +
                     $managerSam
                 )
@@ -957,7 +1006,7 @@ function Reconcile-DepartmentManagers {
 
 if ($existingDepartmentManagers.Count -eq 0) {
 
-    Write-Warning (
+    Write-AmrlLog -Status Warning -Message (
         "No manager found in department: " +
         $department.Name +
         ". Creating manager."
@@ -1079,7 +1128,7 @@ if ($existingDepartmentManagers.Count -eq 0) {
 
             if (-not $_.Manager) {
 
-                Write-Host (
+                Write-AmrlLog (
                     "[INFO] Assigning departmental manager for " +
                     $_.SamAccountName +
                     " -> " +
@@ -1102,7 +1151,7 @@ if ($existingDepartmentManagers.Count -eq 0) {
                     $currentManager.Department -ne $department.Name
                 ) {
 
-                    Write-Host (
+                    Write-AmrlLog (
                         "[INFO] Reassigning manager for " +
                         $_.SamAccountName +
                         " -> " +
@@ -1178,7 +1227,7 @@ function Get-DepartmentUserTargets {
             ($TargetUsersPerDepartment - $currentUserCount)
         )
 
-        Write-Host (
+        Write-AmrlLog (
             "[i] Department $($department.Name): " +
             "$currentUserCount users present, " +
             "$usersNeeded users required"
@@ -1210,7 +1259,7 @@ function Repair-ExistingUsers {
 
     $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
 
-    Write-Host "[i] Existing user remediation starting"
+    Write-AmrlLog "[i] Existing user remediation starting"
 
     foreach ($departmentData in $DepartmentInfo.Values) {
 
@@ -1230,14 +1279,14 @@ function Repair-ExistingUsers {
 
             if ($user.Title -like '*Manager*') {
 
-                Write-Host (
+                Write-AmrlLog (
                     "[INFO] Skipping manager account: " +
                     $user.SamAccountName
                 )
             }
             else {
 
-                Write-Host (
+                Write-AmrlLog (
                     "[INFO] Remediating user " +
                     $user.SamAccountName
                 )
@@ -1308,7 +1357,7 @@ function Repair-ExistingUsers {
         }
     }
 
-    Write-Host "[i] Existing user remediation completed"
+    Write-AmrlLog "[i] Existing user remediation completed"
 }
 
 # Missing-user population.
@@ -1346,7 +1395,7 @@ function Populate-DepartmentUsers {
 
     foreach ($departmentData in $DepartmentTargets.Values) {
 
-        Write-Host (
+        Write-AmrlLog (
             "[i] " +
             $departmentData.Department.Name +
             ": UsersNeeded=" +
@@ -1390,7 +1439,7 @@ function Populate-DepartmentUsers {
 
             if ($CsvNames.Count -eq 0) {
 
-                Write-Warning (
+                Write-AmrlLog -Status Warning -Message (
                     "No more names available in names.csv. " +
                     "User population stopped after available names were exhausted."
                 )
@@ -1445,7 +1494,7 @@ function Populate-DepartmentUsers {
 
             if (-not $userRecord) {
 
-                Write-Warning (
+                Write-AmrlLog -Status Warning -Message (
                     "No remaining unique usernames available."
                 )
 
@@ -1476,7 +1525,7 @@ function Populate-DepartmentUsers {
 
             if ($managerMembership) {
 
-                Write-Host (
+                Write-AmrlLog (
                     "[INFO] User is already a department manager. " +
                     "Skipping user-group remediation: " +
                     $userObject.SamAccountName
@@ -1500,7 +1549,7 @@ function Populate-DepartmentUsers {
             } |
             ForEach-Object {
 
-                Write-Host (
+                Write-AmrlLog (
                     "[INFO] Removing user from incorrect user group: " +
                     $_.Name
                 )
@@ -1534,7 +1583,7 @@ function Ensure-LapsConfiguration {
 
     if (-not $lapsSchema) {
 
-        Write-Host (
+        Write-AmrlLog (
             "[+] Windows LAPS schema not detected. " +
             "Extending schema."
         )
@@ -1543,7 +1592,7 @@ function Ensure-LapsConfiguration {
     }
     else {
 
-        Write-Host (
+        Write-AmrlLog (
             "[=] Windows LAPS schema already present."
         )
     }
@@ -1570,7 +1619,7 @@ function Ensure-LapsConfiguration {
         $windowsAdminsGroup
     )
 
-    Write-Host (
+    Write-AmrlLog (
         "[+] Configuring Windows LAPS self permissions: " +
         "Servers OU"
     )
@@ -1591,7 +1640,7 @@ function Ensure-LapsConfiguration {
 
     }
 
-    Write-Host (
+    Write-AmrlLog (
         "[+] Configuring Windows LAPS self permissions: " +
         "Clients OU"
     )
@@ -1612,7 +1661,7 @@ function Ensure-LapsConfiguration {
 
     }
 
-    Write-Host (
+    Write-AmrlLog (
         "[+] Configuring Windows LAPS read permissions: " +
         $qualifiedWindowsAdmins
     )
@@ -1667,7 +1716,7 @@ function Ensure-LapsConfiguration {
 # 5. Repair existing users
 # 6. Populate missing users
 
-Write-Host "[INFO] Waiting for Active Directory availability"
+Write-AmrlLog "[INFO] Waiting for Active Directory availability"
 
 $currentDomain = $null
 
@@ -1677,7 +1726,7 @@ for ($attempt = 1; $attempt -le 30; $attempt++) {
 
         $currentDomain = Get-ADDomain -ErrorAction Stop
 
-        Write-Host (
+        Write-AmrlLog (
             "[INFO] Connected to domain: " +
             $currentDomain.DNSRoot
         )
@@ -1686,7 +1735,7 @@ for ($attempt = 1; $attempt -le 30; $attempt++) {
     }
     catch {
 
-        Write-Host (
+        Write-AmrlLog (
             "[INFO] Attempt $attempt of 30 - " +
             "Active Directory not ready yet"
         )
@@ -1710,7 +1759,7 @@ $CSVNames = Initialize-NamesCsvRecords `
     -InputNamesCsvContent $NamesCsvContent `
     -CsvPath $usersCsvPath
 
-Write-Host (
+Write-AmrlLog (
     "[INFO] CSV records loaded: " +
     $CSVNames.Count
 )
@@ -1750,7 +1799,7 @@ Ensure-DepartmentGroupNesting `
     -PopulationModel $model `
     -EnableFileServices $fileServicesEnabled
 
-Write-Host "[i] User generation starting"
+Write-AmrlLog "[i] User generation starting"
 
 if ([string]::IsNullOrWhiteSpace($NamesCsvContent)) {
     throw "NamesCsvContent parameter is empty."
@@ -1761,7 +1810,7 @@ $requiredUsers =
 
 if ($CSVNames.Count -lt $requiredUsers) {
 
-    Write-Warning (
+    Write-AmrlLog -Status Warning -Message (
         "names.csv contains $($CSVNames.Count) names " +
         "but deployment requires $requiredUsers accounts. " +
         "Users will be distributed as evenly as possible."
@@ -1794,10 +1843,10 @@ Remove-Item `
     -Force `
     -ErrorAction SilentlyContinue
 
-Write-Host (
-    "[Cleanup] Removed temporary names.csv"
+Write-AmrlLog '[Info] Temporary names.csv cleanup was requested.'
+Write-AmrlLog (
+    "[Info] Directory population summary: Info=$($script:logCounts.Info); Created=$($script:logCounts.Created); Verified=$($script:logCounts.Verified); Updated=$($script:logCounts.Updated); Removed=$($script:logCounts.Removed); Skipped=$($script:logCounts.Skipped); Warnings=$($script:logCounts.Warning); Errors=$($script:logCounts.Error)."
 )
-
-Write-Host "[i] Directory population completed"
+Write-AmrlLog '[Info] Directory population completed.'
 
 Stop-Transcript

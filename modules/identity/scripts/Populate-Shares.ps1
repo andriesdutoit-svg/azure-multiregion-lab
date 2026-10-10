@@ -21,9 +21,8 @@ if (-not $model) {
     throw "DirectoryModel could not be parsed."
 }
 
-Write-Host "Starting AMRL Share Population"
-Write-Host "DepartmentCount = $DepartmentCount"
-Write-Host "ReconciliationToken = $ReconciliationToken"
+Write-Host '[Info] Starting share population.'
+Write-Host "[Info] Requested department count: $DepartmentCount."
 
 # # Get-SelectedDepartments: Filter department lists to match InputDepartmentCount.
 # # Always includes all sysAdminDepartments (mandatory); fills remaining slots with additionalDepartments.
@@ -78,7 +77,7 @@ function Initialize-DepartmentShares {
         [object]$PopulationModel
     )
 
-    Write-Host "[i] Root share creation starting"
+    Write-Host '[Info] Checking the root share directory.'
 
     $dlgsPrefix = $PopulationModel.groupNaming.domainLocalSecurityPrefix
 
@@ -91,16 +90,16 @@ function Initialize-DepartmentShares {
             -ItemType Directory `
             -Force | Out-Null
 
-        Write-Host "[+] Created $rootSharePath"
+        Write-Host "[Created] Root share directory $rootSharePath."
     }
     else {
 
-        Write-Host "[=] Root share already exists: $rootSharePath"
+        Write-Host "[Verified] Root share directory $rootSharePath exists."
     }
 
-    Write-Host "[i] Root share creation completed"
+    Write-Host '[Info] Root share directory check completed.'
 
-    Write-Host "[i] Root share ACL configuration starting"
+    Write-Host '[Info] Applying root share ACL configuration.'
 
     icacls $rootSharePath /inheritance:d | Out-Null
 
@@ -118,9 +117,9 @@ function Initialize-DepartmentShares {
         -Path $rootSharePath `
         -AclObject $fACLs
 
-    Write-Host "[i] Root share ACL configuration completed"
+    Write-Host '[Info] Root share ACL configuration commands completed.'
 
-    Write-Host "[i] Department share generation starting"
+    Write-Host '[Info] Processing departmental shares.'
 
     foreach ($department in $SelectedDepartments) {
 
@@ -137,14 +136,14 @@ function Initialize-DepartmentShares {
                 -ItemType Directory `
                 -Force | Out-Null
 
-            Write-Host "[+] Created share directory: $departmentSharePath"
+            Write-Host "[Created] Department share directory $departmentSharePath."
         }
         else {
 
-            Write-Host "[=] Share directory already exists: $departmentSharePath"
+            Write-Host "[Verified] Department share directory $departmentSharePath exists."
         }
 
-            Write-Host "[i] Department directory prepared: $($department.Name)"
+            Write-Host "[Info] Processing share configuration for $($department.Name)."
 
         if (-not (Get-SmbShare -Name $code -ErrorAction SilentlyContinue)) {
 
@@ -158,14 +157,14 @@ function Initialize-DepartmentShares {
                 -AccessRight Full `
                 -Force | Out-Null
 
-            Write-Host "[+] Created SMB share: $code"
+            Write-Host "[Created] SMB share $code."
         }
         else {
 
-            Write-Host "[=] SMB share already exists: $code"
+            Write-Host "[Info] SMB share $code exists; its configured path is not checked."
         }
 
-    Write-Host "[i] SMB share configuration completed for: $($department.Name)"
+    Write-Host "[Info] Share configuration commands completed for $($department.Name)."
 
         $dirACL = Get-Acl $departmentSharePath
 
@@ -185,21 +184,21 @@ function Initialize-DepartmentShares {
             "Allow"
         )
 
-        Write-Host "[i] ACL objects created for: $code"
+        Write-Host "[Info] Desired NTFS ACL entries prepared for $code."
 
         $dirACL.SetAccessRule($acrw)
         $dirACL.SetAccessRule($acro)
 
-        Write-Host "[i] ACL rules attached for: $code"
+        Write-Host "[Info] Desired NTFS ACL entries applied for $code."
 
         Set-Acl `
             -Path $departmentSharePath `
             -AclObject $dirACL
 
-        Write-Host "[+] Applied NTFS permissions: $($department.Name)"
+        Write-Host "[Info] NTFS permission command completed for $($department.Name)."
     }
 
-    Write-Host "[i] Department share generation completed"
+    Write-Host '[Info] Department share processing completed.'
 
 }
 
@@ -208,10 +207,11 @@ $departments = Get-SelectedDepartments `
     -AdditionalDepartmentsJson $AdditionalDepartmentsJson `
     -InputDepartmentCount $DepartmentCount
 
-Write-Host "Departments selected: $($departments.Count)"
+Write-Host "[Info] Selected $($departments.Count) departments for share population."
 
 Initialize-DepartmentShares `
     -SelectedDepartments $departments `
     -PopulationModel $model
 
-Write-Host "[i] Share population completed"
+Write-Host "[Info] Share population summary: processed $($departments.Count) departments."
+Write-Host '[Info] Share population completed.'

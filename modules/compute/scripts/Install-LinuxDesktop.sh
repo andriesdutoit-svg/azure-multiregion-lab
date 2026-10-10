@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-echo "[INFO] Installing Ubuntu desktop"
+echo "[Info] Installing Ubuntu desktop packages."
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -43,10 +43,10 @@ LINUX_ADMINS_GROUP=$(echo "${DIRECTORY_MODEL}" | jq -r '
   .platformAdminGroups.linuxAdmins
 ' | tr '[:upper:]' '[:lower:]')
 
-echo "[INFO] Linux administrators group = ${LINUX_ADMINS_GROUP}"
+echo "[Info] Linux administrators group was resolved for Polkit configuration."
 
 if [[ -z "${LINUX_ADMINS_GROUP}" || "${LINUX_ADMINS_GROUP}" == "null" ]]; then
-    echo "[ERROR] Unable to determine Linux administrators group"
+    echo "[Error] Unable to determine the Linux administrators group."
     exit 1
 fi
 
@@ -57,7 +57,7 @@ fi
 systemctl enable xrdp
 systemctl start xrdp
 
-echo "[INFO] Ubuntu desktop installation completed"
+echo "[Info] Ubuntu desktop packages installed."
 
 #
 # Phase 4 - Polkit configuration
@@ -65,7 +65,7 @@ echo "[INFO] Ubuntu desktop installation completed"
 # (ResultActive=yes), matching the sudo rights configured during domain join.
 #
 
-echo "[INFO] Configuring Polkit for Linux administrators"
+echo "[Info] Configuring Polkit for Linux administrators."
 
 mkdir -p /etc/polkit-1/localauthority/50-local.d
 
@@ -80,4 +80,5 @@ EOF
 
 systemctl restart polkit
 
-echo "[INFO] Polkit configuration completed"
+echo "[Info] Polkit configuration command completed."
+echo "[Info] Desktop, RDP, and Polkit setup completed."
