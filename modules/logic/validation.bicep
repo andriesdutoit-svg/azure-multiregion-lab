@@ -92,7 +92,7 @@ var hasInvalidRegionIndex = [
 ]
 
 var missingRegionIndex = contains(hasInvalidRegionIndex, true)
-var hasInvalidSubnetIndex = !(contains(subnetIndexMap, 'firewall') && contains(subnetIndexMap, 'jumpbox') && contains(subnetIndexMap, 'dc') && contains(subnetIndexMap, 'server') && contains(subnetIndexMap, 'client'))
+var hasInvalidSubnetIndex = !(contains(subnetIndexMap, 'firewall') && contains(subnetIndexMap, 'bastion') && contains(subnetIndexMap, 'jumpbox') && contains(subnetIndexMap, 'dc') && contains(subnetIndexMap, 'server') && contains(subnetIndexMap, 'client'))
 
 var regionIndexValues = [
   for region in items(regionIndexMap): region.value
@@ -445,7 +445,7 @@ var blockingValidationFindings = [
     active: hasInvalidSubnetIndex
     severity: 'block'
     category: 'Addressing'
-    message: 'Subnet index map must include firewall, dc, jumpbox, server, and client.'
+    message: 'Subnet index map must include firewall, bastion, jumpbox, dc, server, and client.'
     remediation: 'Add all required subnet role keys to subnetIndexMap.'
   }
   {

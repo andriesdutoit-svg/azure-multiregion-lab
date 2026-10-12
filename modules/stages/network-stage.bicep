@@ -47,6 +47,8 @@ param tags object
 
 param existingRegions array
 
+param enableBastion bool
+
 param addressPrefixes array
 param subnetPrefixesArray array
 
@@ -99,11 +101,13 @@ module vnets '../networking/vnet.bicep' = [
       location: region
       isHub: region == hubRegion
       deployAzureFirewallSubnet: deployFirewall
+      enableBastion: enableBastion
 
       existingRegions: existingRegions
 
       addressPrefix: addressPrefixes[i]
       subnetPrefix: subnetPrefixesArray[i]
+      bastionSubnetPrefix: subnetPrefixesArray[i].bastion
 
       dnsServers: dnsServers
       jumpboxSubnets: jumpboxSubnets

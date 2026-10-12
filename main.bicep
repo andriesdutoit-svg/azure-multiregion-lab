@@ -72,6 +72,8 @@ param existingVmPlacements array = []
 param subnetIndexMap object
 @description('Public IP ranges allowed to access jumpbox RDP or SSH.')
 param jumpboxAllowedSources array
+@description('Deploy Azure Bastion in the hub region.')
+param enableBastion bool
 
 // ----
 // Compute: VM Sizing & Images
@@ -571,6 +573,7 @@ var addressPrefixes = [
 var subnetPrefixesArray = [
   for region in regionKeys: {
     firewall: '10.${regionIndexMap[region]}.${subnetIndexMap.firewall}.0/24'
+    bastion:  '10.${regionIndexMap[region]}.${subnetIndexMap.bastion}.0/24'
     jumpbox: '10.${regionIndexMap[region]}.${subnetIndexMap.jumpbox}.0/24'
     dc:      '10.${regionIndexMap[region]}.${subnetIndexMap.dc}.0/24'
     server:  '10.${regionIndexMap[region]}.${subnetIndexMap.server}.0/24'
@@ -580,6 +583,7 @@ var subnetPrefixesArray = [
 
 var reservedSubnetKeys = [
   'firewall'
+  'bastion'
   'jumpbox'
   'dc'
   'server'
@@ -718,6 +722,8 @@ module networkStage 'modules/stages/network-stage.bicep' = {
     hubRegion: hubRegion
 
     deployNetwork: deployNetwork
+
+    enableBastion: enableBastion
 
     networkMode: networkMode
     executePeeringCleanup: executePeeringCleanup

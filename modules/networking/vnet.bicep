@@ -18,6 +18,8 @@ param jumpboxSubnets array
 param existingRegions array = []
 param jumpboxAllowedSources array
 param deployAzureFirewallSubnet bool
+param enableBastion bool
+param bastionSubnetPrefix string
 param tags object = {}
 
 var isExistingRegion = contains(existingRegions, location)
@@ -325,6 +327,19 @@ module subnetHub 'subnet.bicep' = if (isHub && deployAzureFirewallSubnet) {
     vnetName: vnetName
     subnetName: 'AzureFirewallSubnet'
     addressPrefix: subnetPrefix.firewall
+    nsgId: ''
+  }
+}
+
+module subnetBastion 'subnet.bicep' = if (isHub && enableBastion) {
+  name: 'AzureBastionSubnet'
+  dependsOn: [
+    subnetJumpbox
+  ]
+  params: {
+    vnetName: vnetName
+    subnetName: 'AzureBastionSubnet'
+    addressPrefix: bastionSubnetPrefix
     nsgId: ''
   }
 }
