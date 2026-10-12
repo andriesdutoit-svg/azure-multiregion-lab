@@ -23,15 +23,19 @@ SERVER_ADMIN_PASSWORD="${ServerAdminPassword}"
 RECONCILIATION_TOKEN="${ReconciliationToken}"
 
 log_info() {
-    echo "[INFO] $1"
+    if [[ "$1" =~ ^\[(Created|Verified|Updated|Removed|Skipped|Warning|Error|Info)\] ]]; then
+        printf '%s\n' "$1"
+    else
+        printf '[Info] %s\n' "$1"
+    fi
 }
 
 log_warn() {
-    echo "[WARN] $1"
+    printf '[Warning] %s\n' "$1"
 }
 
 log_error() {
-    echo "[ERROR] $1"
+    printf '[Error] %s\n' "$1"
 }
 
 log_info "Starting AMRL Linux Domain Join"
@@ -66,7 +70,7 @@ log_info "Input validation completed successfully"
 ALREADY_JOINED=false
 
 if command -v realm >/dev/null 2>&1 && realm list | grep -qi "domain-name:[[:space:]]*${DOMAIN_NAME}$"; then
-    log_info "Computer is already joined to ${DOMAIN_NAME}"
+    log_info "[Verified] Computer is joined to ${DOMAIN_NAME}."
     ALREADY_JOINED=true
 fi
 
@@ -103,7 +107,7 @@ if [[ "${ALREADY_JOINED}" == "false" ]] || ! command -v realm >/dev/null 2>&1; t
 
     log_info "Prerequisite installation completed"
 else
-    log_info "Skipping prerequisite installation because the computer is already joined"
+    log_info "[Skipped] Prerequisite installation; the computer is already joined."
 fi
 
 # Resolve the OU from the directory model for a new join; joined machines still continue through repair below.
@@ -170,7 +174,7 @@ if [[ "${ALREADY_JOINED}" == "false" ]]; then
 
     log_info "DNS and domain validation completed"
 else
-    log_info "Skipping DNS and domain discovery because the computer is already joined"
+    log_info "[Skipped] DNS and domain discovery; the computer is already joined."
 fi
 
 #
@@ -186,11 +190,11 @@ if [[ "${ALREADY_JOINED}" == "false" ]]; then
         --user="${SERVER_ADMIN_USERNAME}" \
         --computer-ou="${FULL_COMPUTER_OU_DN}"
 
-    log_info "Domain join completed"
+    log_info "[Updated] Domain join command completed for ${DOMAIN_NAME}."
 
 else
 
-    log_info "Skipping domain join because the computer is already joined"
+    log_info "[Verified] Domain join is not required; the computer is already joined."
 
 fi
 
@@ -419,6 +423,6 @@ fi
 
 log_info "Validating domain membership"
 
-realm list
+realm list >/dev/null
 
-log_info "Linux domain join completed successfully"
+log_info "[Info] Linux domain-join reconciliation completed for ${DOMAIN_NAME}."

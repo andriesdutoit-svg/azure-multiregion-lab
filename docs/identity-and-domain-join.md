@@ -167,8 +167,8 @@ Inspect the VM Run Command instance view when a job exists but a VM is not joine
 
 ```powershell
 az vm run-command show `
-  --resource-group <resource-group> `
-  --vm-name <vm-name> `
+        --resource-group "<resource-group>" `
+        --vm-name "<vm-name>" `
   --run-command-name join-domain-linux `
   --expand instanceView
 ```

@@ -16,7 +16,7 @@ param(
 $sshFolder = "C:\ProgramData\ssh"
 $keyPath = Join-Path $sshFolder 'ssh-key'
 
-Write-Host '[INFO] Installing SSH private key'
+Write-Host '[Info] Installing the jumpbox SSH private key.'
 
 if (-not (Test-Path $sshFolder)) {
     New-Item `
@@ -24,8 +24,6 @@ if (-not (Test-Path $sshFolder)) {
         -Path $sshFolder `
         -Force | Out-Null
 }
-
-Write-Host "[INFO] Key length = $($SshPrivateKey.Length)"
 
 [System.IO.File]::WriteAllText(
     $keyPath,
@@ -43,4 +41,4 @@ icacls $keyPath /remove:g "Users" | Out-Null
 icacls $keyPath /grant:r "Administrators:(F)" | Out-Null
 icacls $keyPath /grant:r "${AdminUsername}:(R)" | Out-Null
 
-Write-Host "[INFO] SSH key installed to $keyPath"
+Write-Host "[Info] SSH key file and ACL commands completed for $keyPath."

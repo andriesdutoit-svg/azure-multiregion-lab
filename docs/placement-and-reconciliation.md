@@ -70,7 +70,7 @@ VM creation still uses the missing-only model. Domain-join automation uses the f
 
 ## Brownfield Requirements
 
-Before each brownfield expansion, update:
+Before every brownfield deployment, including unchanged reruns, ensure the parameter inventory contains:
 
 - `existingRegions` with every region whose networking already exists.
 - `existingVmPlacements` with every VM that already exists.

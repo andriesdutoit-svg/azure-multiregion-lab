@@ -27,7 +27,7 @@ param(
     [string]$ReconciliationToken
 )
 
-Write-Host "Preparing replica DC promotion for: $DomainName"
+Write-Host "[Info] Preparing replica domain controller promotion for $DomainName."
 
 # ============================================================================
 # PHASE 1: INITIALIZE SECURE CREDENTIALS
@@ -51,7 +51,7 @@ $DomainCredential = New-Object System.Management.Automation.PSCredential(
     $SecurePassword
 )
 
-Write-Host "Using credential $NetBiosName\$ServerAdminUsername"
+Write-Host '[Info] Using the supplied domain administrator credentials for promotion.'
 
 Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 
@@ -62,11 +62,11 @@ Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 try {
     $CurrentDomain = Get-ADDomain -ErrorAction Stop
 
-    Write-Host "Server is already a Domain Controller in $($CurrentDomain.Forest)"
+    Write-Host "[Info] Server already reports domain-controller membership in $($CurrentDomain.Forest)."
     exit 0
 }
 catch {
-    Write-Host "Server is not yet a Domain Controller"
+    Write-Host '[Info] Server is not currently reporting domain-controller membership.'
 }
 
 # ============================================================================
@@ -74,14 +74,14 @@ catch {
 # ============================================================================
 
 if ((Get-WindowsFeature AD-Domain-Services).Installed) {
-    Write-Host "AD DS role already installed"
+    Write-Host '[Verified] Active Directory Domain Services role is installed.'
 }
 else {
     Install-WindowsFeature `
         AD-Domain-Services `
         -IncludeManagementTools
 
-    Write-Host "AD DS role installation complete"
+    Write-Host '[Info] Active Directory Domain Services role installation command completed.'
 }
 
 # ============================================================================
@@ -89,7 +89,7 @@ else {
 # Promotion triggers automatic reboot; Azure VM Run Command handles reconnection.
 # ============================================================================
 
-Write-Host "Promoting server as replica Domain Controller in $DomainName"
+Write-Host "[Info] Starting replica domain controller promotion in $DomainName."
 
 Install-ADDSDomainController `
     -DomainName $DomainName `
@@ -98,4 +98,4 @@ Install-ADDSDomainController `
     -SafeModeAdministratorPassword $SecurePassword `
     -Force
 
-Write-Host "Replica DC promotion initiated. The server will automatically reboot."
+Write-Host '[Info] Replica domain controller promotion was initiated; the server will reboot.'

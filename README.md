@@ -1,8 +1,18 @@
-# Azure Multi-Region Lab (AMRL) v2.8
+# Azure Multi-Region Lab (AMRL)
 
 AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, selectable network topologies, capacity-aware VM placement, and idempotent Active Directory automation.
 
-**v2.8 is complete.** See [Project History and Learning Notes](docs/project-history.md) for release evolution, design decisions, and IaC learning outcomes.
+See [Project History and Learning Notes](docs/project-history.md) for release history, learning outcomes, and the roadmap.
+
+## Getting Started
+
+Choose one path:
+
+| Your Environment | Start Here |
+|---|---|
+| New Azure subscription or tenant | [New Subscription Setup](docs/new-subscription-setup.md), including the final deployment |
+| Existing foundation, new lab | [Greenfield Quick Start](#quick-start-greenfield) |
+| Existing AMRL lab | [Brownfield Quick Start](#quick-start-brownfield) |
 
 ## Prerequisites
 
@@ -18,7 +28,9 @@ Trial and Student subscriptions may restrict regions, VM sizes, images, or quota
 
 ## Quick Start: Greenfield
 
-1. Copy `main.parameters.demo.json` to a local parameter file.
+Use this quick start only when the Key Vault, secrets, and deployment managed identity already exist. The new-subscription guide is a complete alternative path, not a prerequisite workflow to repeat afterward.
+
+1. Copy `main.parameters.demo.json` to `main.parameters.local.json` for the new lab; do not overwrite an existing lab's parameter file.
 2. Replace `<YOUR_PUBLIC_IP>` with your public IPv4 address (the demo adds `/32`), `<KEYVAULT_ID>` with your Key Vault resource ID, and `<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>` with your User Assigned Managed Identity resource ID.
 3. Ensure the Key Vault contains the referenced `sshPublicKey`, `sshPrivateKey`, `jumpboxAdminPassword`, `serverAdminPassword`, and `clientAdminPassword` secrets. Keep the Key Vault references in the parameter file; do not paste SSH keys or passwords into it.
 4. Set `existingRegions` and `existingVmPlacements` to empty arrays.
@@ -26,11 +38,14 @@ Trial and Student subscriptions may restrict regions, VM sizes, images, or quota
 6. Deploy the Bicep template:
 
 ```powershell
+$parameterFile = '.\main.parameters.local.json'
+$deploymentLocation = 'westeurope'
+$deploymentName = 'amrl-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 az deployment sub create `
-        --name <deployment-name> `
-        --location <deployment-location> `
+        --name $deploymentName `
+        --location $deploymentLocation `
         --template-file main.bicep `
-        --parameters <parameters-file>.json
+        --parameters $parameterFile
 ```
 
 The managed identity is used only for applicable brownfield peering cleanup during `stage=network` or `stage=all`; the cleanup script is not deployed for greenfield deployments. For Key Vault setup and parameter details, see [Deployment Guide](docs/deployment.md) and [Configuration Parameters Reference](docs/configuration-parameters-reference.md).
@@ -112,17 +127,11 @@ docs/                              Detailed project documentation
 
 ## Planned Future Work
 
-The planned roadmap is:
-
-- **v2.8.1:** Engineering hardening, including drift tests, SSH-key reconciliation, deployment logging, and safe configuration updates.
-- **v2.9-v2.12:** Azure Bastion, Azure Arc, service accounts and file-server reconciliation, then monitoring and observability. The service-account and file-migration architecture will be scoped during v2.11 development.
-- **v3.0-v3.3:** Security enhancements and policy baselines, public key infrastructure, hybrid identity, then multi-forest support.
-- **v4.x:** Automatic discovery, explicit DC IP allocation and safe DNS reconciliation, full topology reconciliation, reverse transitions, and zero-VM deployment support. Advanced networking, security, and lab lifecycle automation remain stretch goals.
-
-See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification) for current topology-cleanup boundaries.
+See the [Roadmap](docs/project-history.md#roadmap) for planned capabilities and deferred work.
 
 ## Detailed Documentation
 
+- [New Subscription Setup](docs/new-subscription-setup.md)
 - [Architecture](docs/architecture.md)
 - [Deployment Guide](docs/deployment.md)
 - [Configuration Parameters Reference](docs/configuration-parameters-reference.md)
