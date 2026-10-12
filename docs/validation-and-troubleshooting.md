@@ -71,7 +71,7 @@ After deployment, review the outputs before treating the deployment as valid:
 
 ```powershell
 az deployment sub show `
-  --name <deployment-name> `
+  --name "<deployment-name>" `
   --query "properties.outputs.{summary:validationSummary.value,message:validationMessage.value,flags:validationFlags.value,enforcement:enforcementEnabled.value,blocked:shouldBlockDeployment.value,blocking:blockingValidationDetails.value,advisory:advisoryValidationFlags.value,advisoryDetails:advisoryValidationDetails.value,missingNetworkRegions:networkRegionsMissingFromInventory.value,newVmNetworkRegions:newVmRegionsWithoutNetwork.value,capacity:capacityCheck.value,placements:vmPlacement.value}" `
   --output json
 ```
@@ -80,7 +80,7 @@ When enforcement fails, the parent deployment may not return its outputs. The va
 
 ```powershell
 az deployment sub show `
-  --name <prefix>-validation-engine-<deployment-name-prefix> `
+  --name "<prefix>-validation-engine-<deployment-name-prefix>" `
   --query "properties.outputs.blockingValidationDetails.value" `
   --output jsonc
 ```
@@ -105,11 +105,13 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 
 The template findings cover configuration it can evaluate; they do not replace guest-side checks. Failures inside the Group Policy Run Command itself are reported by the deployment because `ad-gpo.bicep` sets `treatFailureAsDeploymentFailure`. The script fails fast with an explicit message when the base64 ZIP parameter is empty or not decodable, when the expanded archive lacks the `GpoTemplates` root folder or a named GPO backup, when `directoryModel.gpoNames` is incomplete, when a target OU is missing, or when `Groups.xml` does not hold exactly one member entry to reconcile.
 
-`validationFlags` reports each detected condition independently, while `validationMessage` contains only the first matching message in validation order. Capacity messages are evaluated before the stage-network prerequisite message, so inspect the flags and missing-region outputs when more than one condition is present.
-
 `validationFlags` reports each finding independently. `validationMessage` contains only the first active finding in catalog order, with blocking findings listed before advisory findings. In `reportOnly` mode, findings do not block deployment. In `enforce` mode, active blocking findings fail the validation gate before stage modules execute; advisory findings remain non-blocking. This gate does not roll back resources from earlier successful deployments. Some invalid configurations can still fail earlier during template evaluation, such as `vmCounts.dc=0` when the root template requires a primary DC. Also inspect VM Run Command results separately.
 
-The stage network check uses the declared `existingRegions` inventory; it does not discover VNets, confirm role subnets, or verify live connectivity. It checks every selected region because the current subnet contract is produced for the full region set, even when no VM is newly placed there. Validation flags are diagnostic and do not block deployment; when network provisioning is skipped, confirm that every required VNet and role subnet actually exists before deploying VMs.
+The stage network check uses the declared `existingRegions` inventory; it does not discover VNets, confirm role subnets, or verify live connectivity. It checks every selected region because the current subnet contract is produced for the full region set, even when no VM is newly placed there. Network-prerequisite findings are advisory and do not block enforcement mode; confirm that every required VNet and role subnet actually exists before deploying VMs when networking is skipped.
+
+## Automation Log Statuses
+
+Use `[Created]`, `[Verified]`, `[Updated]`, `[Removed]`, `[Skipped]`, `[Warning]`, and `[Error]` to identify automation outcomes; `[Info]` indicates progress. Review warnings and errors, then confirm the guest execution state and exit code. A completion message alone does not prove success.
 
 ## Azure Availability Checks
 
@@ -124,9 +126,9 @@ Regional vCPU quotas vary significantly by subscription type:
 Example: if each VM uses 2 vCPUs and your regional quota is 4, set `maxVmsPerRegion = 2`.
 
 ```powershell
-az vm list-sizes --location <region> -o table
-az vm list-usage --location <region> -o table
-az vm image list --publisher Canonical --offer 0001-com-ubuntu-server-jammy --sku 22_04-lts-gen2 --location <region>
+az vm list-sizes --location "<region>" -o table
+az vm list-usage --location "<region>" -o table
+az vm image list --publisher Canonical --offer 0001-com-ubuntu-server-jammy --sku 22_04-lts-gen2 --location "<region>"
 ```
 
 Trial and Student subscriptions can have regional quota and SKU restrictions.
@@ -135,7 +137,7 @@ Trial and Student subscriptions can have regional quota and SKU restrictions.
 
 ```powershell
 az deployment operation sub list `
-  --name <deployment-name> `
+  --name "<deployment-name>" `
   --query "[].{state:properties.provisioningState,target:properties.targetResource.resourceName}" `
   -o table
 ```

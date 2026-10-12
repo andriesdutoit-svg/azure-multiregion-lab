@@ -11,18 +11,23 @@
 - A parameter file with valid region, network, compute, and identity settings.
 - At least one domain controller requested with `vmCounts.dc >= 1`, even if `enableIdentity`, `enableFileServices`, and `useDedicatedFileServer` are all `false`.
 
+For a new subscription or tenant, follow [New Subscription Setup](new-subscription-setup.md) instead of starting with the commands below. It includes prerequisites, shared values, and the complete sequence through deployment.
+
 ## Greenfield Deployment
 
 For a new environment, use an empty `existingRegions` array and an empty `existingVmPlacements` array. Set `vmCounts.dc` to at least `1`.
 
 The current template evaluates the primary domain-controller and file-server target during validation regardless of the identity and file-service flags. A deployment with `vmCounts.dc=0` therefore fails template validation before resources are created.
 
+Prerequisite: initialize `$parameterFile` and `$deploymentLocation` as shown in [Local Validation](ci-cd-validation.md#local-validation), then complete those checks before running this command.
+
 ```powershell
+$deploymentName = 'amrl-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 az deployment sub create `
-  --name <deployment-name> `
-  --location <deployment-location> `
+  --name $deploymentName `
+  --location $deploymentLocation `
   --template-file main.bicep `
-  --parameters <parameters-file>.json
+  --parameters $parameterFile
 ```
 
 ## Brownfield Deployment
@@ -85,13 +90,25 @@ Create a User Assigned Managed Identity, grant it the **Network Contributor** ro
 
 ### Managed Identity
 
-Create a User Assigned Managed Identity for deployment automation:
+Create a User Assigned Managed Identity after [creating the foundation group](new-subscription-setup.md#azure-context-and-foundation). These commands require `$foundationRg`, `$foundationLocation`, `$automationIdentityName`, and `$azureContext` from that setup step. Retrieve existing identities instead of replacing them:
 
 ```powershell
-az identity create `
-  --name amrl-deployment-mi `
-  --resource-group amrl-foundation-rg `
-  --location <region>
+az identity list --resource-group $foundationRg --query "[].{name:name,resourceId:id,principalId:principalId}" -o table
+$automationIdentity = az identity create --name $automationIdentityName `
+  --resource-group $foundationRg --location $foundationLocation | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or -not $automationIdentity.id -or -not $automationIdentity.principalId) {
+  throw 'Managed identity creation failed.'
+}
+```
+
+For an identity that already exists, use this instead of `create`:
+
+```powershell
+$automationIdentity = az identity show --name $automationIdentityName `
+  --resource-group $foundationRg | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or -not $automationIdentity.principalId) {
+  throw 'Managed identity not found in the selected subscription.'
+}
 ```
 
 ### Required Role Assignment
@@ -100,10 +117,10 @@ Grant the managed identity the **Network Contributor** role at subscription scop
 
 ```powershell
 az role assignment create `
-  --assignee-object-id <principalId> `
+  --assignee-object-id $automationIdentity.principalId `
   --assignee-principal-type ServicePrincipal `
   --role "Network Contributor" `
-  --scope /subscriptions/<subscriptionId>
+  --scope "/subscriptions/$($azureContext.id)" --output none
 ```
 
 ### Why This Permission Is Required
@@ -208,10 +225,13 @@ The current validation rule requires region index values to be contiguous and st
 
 ## Preflight Checks
 
+Repeat these checks for each selected workload region, using its Azure region name:
+
 ```powershell
-az vm list-sizes --location <region> -o table
-az vm list-usage --location <region> -o table
-az vm image list --publisher Canonical --offer 0001-com-ubuntu-server-jammy --sku 22_04-lts-gen2 --location <region>
+$region = '<workload-region>'
+az vm list-sizes --location $region -o table
+az vm list-usage --location $region -o table
+az vm image list --publisher Canonical --offer 0001-com-ubuntu-server-jammy --sku 22_04-lts-gen2 --location $region
 ```
 
 [Back to README](../README.md)

@@ -135,8 +135,10 @@ All credentials are stored in Azure Key Vault and referenced by name, not embedd
 | `serverAdminPassword` | reference | `serverAdminPassword` | Password for server local admin |
 | `clientAdminUsername` | string | N/A (local username) | Local admin account on client VMs |
 | `clientAdminPassword` | reference | `clientAdminPassword` | Password for client local admin |
-| `sshPublicKey` | reference | `sshPublicKey` | SSH public key for Linux VMs |
-| `sshPrivateKey` | reference | `sshPrivateKey` | SSH private key (deployed to jumpboxes) |
+| `sshPublicKey` | reference | `sshPublicKey` | Public key for Linux VM creation |
+| `sshPrivateKey` | reference | `sshPrivateKey` | Private key deployed to jumpboxes |
+
+Use a matching SSH key pair. See [SSH Key Setup](access-and-administration.md#ssh-key-setup) for upload instructions.
 
 **Example Parameter File Reference**:
 

@@ -662,7 +662,7 @@ module validationEngine 'modules/logic/validation.bicep' = {
     networkMode: networkMode
     automationManagedIdentityResourceId: automationManagedIdentityResourceId
     vmPlacements: finalVmPlacements
-    newVmPlacements: missingVmList
+    newVmPlacements: vmPlacements
     regionKeys: regionKeys
     maxVmsPerRegion: maxVmsPerRegion
     primaryRegion: primaryRegion

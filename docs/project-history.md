@@ -24,7 +24,15 @@
 - **v2.5**: Selectable network topologies and brownfield firewall support.
 - **v2.6**: Windows administration GPOs and unique passwords for new AD users.
 - **v2.7**: Windows/Linux endpoint administration and configuration reconciliation.
-- **v2.8 (complete)**: Blocking/advisory validation findings, `reportOnly`/`enforce` modes, pre-stage deployment gating, and remediation details.
+- **v2.8**: Blocking/advisory validation findings, `reportOnly`/`enforce` modes, pre-stage deployment gating, and remediation details.
+- **v2.8.1**: Engineering hardening for deployment logging, retained-jumpbox SSH-key targeting, and network-coverage validation.
+
+## Roadmap
+
+- **v2.9-v2.12:** Azure Bastion, Azure Arc, service accounts and file-server reconciliation, then monitoring and observability. The service-account and file-migration architecture will be scoped during v2.11 development.
+- **v3.0-v3.3:** Security enhancements and policy baselines, public key infrastructure, hybrid identity, then multi-forest support.
+- **v4.x:** Automatic discovery, explicit DC IP allocation and safe DNS reconciliation, full topology reconciliation, reverse transitions, and zero-VM deployment support.
+- **Stretch goals:** Advanced networking, security, and lab lifecycle automation.
 
 ## Learning Outcomes Demonstrated
 

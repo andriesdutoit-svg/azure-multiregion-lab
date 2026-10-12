@@ -134,7 +134,7 @@ The template calculates up to three DNS server candidates from `.4` addresses in
 
 Greenfield VNets receive the current DNS server list derived from DC placement. Brownfield (reused) VNets retain their existing DNS configuration; DNS normalisation across previously deployed VNets is not performed automatically.
 
-Verify actual DC private IPs and VNet DNS settings during operational readiness checks, particularly after brownfield changes. Explicit DC IP allocation and safe DNS reconciliation are deferred to v4.x Discovery & Full Reconciliation, with architecture and migration scope to be defined during that work. Existing DC addresses must not be changed implicitly.
+Verify actual DC private IPs and VNet DNS settings during readiness checks, particularly after brownfield changes. Do not assume explicit address allocation or automatic DNS reconciliation, and do not change existing DC addresses implicitly.
 
 ## VM Security Features
 
