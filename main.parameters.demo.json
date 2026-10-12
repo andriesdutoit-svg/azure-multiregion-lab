@@ -28,6 +28,10 @@
       }
     },
 
+    "enableBastion": {
+      "value": false
+    },
+
     "regionIndexMap": {
       "value": {
         "southafricanorth": 1,
@@ -62,10 +66,12 @@
     "subnetIndexMap": {
       "value": {
         "firewall": 0,
-        "jumpbox": 1,
-        "dc": 2,
-        "server": 3,
-        "client": 4
+        "bastion": 1,
+        "jumpbox": 2,
+        "dc": 3,
+        "server": 4,
+        "client": 5,
+        "test": 6
       }
     },
 
