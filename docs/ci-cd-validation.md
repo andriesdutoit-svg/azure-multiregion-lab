@@ -37,9 +37,8 @@ The workflow at `.github/workflows/release.yml` runs when a tag matching `v*` is
 Typical release flow:
 
 ```powershell
-$releaseTag = '<release-tag-starting-with-v>'
-git tag $releaseTag
-git push origin $releaseTag
+git tag <release-tag-starting-with-v>
+git push origin <release-tag-starting-with-v>
 ```
 
 ## Bootstrapping OIDC for a New Subscription or Tenant
