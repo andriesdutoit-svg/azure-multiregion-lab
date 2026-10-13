@@ -12,8 +12,9 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | `stage` | string | Deployment stage: `network`, `compute`, `identity`, or `all`. See [Deployment Guide](deployment.md#stages). | `"all"` |
 | `validationMode` | string | `reportOnly` reports findings without blocking stages; `enforce` fails the validation gate when blocking findings are active. | `"reportOnly"` |
 | `networkMode` | string | Network topology: `hubSpokeFirewall`, `hubSpoke`, or `fullMesh`. See [Network Topology Modes](deployment.md#network-topology-modes). | `"hubSpokeFirewall"` |
-| `executePeeringCleanup` | bool | Controls deletion, not execution, of the peering-cleanup Deployment Script. For applicable brownfield non-`fullMesh` deployments, `true` removes candidate spoke-to-spoke peerings inferred from `existingRegions`; `false` reports them without deleting them. The script is not deployed for greenfield or `fullMesh` deployments. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for verification requirements and scope. | `true` |
-| `automationManagedIdentityResourceId` | string | Required resource ID of the User Assigned Managed Identity used by Deployment Scripts. Supply it for every deployment; the identity is used only when the applicable brownfield cleanup Deployment Script is deployed. Create the identity, grant it Network Contributor at subscription scope, and pass the full resource ID here. | `"/subscriptions/<subscriptionId>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identityName>"` |
+| `enableBastion` | bool | Deploys Azure Bastion in the hub region when `true`. When `false` in brownfield deployments, retires existing Bastion resources. | `true` |
+| `bastionSku` | string | Azure Bastion SKU: `Basic`, `Standard`, or `Premium`. | `"Standard"` |
+| `automationManagedIdentityResourceId` | string | Required resource ID of the User Assigned Managed Identity used by Deployment Scripts. Supply it for every deployment; the identity is used when brownfield network reconciliation (peering or Bastion cleanup) is executed. Create the identity, grant it Network Contributor at subscription scope, and pass the full resource ID here. | `"/subscriptions/<subscriptionId>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identityName>"` |
 | `tags` | object | Resource tags for organisation and billing | `{"environment": "lab"}` |
 | `regionCount` | integer | Number of regions to deploy across | `2` |
 | `maxVmsPerRegion` | integer | Maximum VMs allowed per region | `2` |
@@ -39,7 +40,7 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | `hubSpoke` | Hub-spoke peerings | Hub-to-spoke only; VNet peering is non-transitive, so spoke-to-spoke traffic is unavailable. |
 | `fullMesh` | Direct regional peerings | Every selected region is directly peered with every other selected region. |
 
-`networkMode` changes do not affect VM placement or identity automation. The template does not discover the prior topology or automatically retire all resources from a previous mode. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for the cleanup scope and roadmap.
+`networkMode` changes do not affect VM placement or identity automation. The template does not discover the prior topology or automatically retire all resources from a previous mode. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for the reconciliation scope and roadmap.
 
 ## Virtual Machine Configuration
 

@@ -78,7 +78,7 @@ Before every brownfield deployment, including unchanged reruns, ensure the param
 
 ## Topology Independence
 
-VM placement is independent of `networkMode`. The hub remains the control-plane region for `dc01` and `jmp01`, while workload placement, capacity accounting, DNS candidates, and identity targeting use the same final placement model in every topology mode. For network-transition behavior and cleanup boundaries, see [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification).
+VM placement is independent of `networkMode`. The hub remains the control-plane region for `dc01` and `jmp01`, while workload placement, capacity accounting, DNS candidates, and identity targeting use the same final placement model in every topology mode. For network-transition behavior and reconciliation boundaries, see [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification).
 
 ## File Server Reassignment on Brownfield Expansion
 

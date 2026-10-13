@@ -50,6 +50,7 @@ param existingRegions array = []
 param existingVmPlacements array = []
 // Dedicated file server mode: requires at least one srvwin VM to exist.
 param enableIdentity bool
+param enableBastion bool = false
 param useDedicatedFileServer bool
 param enableFileServices bool
 param fileServerVmAvailable bool
@@ -152,11 +153,13 @@ var hasInvalidExistingVmIndex = contains(invalidExistingVmIndexFlags, true)
 // Empty or public-wide jumpbox access is reported for operator review without blocking deployment.
 var hasUnsafeJumpboxAllowedSources = empty(jumpboxAllowedSources) || contains(jumpboxAllowedSources, '0.0.0.0/0')
 
-// Brownfield cleanup requires a User Assigned Managed Identity only when the cleanup script is deployed.
-var requiresPeeringCleanupIdentity = networkMode != 'fullMesh' && !empty(existingRegions)
+// Network reconciliation requires a User Assigned Managed Identity only when the reconciliation script is deployed.
+// The script is deployed when brownfield peerings need reconciliation (non-fullMesh with existing regions)
+// or when Bastion is disabled in brownfield (hub in existingRegions) and needs cleanup.
+var requiresNetworkReconciliationScript = deployNetwork && !empty(existingRegions) && ((networkMode != 'fullMesh' && length(existingRegions) > 0) || (!enableBastion && contains(existingRegions, hubRegion)))
 var hasMissingPeeringCleanupIdentity = empty(automationManagedIdentityResourceId)
 var hasMalformedPeeringCleanupIdentity = !startsWith(toLower(automationManagedIdentityResourceId), '/subscriptions/') || !contains(toLower(automationManagedIdentityResourceId), '/providers/microsoft.managedidentity/userassignedidentities/')
-var hasInvalidPeeringCleanupIdentity = requiresPeeringCleanupIdentity && (hasMissingPeeringCleanupIdentity || hasMalformedPeeringCleanupIdentity)
+var hasInvalidPeeringCleanupIdentity = requiresNetworkReconciliationScript && (hasMissingPeeringCleanupIdentity || hasMalformedPeeringCleanupIdentity)
 
 // ========================================
 // ROLE CONFIG VALIDATION
@@ -697,7 +700,7 @@ var advisoryValidationFindings = [
     active: hasInvalidPeeringCleanupIdentity
     severity: 'advisory'
     category: 'Operations'
-    message: 'automationManagedIdentityResourceId must be a User Assigned Managed Identity resource ID when brownfield peering cleanup is applicable.'
+    message: 'automationManagedIdentityResourceId must be a User Assigned Managed Identity resource ID when network reconciliation actions such as peering or Bastion cleanup are required.'
     remediation: 'Provide the resource ID of a User Assigned Managed Identity with the required subscription-scope Network Contributor role.'
   }
   {

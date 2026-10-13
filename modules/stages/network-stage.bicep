@@ -39,7 +39,6 @@ param deployNetwork bool
 ])
 param networkMode string
 
-param executePeeringCleanup bool
 @description('Resource ID of the User Assigned Managed Identity used by Deployment Scripts.')
 param automationManagedIdentityResourceId string
 
@@ -48,6 +47,12 @@ param tags object
 param existingRegions array
 
 param enableBastion bool
+@allowed([
+  'Basic'
+  'Standard'
+  'Premium'
+])
+param bastionSku string
 
 param addressPrefixes array
 param subnetPrefixesArray array
@@ -72,8 +77,12 @@ var deployPeerings = contains([
   'fullMesh'
 ], networkMode)
 
-// The script is deployed only for brownfield non-full-mesh modes; executePeeringCleanup controls deletion within the script.
-var removeMeshPeerings = deployNetwork && networkMode != 'fullMesh' && length(existingRegions) > 0
+// Network reconciliation runs in brownfield deployments when resources outside desired state require removal:
+// 1. Candidate spoke-to-spoke peerings when moving to a non-full-mesh topology
+// 2. Existing Bastion resources in the hub when enableBastion is false
+var requiresPeeringReconciliation = deployNetwork && networkMode != 'fullMesh' && length(existingRegions) > 0
+var requiresBastionReconciliation = deployNetwork && !enableBastion && contains(existingRegions, hubRegion)
+var requiresNetworkReconciliation = requiresPeeringReconciliation || requiresBastionReconciliation
 
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
@@ -164,6 +173,25 @@ module routeTables '../networking/routeTable.bicep' = [
   }
 ]
 
+module bastion '../networking/bastion.bicep' = if (deployNetwork && enableBastion) {
+  name: '${prefix}-bastion-${hubRegion}'
+
+  scope: resourceGroup('${prefix}-rg-${hubRegion}')
+
+  dependsOn: [
+    rgs
+    vnets
+  ]
+
+  params: {
+    location: hubRegion
+    bastionName: '${prefix}-bas-${hubRegion}'
+    vnetName: '${prefix}-vnet-${hubRegion}'
+    publicIpName: '${prefix}-bas-pip-${hubRegion}'
+    bastionSku: bastionSku
+  }
+}
+
 module roleSubnets '../networking/roleSubnets.bicep' = [
   for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
     name: '${prefix}-role-subnets-${region}'
@@ -231,9 +259,9 @@ module peerings '../networking/peering.bicep' = [
   }
 ]
 
-// Candidate peerings are inferred from existingRegions; the script does not discover the prior topology.
-module topologyCleanup '../networking/topology-cleanup.bicep' = if (removeMeshPeerings) {
-  name: '${prefix}-topology-cleanup'
+// Reconciles network resources (obsolete spoke-to-spoke peerings and disabled Bastion components) in brownfield deployments.
+module networkReconciliation '../networking/network-reconciliation.bicep' = if (requiresNetworkReconciliation) {
+  name: '${prefix}-network-reconciliation'
   scope: resourceGroup('${prefix}-rg-${hubRegion}')
 
   params: {
@@ -241,8 +269,8 @@ module topologyCleanup '../networking/topology-cleanup.bicep' = if (removeMeshPe
     hubRegion: hubRegion
     existingRegions: existingRegions
     networkMode: networkMode
-    executePeeringCleanup: executePeeringCleanup
     automationManagedIdentityResourceId: automationManagedIdentityResourceId
+    enableBastion: enableBastion
   }
 }
 

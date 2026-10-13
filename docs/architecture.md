@@ -153,7 +153,7 @@ This is a controlled-egress design rather than a block-all design: outbound conn
 
 ## Topology Transition Boundary
 
-The deployment creates and reconciles resources required by the selected mode, but it does not fully retire resources that are no longer selected. Brownfield cleanup can remove candidate spoke-to-spoke peerings for non-`fullMesh` modes, inferred from `existingRegions`; it does not discover the prior topology. It does not retire firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or resources retained from reverse or expansion transitions. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for the operational boundary and verification requirement.
+The deployment creates and reconciles resources required by the selected mode, but it does not fully retire resources that are no longer selected. The network-reconciliation script can remove candidate spoke-to-spoke peerings for non-`fullMesh` modes, inferred from `existingRegions`; it does not discover the prior topology. It does not retire Bastion, firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or resources retained from reverse or expansion transitions. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for the operational boundary and verification requirement.
 
 ## Desired State
 

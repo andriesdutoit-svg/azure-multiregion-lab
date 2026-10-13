@@ -18,10 +18,6 @@
       "value": "fullMesh"
     },
 
-    "executePeeringCleanup": {
-      "value": true
-    },
-
     "tags": {
       "value": {
         "environment": "lab"
@@ -30,6 +26,10 @@
 
     "enableBastion": {
       "value": false
+    },
+
+    "bastionSku": {
+      "value": "Standard"
     },
 
     "regionIndexMap": {

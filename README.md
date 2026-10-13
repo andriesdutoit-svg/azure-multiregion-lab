@@ -1,4 +1,4 @@
-# Azure Multi-Region Lab (AMRL)
+# Azure Multi-Region Lab (AMRL) 2.9
 
 AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, selectable network topologies, capacity-aware VM placement, and idempotent Active Directory automation.
 
@@ -48,7 +48,7 @@ az deployment sub create `
         --parameters $parameterFile
 ```
 
-The managed identity is used only for applicable brownfield peering cleanup during `stage=network` or `stage=all`; the cleanup script is not deployed for greenfield deployments. For Key Vault setup and parameter details, see [Deployment Guide](docs/deployment.md) and [Configuration Parameters Reference](docs/configuration-parameters-reference.md).
+The managed identity is used only for applicable brownfield network reconciliation during `stage=network` or `stage=all`; the reconciliation script is not deployed for greenfield deployments. For Key Vault setup and parameter details, see [Deployment Guide](docs/deployment.md) and [Configuration Parameters Reference](docs/configuration-parameters-reference.md).
 
 ## Quick Start: Brownfield
 
@@ -81,7 +81,7 @@ The `networkMode` parameter selects the network topology without changing VM pla
 | `hubSpoke` | Hub-spoke peerings only | Hub-to-spoke traffic only. Azure VNet peering is non-transitive, so spokes cannot communicate through the hub. |
 | `fullMesh` | Direct peering between every selected region | Direct region-to-region connectivity without Azure Firewall or UDRs. |
 
-Confirm candidate peerings are obsolete before enabling brownfield cleanup; it does not discover the prior topology. See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification) for cleanup safety and [Architecture](docs/architecture.md) for resource, routing, and addressing details.
+Confirm candidate peerings are obsolete before enabling destructive network reconciliation; it does not discover the prior topology. See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification) for safety boundaries and [Architecture](docs/architecture.md) for resource, routing, and addressing details.
 
 ## Deployment Stages
 
@@ -121,7 +121,7 @@ docs/                              Detailed project documentation
 
 - No live inventory discovery: maintain `existingRegions` and `existingVmPlacements` manually.
 - Preserve deployed region indexes; they determine VNet address spaces.
-- Topology cleanup is not full migration or resource retirement. See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification) for supported boundaries.
+- Network reconciliation is not full migration or resource retirement. See [Deployment Guide](docs/deployment.md#brownfield-topology-simplification) for supported boundaries.
 - Verify regional VM availability and quota before deployment, and guest networking, DNS, AD services, and VM Agent health afterward. Deployment success alone does not prove operational readiness.
 - The solution is designed for networking structures created by its own modules, not arbitrary existing VNets.
 

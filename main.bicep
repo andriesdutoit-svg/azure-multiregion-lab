@@ -40,9 +40,6 @@ param stage string
 ])
 param networkMode string
 
-@description('Allows removal of candidate spoke-to-spoke peerings identified by the brownfield cleanup script.')
-param executePeeringCleanup bool
-
 @description('Resource ID of the User Assigned Managed Identity used by Deployment Scripts.')
 param automationManagedIdentityResourceId string
 
@@ -72,8 +69,16 @@ param existingVmPlacements array = []
 param subnetIndexMap object
 @description('Public IP ranges allowed to access jumpbox RDP or SSH.')
 param jumpboxAllowedSources array
+
 @description('Deploy Azure Bastion in the hub region.')
 param enableBastion bool
+@allowed([
+  'Basic'
+  'Standard'
+  'Premium'
+])
+@description('Azure Bastion SKU.')
+param bastionSku string
 
 // ----
 // Compute: VM Sizing & Images
@@ -684,6 +689,7 @@ module validationEngine 'modules/logic/validation.bicep' = {
     existingRegions: existingRegions
     existingVmPlacements: existingVmPlacements
     enableIdentity: enableIdentity
+    enableBastion: enableBastion
     useDedicatedFileServer: useDedicatedFileServer
     enableFileServices: enableFileServices
     fileServerVmAvailable: length(fileServerVmList) > 0
@@ -724,9 +730,9 @@ module networkStage 'modules/stages/network-stage.bicep' = {
     deployNetwork: deployNetwork
 
     enableBastion: enableBastion
+    bastionSku: bastionSku
 
     networkMode: networkMode
-    executePeeringCleanup: executePeeringCleanup
     automationManagedIdentityResourceId: automationManagedIdentityResourceId
 
     tags: finalTags

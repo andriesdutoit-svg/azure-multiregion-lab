@@ -13,6 +13,13 @@ param bastionName string
 param vnetName string
 param publicIpName string
 
+@allowed([
+  'Basic'
+  'Standard'
+  'Premium'
+])
+param bastionSku string
+
 // ========================================
 // RESOURCE CREATED: PUBLIC IP
 // ========================================
@@ -49,7 +56,7 @@ resource bastion 'Microsoft.Network/bastionHosts@2023-09-01' = {
   name: bastionName
   location: location
   sku: {
-    name: 'Standard'
+    name: bastionSku
   }
   properties: {
     ipConfigurations: [

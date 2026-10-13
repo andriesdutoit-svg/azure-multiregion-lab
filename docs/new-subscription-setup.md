@@ -78,7 +78,7 @@ az group create --name $foundationRg --location $foundationLocation --output non
 if ($LASTEXITCODE -ne 0) { throw 'Foundation resource-group creation failed.' }
 ```
 
-Storage and Container Instance support the cleanup Deployment Script. `--output none` avoids printing the provider catalogue. If the foundation group already exists, inspect it with `az group show --name $foundationRg --query "{name:name,location:location}" -o json` and reuse its location rather than trying to move it.
+Storage and Container Instance support the network-reconciliation Deployment Script. `--output none` avoids printing the provider catalogue. If the foundation group already exists, inspect it with `az group show --name $foundationRg --query "{name:name,location:location}" -o json` and reuse its location rather than trying to move it.
 
 ## Configure Deployment Parameters
 

@@ -74,15 +74,19 @@ The hub remains the control-plane region in all modes. Selecting a mode does not
 
 Changing `networkMode` from `fullMesh` to `hubSpoke`, `fullMesh` to `hubSpokeFirewall`, or `hubSpoke` to `hubSpokeFirewall` and running `stage=network` is the currently supported brownfield topology simplification path. In these transitions, the deployment removes unneeded full-mesh peerings and adds the target-mode resources required by the new topology without recreating VMs or identity resources. The firewall subnet is reconciled even when the hub VNet is listed in `existingRegions`.
 
-Set `executePeeringCleanup=true` to opt in to the peering-removal behavior during this supported path. This flag controls deletion, not execution, of the cleanup Deployment Script: for brownfield deployments with `networkMode` set to `hubSpoke` or `hubSpokeFirewall`, the script runs whenever `existingRegions` is not empty and queries candidate spoke-to-spoke peerings. When the flag is `false`, the script reports matching peerings without deleting them. The script is not deployed for greenfield deployments or when `networkMode` is `fullMesh`.
+Network reconciliation is directly determined by declared desired state (`networkMode` and `enableBastion`). During `stage=network` or `stage=all`, the `${prefix}-network-reconciliation` Deployment Script is instantiated in brownfield deployments when:
+1. `networkMode` is `hubSpoke` or `hubSpokeFirewall` and `existingRegions` is populated (to remove candidate spoke-to-spoke peerings that do not belong in the target topology), or
+2. `enableBastion` is `false` and the hub region is present in `existingRegions` (to remove obsolete Bastion hosts, public IPs, and `AzureBastionSubnet`).
 
-The script infers candidate peerings from `existingRegions`; it does not discover or validate the previously deployed topology. Enable deletion only when the matching peerings are confirmed to be obsolete. The flag is intentionally narrow: it only removes obsolete full-mesh peerings and does not retire firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or handle reverse topology transitions or broader topology discovery.
+The script automatically executes the necessary reconciliation actions to align the environment with the declared desired state. The script is not instantiated for greenfield deployments, or in full-mesh deployments where Bastion is enabled.
+
+The script infers candidate peerings from `existingRegions`; it does not discover or validate the previously deployed topology. The current implementation removes candidate full-mesh peerings and disabled Bastion resources; it does not retire firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or handle reverse transitions or broader discovery.
 
 This support is intentionally narrow. It does not yet automate reverse topology transitions, broader discovery of existing topology, or retirement of firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or other previous-mode resources when they are no longer needed. Planned topology reconciliation will use manually declared current and desired topologies, analogous to `existingRegions` and `existingVmPlacements`, to determine resource retirement before considering a topology migration complete.
 
 The planned roadmap for later work includes topology discovery, region discovery, VM discovery, firewall retirement, route-table retirement, `AzureFirewallSubnet` retirement, reverse topology transitions, and zero-VM deployment support.
 
-## RBAC Requirements for Peering Cleanup
+## RBAC Requirements for Network Reconciliation
 
 AMRL uses an Azure Deployment Script to identify and optionally remove obsolete spoke-to-spoke VNet peerings when transitioning from a `fullMesh` topology to either `hubSpoke` or `hubSpokeFirewall`.
 
@@ -128,10 +132,10 @@ az role assignment create `
 The Deployment Script authenticates using the managed identity and performs the following operations:
 
 - Query existing VNet peerings.
-- Identify obsolete spoke-to-spoke peerings when moving away from `fullMesh`.
-- Remove obsolete peerings when `executePeeringCleanup` is enabled.
+- Identify and remove obsolete spoke-to-spoke peerings when moving away from `fullMesh`.
+- Retire disabled Bastion components (host, public IP, and subnet) in the hub.
 
-Without the **Network Contributor** role, the Deployment Script can calculate the peerings that should be removed but cannot query or modify Azure networking resources.
+Without the **Network Contributor** role, the Deployment Script cannot query or modify Azure networking resources.
 
 ### Managed Identity Configuration
 

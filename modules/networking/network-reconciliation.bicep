@@ -4,12 +4,12 @@ param prefix string
 param hubRegion string
 param existingRegions array
 param networkMode string
-param executePeeringCleanup bool
 @description('Resource ID of the User Assigned Managed Identity used by Deployment Scripts.')
 param automationManagedIdentityResourceId string
+param enableBastion bool
 
-resource cleanupScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
-  name: '${prefix}-topology-cleanup'
+resource reconciliationScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
+  name: '${prefix}-network-reconciliation'
   location: resourceGroup().location
   kind: 'AzurePowerShell'
 
@@ -42,12 +42,12 @@ identity: {
         value: prefix
       }
       {
-        name: 'EXECUTE_PEERING_CLEANUP'
-        value: string(executePeeringCleanup)
+        name: 'ENABLE_BASTION'
+        value: string(enableBastion)
       }
     ]
 
-    scriptContent: loadTextContent('./scripts/topology-cleanup.ps1')
+    scriptContent: loadTextContent('./scripts/network-reconciliation.ps1')
 
   }
 }
