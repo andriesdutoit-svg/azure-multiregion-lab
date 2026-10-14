@@ -1,28 +1,18 @@
 targetScope = 'resourceGroup'
 
-// ========================================
-// MODULE PURPOSE
-// Creates VNet peerings according to networkMode.
-// Supported:
-// - hubSpokeFirewall
-// - hubSpoke
-// - fullMesh
-// Hub-spoke modes create hub-to-spoke peerings only.
-// Full mesh mode creates peerings between all regions.
-// ========================================
+// Creates the source VNet's outgoing peerings for the declared topology.
+// The network stage calls this per region to supply both directions of each connection.
 
-// ========================================
-// INPUTS
-// VNet name, deployment region set, source region, and naming prefix.
-// ========================================
-
-param vnetName string
-param regionKeys array
-param sourceRegion string
+// 1. Naming, source VNet, and desired topology
 param prefix string
+param vnetName string
+param sourceRegion string
+param regionKeys array
 param hubRegion string
 param networkMode string
 
+// 2. Desired target selection
+// Empty markers retain input indexing and are skipped by the resource loop.
 var useHubSpokePeering = contains([
   'hubSpokeFirewall'
   'hubSpoke'
@@ -34,21 +24,17 @@ var desiredPeeringTargets = [
   for target in regionKeys: (useHubSpokePeering && sourceRegion == hubRegion && target != hubRegion) || useHubSpokePeering && sourceRegion != hubRegion && target == hubRegion || useFullMeshPeering && sourceRegion != target ? target : ''
 ]
 
-// ========================================
-// EXISTING DEPENDENCY: LOCAL VNET
-// ========================================
+// 3. Existing source and desired peerings
 
 resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
   name: vnetName
 }
 
-// ========================================
-// PEERING RULE
 // Hub-spoke modes create hub-to-spoke and spoke-to-hub peerings only.
 // In hubSpokeFirewall mode, cross-spoke traffic is routed through the hub firewall.
 // In hubSpoke mode, only hub-to-spoke traffic is available; VNet peering is non-transitive.
 // fullMesh mode creates peerings between every pair of distinct regions.
-// ========================================
+// Removing a target from this loop does not delete its existing peering; cleanup is separate.
 
 resource peerings 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2022-07-01' = [
   for target in desiredPeeringTargets: if (!empty(target)) {

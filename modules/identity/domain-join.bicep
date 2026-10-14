@@ -1,23 +1,26 @@
 targetScope = 'resourceGroup'
 
-// ========================================
-// MODULE PURPOSE
 // Joins a Windows VM (server or client) to the AD domain via Azure VM Run Command.
-// Idempotent: the underlying script checks PartOfDomain before attempting to join.
-// ========================================
+// The guest script checks PartOfDomain before joining; this module does not recreate the VM.
+// The caller waits for GPO provisioning. vmType and the serialized directory model select OU placement;
+// a new deployment token supports reruns but does not force an already joined machine to rejoin.
 
+// 1. Target and directory placement
 param vmName string
 param domainName string
-param serverAdminUsername string
-@secure()
-param serverAdminPassword string
 param directoryModel string
 param vmType string
 
+// Domain administrator credentials and rerun token
+param serverAdminUsername string
+@secure()
+param serverAdminPassword string
 param reconciliationToken string
 
+// 2. Script content
 var joinDomainScript = loadTextContent('./scripts/Join-Domain.ps1')
 
+// 3. Existing target and Run Command
 resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' existing = {
   name: vmName
 }

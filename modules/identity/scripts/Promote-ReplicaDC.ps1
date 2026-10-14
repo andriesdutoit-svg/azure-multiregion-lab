@@ -14,7 +14,9 @@ Replica DC promotion logic.
 # ============================================================================
 # REPLICA DC PROMOTION SCRIPT
 # Promotes a Windows server to Replica Domain Controller.
-# Idempotent: script detects existing DC status and exits if already promoted.
+# Consumes the domain, domain-administrator credentials, and a caller rerun token.
+# Requires a provisioned target VM with working domain networking/DNS and an available forest.
+# A successful Get-ADDomain query exits early; this is not a complete directory health check.
 #
 # NOTE: ServerAdminPassword is received as a string because Azure VM Run Command
 # passes parameter values as strings. Converted to SecureString immediately.
@@ -86,7 +88,7 @@ else {
 
 # ============================================================================
 # PHASE 4: PROMOTE SERVER AS REPLICA DOMAIN CONTROLLER
-# Promotion triggers automatic reboot; Azure VM Run Command handles reconnection.
+# Promotion triggers automatic reboot; verify domain-controller readiness after the restart.
 # ============================================================================
 
 Write-Host "[Info] Starting replica domain controller promotion in $DomainName."

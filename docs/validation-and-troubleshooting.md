@@ -2,15 +2,61 @@
 
 [Back to README](../README.md)
 
-```mermaid
-flowchart LR
-  A[GitHub Actions validate.yml] --> B[Bicep build and lint]
-  B --> C[az deployment sub validate]
-  C --> D[what-if]
-  E[Bicep validation module rules] --> F[validation outputs]
-  D --> F
-  F --> G[validationSummary and diagnostics]
+## Start Here
+
+Identify the failing layer before rerunning a deployment. Configuration findings, Azure provisioning errors, and guest/service failures need different checks:
+
+| Symptom | First checks |
+|---|---|
+| Build or template validation fails | [Local validation](ci-cd-validation.md#local-validation), parameter shape, required counts, and reported findings. |
+| Azure provisioning fails | [Deployment operations](#deployment-operation-checks), regional availability/quota, image, and permissions. |
+| Jumpbox or workload is inaccessible | [Access path and account](access-and-administration.md), Public IP/Bastion, NSGs, routing, and VM state. |
+| Domain join or name lookup fails | [DNS and domain connectivity](#dns-and-domain-connectivity), DC readiness, then the target Run Command instance view. |
+| Department shares are unavailable | Selected file-server host, domain membership, SMB share presence, and modeled group/NTFS permissions. See [File Services](identity-and-domain-join.md#departmental-file-services). |
+
+## Post-Deployment Review
+
+Start with the deployment summary, active findings, placement, and capacity:
+
+```powershell
+az deployment sub show `
+  --name "<deployment-name>" `
+  --query "properties.outputs.{summary:validationSummary.value,blocking:blockingValidationDetails.value,advisory:advisoryValidationDetails.value,capacity:capacityCheck.value,placements:vmPlacement.value}" `
+  --output json
 ```
+
+If enforcement blocks the parent, inspect the completed validation engine directly. Its name uses the prefix and first 20 characters of the deployment name:
+
+```powershell
+az deployment sub show `
+  --name "<prefix>-validation-engine-<deployment-name-prefix>" `
+  --query "properties.outputs.blockingValidationDetails.value" `
+  --output jsonc
+```
+
+Then verify the user-visible result: administration access, expected Windows/Linux domain membership, domain DNS, and enabled shares/desktops. Inspect guest `executionState`, `exitCode`, `error`, and `output`; a successful ARM resource operation alone is not proof of guest readiness.
+
+## DNS and Domain Connectivity
+
+Run these checks from a lab VM with private connectivity to the domain, substituting actual names and addresses:
+
+```powershell
+Resolve-DnsName '<domainName>'
+Resolve-DnsName '<prefix>-srvwin01.<domainName>'
+Test-NetConnection -ComputerName '<dc-private-ip>' -Port 53
+```
+
+Check actual DC NIC addresses, VNet DNS settings, and DC DNS/AD services. Candidate DNS addresses use `.4` in declared DC regions; that address is likely in a fresh DC-only subnet but is not reserved or discovered. Multiple DCs can use different addresses. Deleting/recreating the NIC at `.4`, stale inventory, another NIC occupying it, service failure, or blocked connectivity can invalidate the endpoint. Reused VNets retain their previous DNS settings; verify before making deliberate changes rather than readdressing retained DCs implicitly.
+
+On a Linux workload, realm and identity lookup checks help distinguish domain configuration from infrastructure SSH-key access:
+
+```bash
+realm list
+getent passwd '<domain-user>@<domainName>'
+id '<domain-user>@<domainName>'
+```
+
+The detailed output and finding reference below supports diagnosis after these first checks.
 
 ## Template Validation
 
@@ -65,25 +111,7 @@ The current template requires `vmCounts.dc >= 1` for every deployment. It evalua
 
 Each entry in `blockingValidationDetails` and `advisoryValidationDetails` includes `category`, `flag`, `message`, and `remediation`. The `remediation` property contains a recommended corrective action; it does not change parameters or repair resources automatically.
 
-## Post-Deployment Review
-
-After deployment, review the outputs before treating the deployment as valid:
-
-```powershell
-az deployment sub show `
-  --name "<deployment-name>" `
-  --query "properties.outputs.{summary:validationSummary.value,message:validationMessage.value,flags:validationFlags.value,enforcement:enforcementEnabled.value,blocked:shouldBlockDeployment.value,blocking:blockingValidationDetails.value,advisory:advisoryValidationFlags.value,advisoryDetails:advisoryValidationDetails.value,missingNetworkRegions:networkRegionsMissingFromInventory.value,newVmNetworkRegions:newVmRegionsWithoutNetwork.value,capacity:capacityCheck.value,placements:vmPlacement.value}" `
-  --output json
-```
-
-When enforcement fails, the parent deployment may not return its outputs. The validation-engine nested deployment completes before the gate and retains its outputs. Its name is `<prefix>-validation-engine-<first 20 characters of deployment name>`; inspect it directly:
-
-```powershell
-az deployment sub show `
-  --name "<prefix>-validation-engine-<deployment-name-prefix>" `
-  --query "properties.outputs.blockingValidationDetails.value" `
-  --output jsonc
-```
+## Finding Interpretation
 
 A healthy result has `validationSummary` set to `All validation checks passed.` and `capacityCheck.withinLimit` set to `true`. In `validationFlags`, the following flags should be `false`:
 

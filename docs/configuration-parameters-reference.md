@@ -12,8 +12,9 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | `stage` | string | Deployment stage: `network`, `compute`, `identity`, or `all`. See [Deployment Guide](deployment.md#stages). | `"all"` |
 | `validationMode` | string | `reportOnly` reports findings without blocking stages; `enforce` fails the validation gate when blocking findings are active. | `"reportOnly"` |
 | `networkMode` | string | Network topology: `hubSpokeFirewall`, `hubSpoke`, or `fullMesh`. See [Network Topology Modes](deployment.md#network-topology-modes). | `"hubSpokeFirewall"` |
-| `executePeeringCleanup` | bool | Controls deletion, not execution, of the peering-cleanup Deployment Script. For applicable brownfield non-`fullMesh` deployments, `true` removes candidate spoke-to-spoke peerings inferred from `existingRegions`; `false` reports them without deleting them. The script is not deployed for greenfield or `fullMesh` deployments. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for verification requirements and scope. | `true` |
-| `automationManagedIdentityResourceId` | string | Required resource ID of the User Assigned Managed Identity used by Deployment Scripts. Supply it for every deployment; the identity is used only when the applicable brownfield cleanup Deployment Script is deployed. Create the identity, grant it Network Contributor at subscription scope, and pass the full resource ID here. | `"/subscriptions/<subscriptionId>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identityName>"` |
+| `enableBastion` | bool | Adds hub-region Bastion alongside public jumpbox access. See [access and retirement behavior](access-and-administration.md#bastion-and-retained-jumpboxes). | `true` |
+| `bastionSku` | string | Azure Bastion SKU: `Basic`, `Standard`, or `Premium`. | `"Standard"` |
+| `automationManagedIdentityResourceId` | string | Required deployment-script identity ID. Applicable brownfield cleanup uses its Network Contributor permissions. See [foundation setup](new-subscription-setup.md#managed-identity) and [reconciliation RBAC](deployment.md#rbac-requirements-for-network-reconciliation). | `"/subscriptions/<subscriptionId>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identityName>"` |
 | `tags` | object | Resource tags for organisation and billing | `{"environment": "lab"}` |
 | `regionCount` | integer | Number of regions to deploy across | `2` |
 | `maxVmsPerRegion` | integer | Maximum VMs allowed per region | `2` |
@@ -23,7 +24,7 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
 | `regionIndexMap` | object | Maps region names to index numbers. Must be contiguous and start at 1. See [Region Indexes](deployment.md#region-indexes). | `{"westeurope": 1, "northeurope": 2}` |
-| `subnetIndexMap` | object | Defines subnet ordering within each region | `{"firewall": 0, "jumpbox": 1, "dc": 2, "server": 3, "client": 4}` |
+| `subnetIndexMap` | object | Address indexes for all six standard roles; other keys add policy-neutral subnets | `{"firewall": 0, "bastion": 1, "jumpbox": 2, "dc": 3, "server": 4, "client": 5}` |
 | `existingRegions` | array | Regions with existing networking (brownfield reuse). See [Placement and Reconciliation](placement-and-reconciliation.md). | `["westeurope"]` |
 | `existingVmPlacements` | array | Existing VM inventory used for brownfield reconciliation | `[{"type": "dc", "index": 0, "regionKey": "westeurope"}]` |
 
@@ -39,7 +40,7 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | `hubSpoke` | Hub-spoke peerings | Hub-to-spoke only; VNet peering is non-transitive, so spoke-to-spoke traffic is unavailable. |
 | `fullMesh` | Direct regional peerings | Every selected region is directly peered with every other selected region. |
 
-`networkMode` changes do not affect VM placement or identity automation. The template does not discover the prior topology or automatically retire all resources from a previous mode. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for the cleanup scope and roadmap.
+`networkMode` changes connectivity and routing independently of VM placement and identity targeting. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) before changing an existing environment.
 
 ## Virtual Machine Configuration
 
@@ -49,7 +50,7 @@ Reserved subnet keys have known platform roles. AMRL generates role-specific NSG
 
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
-| `vmCounts` | object | Number of each VM type to deploy: `dc`, `jumpbox`, `windowsServer`, `windowsClient`, `linuxServer`, `linuxClient`. The current template requires `dc >= 1` for every deployment. | `{"dc": 1, "jumpbox": 1, "windowsServer": 1, "windowsClient": 0, "linuxServer": 0, "linuxClient": 0}` |
+| `vmCounts` | object | Desired totals for DCs, jumpboxes, and Windows/Linux servers and clients. Keep at least one DC and one jumpbox. | `{"dc": 1, "jumpbox": 1, "windowsServer": 1, "windowsClient": 0, "linuxServer": 0, "linuxClient": 0}` |
 
 `vmCounts.dc` must be at least `1` even when identity and file services are disabled. The template evaluates the primary DC and file-server target during validation, so `dc=0` is not a supported compute-only or network-only configuration.
 
@@ -121,7 +122,7 @@ When set to `true`, dependent resources (NICs, public IPs, OS disks) are automat
 
 Linux client SSH access from jumpboxes is always enabled and is not gated by a parameter. See [Access and Administration](access-and-administration.md).
 
-**Important**: Jumpboxes are the only entry point to the lab. Ensure `jumpboxAllowedSources` includes your IP address.
+For direct jumpbox access, ensure `jumpboxAllowedSources` includes your approved source IP. Optional Bastion provides another path to the jumpbox; it does not remove existing public access.
 
 ## Credentials and Secrets
 

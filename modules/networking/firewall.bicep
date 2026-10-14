@@ -1,21 +1,15 @@
-// ========================================
-// MODULE PURPOSE
 // Deploys hub firewall components: public IP, policy, firewall instance, and baseline east-west rules.
-// ========================================
+// Requires the hub VNet and dedicated firewall subnet. Policy deployment is encapsulated in a child module;
+// the returned private IP becomes the next hop used by spoke route tables, whose associations are external.
 
-// ========================================
-// INPUTS
-// ========================================
-
+// 1. Resource identities and location
 param location string
 param firewallName string
 param vnetName string
 param publicIpName string
 
-// ========================================
-// RESOURCE CREATED: PUBLIC IP
-// Required for Azure Firewall deployment in VNet mode.
-// ========================================
+// 2. Public IP and existing network dependencies
+// The caller provisions the VNet and AzureFirewallSubnet before this module runs.
 
 resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = {
   name: publicIpName
@@ -28,11 +22,6 @@ resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = {
   }
 }
 
-// ========================================
-// EXISTING DEPENDENCIES
-// VNet and AzureFirewallSubnet are expected to exist already.
-// ========================================
-
 resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
   name: vnetName
 }
@@ -42,11 +31,9 @@ resource firewallSubnet 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' e
   name: 'AzureFirewallSubnet'
 }
 
-// ========================================
-// RESOURCE CREATED: FIREWALL POLICY
+// 3. Firewall policy
 // Deploy policy resources through a nested module so Azure completes policy evaluation
 // before the firewall instance references the policy.
-// ========================================
 
 module firewallPolicy 'firewall-policy.bicep' = {
   name: '${firewallName}-policy-deployment'
@@ -56,10 +43,8 @@ module firewallPolicy 'firewall-policy.bicep' = {
   }
 }
 
-// ========================================
-// RESOURCE CREATED: FIREWALL INSTANCE
-// Data plane attached to the policy above.
-// ========================================
+// 4. Firewall instance
+// The module output and Public IP reference establish deployment dependencies.
 
 resource firewall 'Microsoft.Network/azureFirewalls@2023-02-01' = {
   name: firewallName
@@ -90,9 +75,6 @@ resource firewall 'Microsoft.Network/azureFirewalls@2023-02-01' = {
   }
 }
 
-// ========================================
-// OUTPUTS
-// ========================================
-
-// NOTE: Azure Firewall has a single IP configuration by design
+// 5. Routing next hop
+// This module declares one IP configuration; return its private address for spoke route tables.
 output firewallPrivateIp string = firewall.properties.ipConfigurations[0].properties.privateIPAddress

@@ -1,8 +1,24 @@
 <#
 Populate AMRL AD objects (OU/group/user) on dc01.
 Derived from Set-DummyAD and adapted for idempotent Run Command execution.
+
+Consumes the serialized directory model, ordered department definitions, CSV name
+content, user targets, and file-service setting. Requires AD administration on the
+primary DC plus the AD/LAPS tooling used below; identity-stage orders population
+after forest and replica provisioning and before GPO import.
+
+Creates missing objects and repairs selected department, manager, membership, and
+LAPS settings. Some group membership is authoritative and can remove stale members;
+this is not general deletion or migration of all objects absent from input.
+New accounts receive independent random passwords, not logged passwords. Retained
+accounts are repaired rather than recreated or assigned newly generated passwords.
+
+The helper order and final driver sequence are intentional: structure/groups must
+exist before permissions, manager reconciliation, user repair, and missing-user creation.
+Console/transcript summaries describe actions, not a complete directory health check.
 #>
 
+# 1. Validated caller inputs
 param(
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
@@ -39,6 +55,7 @@ param(
     [string]$EnableFileServices
 )
 
+# 2. Status logging and AD/transcript initialization
 $script:logCounts = @{
     Info = 0
     Created = 0
@@ -104,6 +121,7 @@ Import-Module ActiveDirectory -ErrorAction Stop
 # Transcript logging.
 # Captures all console output for troubleshooting
 # brownfield remediation and user population issues.
+# Treat transcripts as operational data: they include directory identities and paths.
 
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
@@ -115,8 +133,9 @@ Start-Transcript `
 
 Write-AmrlLog "[Info] Transcript log: $logFile."
 
-# Helper functions: idempotent Ensure-* operations.
-# All functions check for existing objects before creation to support re-execution.
+# 3. Directory lookup, creation, and membership helpers
+# Ensure-* helpers generally avoid duplicate creation; repair and authoritative membership
+# helpers deliberately mutate selected retained state. Function definitions do not imply execution order.
 
 # Get-ManagedOU: Traverse nested OU hierarchy by path string (e.g., 'Computers/Servers')
 function Get-ManagedOU {
@@ -239,6 +258,8 @@ function Ensure-ADGroupMember {
     Write-AmrlLog "[Created] Membership $MemberName -> $GroupName."
 }
 
+# This helper removes direct members outside DesiredMembers before ensuring desired membership.
+# It is stronger than the additive Ensure-* operations and must not be reordered around callers.
 function Set-ADGroupMembersAuthoritative {
     param(
         [string]$GroupName,
@@ -302,7 +323,7 @@ function Ensure-ADPrincipalGroupMembership {
     Write-AmrlLog "[Created] Membership $MemberName -> $GroupName."
 }
 
-# User management: create missing users and reconcile selected attributes.
+# 4. User creation and selected-attribute repair helpers
 
 # Generate an independent password for each newly created account.
 function New-RandomPassword {
@@ -463,6 +484,7 @@ $securePassword = ConvertTo-SecureString `
     )
 }
 
+# 5. Department selection, source records, and OU/group construction helpers
 # Get-SelectedDepartments: Filter department lists to match InputDepartmentCount.
 # Always includes all sysAdminDepartments (mandatory); fills remaining slots with additionalDepartments.
 # Example: sysAdminDepartments=[IT], additionalDepartments=[Finance,HR], InputDepartmentCount=2
@@ -818,12 +840,13 @@ function Ensure-DepartmentGroupNesting {
 }
 
 # Department manager reconciliation.
+# 6. Department ownership, reporting lines, and target/repair helpers
 # OU placement is the authoritative source of
 # departmental ownership and reporting lines.
 # Rules:
 # - One manager per department is supported.
 # - Additional manager accounts are demoted.
-# - Users without managers remain unmanaged.
+# - Standard-user reporting lines follow the available departmental manager.
 # - Users reporting outside their department
 #   are remediated.
 # - When a departmental manager exists,
@@ -1565,7 +1588,9 @@ function Populate-DepartmentUsers {
     }
 }
 
-# Prepare AD for the Windows LAPS GPO: extend the schema if needed and grant the GPO's authorized decryptor read access on both workload OUs.
+# 7. Windows LAPS directory prerequisites
+# Extend schema if absent, then apply self/read permissions to the two modeled workload OUs.
+# This requires schema/ACL permissions; it prepares AD rather than setting endpoint LAPS passwords.
 function Ensure-LapsConfiguration {
     param(
         [object]$DirectoryModel
@@ -1703,7 +1728,7 @@ function Ensure-LapsConfiguration {
     }
 }
 
-# Execute directory population workflow.
+# 8. Execute the population workflow in dependency order
 # The script is designed to be idempotent and
 # may be executed repeatedly. Existing objects
 # are reconciled where possible and missing
@@ -1711,10 +1736,11 @@ function Ensure-LapsConfiguration {
 # Execution order:
 # 1. Validate AD connectivity
 # 2. Ensure directory and department OUs
-# 3. Ensure security groups and nesting
-# 4. Reconcile department managers and calculate user targets
-# 5. Repair existing users
-# 6. Populate missing users
+# 3. Ensure security groups, LAPS directory permissions, and group nesting
+# 4. Reconcile department managers and calculate standard-user targets
+# 5. Repair existing users without regenerating their passwords
+# 6. Populate missing users, remove temporary CSV data, and summarize actions
+# No helper or call is moved by these headings; initialization and definitions above remain in place.
 
 Write-AmrlLog "[INFO] Waiting for Active Directory availability"
 

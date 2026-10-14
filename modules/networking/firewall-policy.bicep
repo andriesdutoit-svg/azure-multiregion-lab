@@ -1,10 +1,17 @@
 // Deploys the Azure Firewall policy and baseline east-west and outbound rules.
+// The firewall module attaches the returned policy ID; subnet routing is configured elsewhere.
+// This is a lab baseline for the managed 10.0.0.0/8 range, not a general-purpose least-privilege policy.
 
+// 1. Policy identity and location
 param location string
 param firewallPolicyName string
 
+// 2. Managed internal address range
 var internalRange = '10.0.0.0/8'
 
+// 3. Policy and ordered rule collections
+// Internal traffic is allowed broadly; outbound Internet access is limited here to TCP 80/443.
+// Preserve rule collection priorities and contents when adjusting the surrounding structure.
 resource firewallPolicy 'Microsoft.Network/firewallPolicies@2023-02-01' = {
   name: firewallPolicyName
   location: location
@@ -79,4 +86,5 @@ resource policyRuleCollectionGroup 'Microsoft.Network/firewallPolicies/ruleColle
   }
 }
 
+// 4. Policy identity for the firewall module
 output firewallPolicyId string = firewallPolicy.id

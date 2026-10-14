@@ -20,12 +20,21 @@ Windows and Linux domain join
 Departmental share provisioning (when enabled)
 ```
 
-The primary DC and replica DCs must already exist before a standalone `identity` stage can complete. Missing workload VMs may be created during the identity stage so they are available for domain joining.
+| Step | Purpose and result |
+|---|---|
+| Primary forest | Turns the primary DC into the lab's AD forest and domain DNS anchor. |
+| Replicas | Adds DCs to the same domain for additional directory/DNS endpoints. |
+| Population | Creates the modeled departmental OUs, users, managers, and security groups. |
+| Group Policy | Establishes Windows administrator and LAPS policies before workload joins. |
+| Domain joins | Places Windows/Linux workloads in their role OUs and enables domain authentication. |
+| Optional services | Provisions departmental shares and Linux client desktops. Desktop prerequisites run before Linux joins. |
+
+The primary DC and replica DCs must already exist before a standalone `identity` stage can complete. Missing workload VMs may be created during the identity stage so they are available for domain joining. Generated user passwords need a separate secure reset/delivery process before interactive user testing.
 
 ```mermaid
 flowchart LR
   A[enableIdentity=true] --> B{stage value}
-  B -->|identity| C[Run identity modules only]
+        B -->|identity| C[Use existing DCs and create missing workloads if needed]
   B -->|all| D[Run full deployment with identity]
   C --> E[dc01 forest bootstrap]
   D --> E
@@ -34,10 +43,12 @@ flowchart LR
   G --> K[Import and link administration GPOs]
   K --> H[Domain join Windows and Linux]
         H --> I[Provision departmental shares when enabled]
-        I --> J[Safe re-run keeps state idempotent]
+        I --> J[Reruns repair supported existing state]
 ```
 
 ## Directory Model
+
+The default hierarchy puts workload computers under `_ROOT/Computers/Servers` or `_ROOT/Computers/Clients`, groups under `_ROOT/Groups`, and departmental accounts under `_ROOT/Users`. Users enter department global security groups; those groups nest into domain-local permission groups for shares (AGDLP). This connects account population to actual resource access rather than creating unrelated sample objects.
 
 The `directoryModel` object in `modules/stages/identity-stage.bicep` is passed as a JSON string to identity scripts that require directory structure, group naming, OU mapping, GPO names, or share configuration. It centralises those details so the scripts do not hardcode AD structure:
 
@@ -65,7 +76,7 @@ The directory model is not parameterised; it represents a stable architectural d
 - **Platform administrator groups**: Windows and Linux administrator groups are reconciled to the configured `platformAdminGroups.sourceDepartmentCode`; memberships from a previous source department are removed when the configuration changes.
 - **Department removal**: removing a department from `additionalDepartments` does not delete its OU or users; the OU becomes unmanaged rather than deleted.
 
-This reflects the non-destructive design: existing compliant objects are preserved, and only missing required objects are restored.
+Reruns preserve object identities while repairing the selected attributes and memberships above. They are not a general directory teardown or exact-state replacement.
 
 ## Windows LAPS Active Directory Configuration
 
@@ -75,7 +86,7 @@ The linked Windows LAPS GPO supplies the policy side of this setup: it backs pas
 
 ## Departmental File Services
 
-When `enableFileServices=true`, directory population also creates each department's `Share_RW` and `Share_RO` domain-local groups and nests the manager and user groups into them. Share directories are no longer created by `Populate-AD.ps1` on the primary DC.
+When `enableFileServices=true`, directory population creates each department's `Share_RW` and `Share_RO` domain-local groups and nests the manager and user groups into them. Share provisioning is handled separately on the selected file server.
 
 After Windows domain join completes, `Populate-Shares.ps1` runs on the selected file server. It creates `C:\Shares`, creates one SMB share per selected department, and applies the domain-local groups as NTFS Modify and Read-and-Execute permissions. The script retains existing directories and SMB shares and reapplies the expected ACL rules on reconciliation.
 
@@ -111,6 +122,11 @@ gpoNames.windowsLaps           ->  linked to OU=Servers,OU=Computers and OU=Clie
 
 Windows LAPS is linked separately to the Servers and Clients OUs. The Windows administrators group-reference rewrite applies only to the two administration GPOs.
 
+Missing GPOs are seeded from packaged backups; existing policies are retained. Reruns repair the modeled administrator references, LAPS decryptor, and links. Use a new deployment name to reapply automation, and verify client processing separately.
+
+<details>
+<summary>GPO implementation and rerun boundaries</summary>
+
 The backups ship as `modules/identity/templates/gpo/GpoTemplates.zip`, embedded in the template with `loadFileAsBase64` and passed to the Run Command as a string parameter. The script writes the zip to `C:\Temp\GpoTemplates.zip` on the DC, expands it to `C:\Temp\GpoTemplates`, and removes any previous extraction first. The archive must contain a top-level `GpoTemplates` folder.
 
 The template validation engine reports flags for a malformed `domainName`, a missing or blank system-administration department code, a missing primary-DC target, and missing or blank names for any of the three required GPOs. These flags are diagnostic outputs and do not by themselves block deployment. On the DC, the script checks that the zip is present and decodable, that it expands to the expected folder, and that each requested GPO has a matching `Backup.xml` display name. It also checks for the target OUs and an existing `Groups.xml` with exactly one member entry before rewriting the Windows administrators reference in the two administration GPOs. Run Command failures fail the deployment.
@@ -127,10 +143,12 @@ For Windows LAPS, the `ADPasswordEncryptionPrincipal` registry policy setting is
 
 The zipped template is a creation-time seed, not a desired-state definition. Be aware of these boundaries:
 
-- **Template edits do not reach existing GPOs.** Import is skipped once the GPO exists, so updating `GpoTemplates.zip` and redeploying leaves its policy settings unchanged except for the runtime-reconciled Windows LAPS `ADPasswordEncryptionPrincipal` and the administration GPO `Groups.xml` references. Remove the GPO, or change the name in `gpoNames`, to import a revised template. This preserves in-place policy edits, consistent with the wider reconciliation model.
+- **Template edits do not reach existing GPOs.** Import is skipped once the GPO exists, so updating `GpoTemplates.zip` leaves its policy settings unchanged except for the named runtime repairs. Plan policy replacement or an explicit update separately; changing names also requires matching exported backups.
 - **GPO names are coupled to the backups.** `Import-GPO` looks the backup up by display name, so renaming `gpoNames` without re-exporting the backups breaks the import. Template validation reports blank names; at run time, the script fails fast when no backup carries a requested name.
 - **The group reference is rewritten in SYSVOL without a version increment.** Step 2 edits `Groups.xml` directly, so clients may not reprocess the preference until the GPO version changes. Only the Windows administrators member is reconciled; other preference content is left as exported.
 - **Re-running requires a new Run Command definition.** As with the other identity scripts, use a new deployment name so the Run Command is reapplied.
+
+</details>
 
 ## Linux Domain Join
 
@@ -153,7 +171,7 @@ On every identity-stage run, the Linux script reconciles selected SSSD keys, res
 
 ## Linux Client Desktop Installation
 
-Before Linux clients (`clilin`) join the domain, `modules/compute/linux-desktop.bicep` runs a Run Command that installs `ubuntu-desktop-minimal` and `xrdp`, enabling RDP-based GUI access. It also configures a Polkit rule granting the Linux administrator group interactive authorization for desktop actions. `domainJoinLinux` depends on this step so the desktop environment is present before the client is joined.
+Before Linux clients (`clilin`) join the domain, `modules/compute/linux-desktop.bicep` runs a Run Command that installs `ubuntu-desktop-minimal` and `xrdp`, enabling RDP-based GUI access. It also configures a broad lab Polkit rule granting the modeled Linux administrator group desktop-action authorization in active, inactive, and other contexts. `domainJoinLinux` depends on this step so the desktop environment is present before the client is joined.
 
 Bash scripts are stored with LF line endings through `.gitattributes`:
 

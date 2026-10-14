@@ -1,34 +1,28 @@
 targetScope = 'resourceGroup'
 
-// ========================================
-// MODULE PURPOSE
-// Executes departmental share provisioning
-// on the designated AMRL file server.
-// ========================================
+// Provisions departmental shares on the designated primary DC or dedicated file server.
+// Target selection belongs to main.bicep and identity-stage. The shared directory/department model
+// determines share groups and permissions; this module does not migrate data between file servers.
 
-// ========================================
-// CONFIGURATION INPUTS
-// ========================================
-
+// 1. Target and directory model
 param fileServerVmName string
 
 param directoryModel string
 
+// Department configuration and guest-automation rerun token
 param sysAdminDepartment object
 param additionalDepartments object
 param departmentCount int
 
 param reconciliationToken string
 
-// ========================================
-// CONFIGURATION VARIABLES
-// ========================================
+// 2. Script content
+// Share creation and permission reconciliation are owned by the guest script.
 
 var populateSharesScript = loadTextContent('./scripts/Populate-Shares.ps1')
 
-// // ========================================
-// // RESOURCES
-// // ========================================
+// 3. Existing file server and Run Command
+// The caller ensures directory population and, for a dedicated server, domain join run first.
 
 resource fileServerVm 'Microsoft.Compute/virtualMachines@2022-08-01' existing = {
   name: fileServerVmName

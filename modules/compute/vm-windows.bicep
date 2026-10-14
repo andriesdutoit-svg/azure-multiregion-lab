@@ -1,30 +1,26 @@
-// ========================================
-// MODULE PURPOSE
 // Deploys a Windows VM with Trusted Launch and optional public IP exposure.
-// ========================================
+// Owns the VM, its NIC, and optional Public IP using the caller's role-specific image/disk profile.
+// The compute stage invokes this for missing VM identities; domain configuration is a separate stage.
+// deleteOption settings govern associated-resource handling when the VM is deleted, not topology cleanup.
 
-// ========================================
-// INPUTS
-// VM identity, networking, image, role-selected size, role-selected OS disk profile, admin credentials, and access mode.
-// ========================================
-
+// 1. Parameters
+// Identity and role-selected compute configuration
 param vmName string
-param subnetId string
-param vmSize string
-param assignPublicIp bool
-param adminUsername string
-@secure()
-param adminPassword string
 param tags object = {}
+param vmSize string
 param image object
 param osDisk object
 param vmAutoDeleteOptions object
 
-// ========================================
-// RESOURCE CREATED: NETWORK INTERFACE
-// Always created; attaches VM to the target subnet.
-// ========================================
+// Network attachment and administrator credentials
+param subnetId string
+param assignPublicIp bool
+param adminUsername string
+@secure()
+param adminPassword string
 
+// 2. Network interface
+// Resource references establish NIC/Public IP/VM dependencies regardless of declaration order.
 resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
   name: '${vmName}-nic'
   location: resourceGroup().location
@@ -48,10 +44,8 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
   }
 }
 
-// ========================================
-// RESOURCE CREATED: WINDOWS VM
+// 3. Virtual machine
 // System-assigned identity, Trusted Launch, and boot diagnostics enabled.
-// ========================================
 
 resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
   name: vmName
@@ -113,10 +107,8 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
   }
 }
 
-// ========================================
-// CONDITIONAL RESOURCE: PUBLIC IP
-// Created only when assignPublicIp is true.
-// ========================================
+// 4. Optional Public IP
+// A false condition skips creation; it does not delete a previously deployed IP.
 
 resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (assignPublicIp) {
   name: '${vmName}-pip'

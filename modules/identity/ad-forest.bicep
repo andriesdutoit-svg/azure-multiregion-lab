@@ -1,41 +1,26 @@
 targetScope = 'resourceGroup'
 
-// ========================================
-// MODULE PURPOSE
-// Executes AD forest bootstrap via Azure VM Run Command on primary DC
-// ========================================
+// Bootstraps the AD forest on the designated primary DC through guest automation.
+// Requires an already provisioned Windows DC VM; forest detection and supported rerun behavior
+// belong to Install-Forest.ps1. Referencing a VM alone does not verify AD service readiness.
 
-// ========================================
-// CONFIGURATION INPUTS
-// ========================================
-
+// 1. Target, domain, credentials, and rerun token
 param dcVmName string
 param domainName string
 @secure()
 param serverAdminPassword string
 param reconciliationToken string
 
-// ========================================
-// CONFIGURATION VARIABLES
-// ========================================
+// 2. Script content
+// Existing forest detection and bootstrap readiness are handled by the guest script.
 
 var installForestScript = loadTextContent('./scripts/Install-Forest.ps1')
 
-// ========================================
-// RESOURCES
-// ========================================
-
-// ----
-// Reference to primary DC VM
-// ----
+// 3. Existing primary DC and Run Command
 
 resource dcVm 'Microsoft.Compute/virtualMachines@2022-08-01' existing = {
   name: dcVmName
 }
-
-// ----
-// Forest bootstrap run command
-// ----
 
 resource forestBootstrap 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' = {
   parent: dcVm

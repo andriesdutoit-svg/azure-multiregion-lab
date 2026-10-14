@@ -7,9 +7,13 @@
 #              every run so the exported SID and NetBIOS name match this domain.
 #
 # Idempotency limitation: because import is skipped once the GPO exists,
-# editing GpoTemplates.zip does NOT update an already-created GPO. Remove
-# the GPO, or rename it via the directory model, to pick up template changes.
+# editing GpoTemplates.zip does NOT refresh all settings in an already-created GPO.
+# Template replacement/retirement needs a separately planned action, not an automatic rerun.
+# Requires AD/GroupPolicy access, populated target OUs/groups, and writable template/SYSVOL paths.
+# The workflow also reconciles the LAPS decryptor and GPO links before removing extracted files.
+# These selected repairs are not full policy convergence or proof of client policy processing.
 
+# 1. Inputs and status logging
 param(
     [string]$DomainName,
     [string]$DirectoryModel,
@@ -88,6 +92,8 @@ function Write-AmrlLog {
 Write-AmrlLog '[Info] GPO template files were received.'
 Write-AmrlLog '[Info] GPO template import and reconciliation started.'
 
+# 2. Decode/extract backups and validate the shared directory model
+# Keep extraction before Backup.xml lookup. This prepares source files, not a refresh of existing GPOs.
 Import-Module GroupPolicy -ErrorAction Stop
 
 $templateRoot = 'C:\Temp\GpoTemplates'
@@ -160,6 +166,8 @@ $windowsLapsGpoName =
 
 Write-AmrlLog "Template Root = $templateRoot"
 
+# 3. Policy creation, link, and domain-reference helpers
+# Link branches repair the selected current state; they are not a single atomic replacement of every link flag.
 function Ensure-GpoLink {
     param(
         [string]$GpoName,
@@ -465,6 +473,8 @@ function Update-LapsGpoDecryptor {
     Write-AmrlLog "[Reconciled] LAPS authorized decryptor: $expectedDecryptor"
 }
 
+# 4. Provision missing policies and apply selected live-domain repairs
+# Keep each policy creation before its reference update; existing policy bodies are not reimported.
 Ensure-GpoFromTemplate `
     -GpoName $serverAdministrationGpoName `
     -TemplatePath $gpoTemplateRepositoryPath
@@ -487,6 +497,7 @@ Update-LapsGpoDecryptor `
     -GpoName $windowsLapsGpoName `
     -DirectoryModel $model
 
+# 5. Link the modeled policies to server/client OUs
 Ensure-GpoLink `
     -GpoName $serverAdministrationGpoName `
     -TargetDn $serversOuDn
@@ -503,6 +514,8 @@ Ensure-GpoLink `
     -GpoName $windowsLapsGpoName `
     -TargetDn $clientsOuDn
 
+# 6. Cleanup after provisioning and links complete
+# Earlier terminating failures can leave artifacts for diagnosis; this is not a finally block.
 if (Test-Path $templateRoot) {
 
     Remove-Item `

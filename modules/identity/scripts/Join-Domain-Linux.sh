@@ -5,6 +5,12 @@
 # Joins Linux VMs to Active Directory domain using realmd/SSSD integration.
 # Idempotent: script checks for existing domain membership and skips only the
 # join-specific work while retaining the configuration healing steps.
+# Inputs are injected by VM Run Command: domain, directory JSON, VM role, credentials,
+# and rerun token. Run with root package/service configuration permissions and working domain DNS.
+# Joined endpoints still require the tools/configuration used in repair phases, including jq.
+# Managed SSSD keys, hostname/DNS, home creation, realm login, and sudoers are repaired;
+# this is not complete guest drift reconciliation or public-IP/network management.
+# Preserve command and helper order, and never log the supplied administrator password.
 # ============================================================================
 
 set -euo pipefail
@@ -12,9 +18,8 @@ set -euo pipefail
 DOMAIN_NAME="${DomainName}"
 DIRECTORY_MODEL="${DirectoryModel}"
 # Extract Linux admins group name from directory model JSON.
-# Constructs AGDLP group name: {globalSecurityPrefix}_{linuxAdmins group name}.
-# Example: From model {groupNaming: {globalSecurityPrefix: "AMRL"}, platformAdminGroups: {linuxAdmins: "LinuxAdmins"}}
-#   → produces group name "AMRL_LinuxAdmins" for sudoers configuration.
+# The modeled principal is {globalSecurityPrefix}_{linuxAdmins}, resolved after the
+# join-tool phase below. Initial input capture must not depend on jq being installed yet.
 LINUX_ADMINS_GROUP=""
 VM_TYPE="${VmType}"
 
@@ -201,8 +206,8 @@ fi
 #
 # Phase 6 - SSSD configuration, hostname, and dynamic DNS
 # SSSD (System Security Services Daemon) authenticates users and enforces group membership.
-# ad_gpo_access_control = permissive: Allows login by any domain user; GPO restrictions not enforced at login.
-# Sudo rights are instead enforced via sudoers file entries using AGDLP groups (see Phase 8).
+# ad_gpo_access_control = permissive avoids enforcing GPO access checks here; realm login policy
+# is configured separately in Phase 7. Sudo remains restricted by the modeled group rule in Phase 7.
 # Hostname is set to FQDN and adcli triggers an immediate DNS registration alongside SSSD's dyndns settings.
 #
 
@@ -419,6 +424,8 @@ fi
 
 #
 # Phase 8 - Validation
+# The final realm command checks tool execution; earlier phases perform specific configuration checks.
+# It is not an end-to-end proof of SSH authentication, AD user login, or administrator access.
 #
 
 log_info "Validating domain membership"

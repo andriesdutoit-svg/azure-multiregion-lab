@@ -2,7 +2,7 @@
 
 [Back to README](../README.md)
 
-Use this complete path for a new Azure subscription or tenant. It includes the final lab deployment; do not repeat the README quick start afterward. Detailed resource commands remain in their owning guides. Follow the checklist in order and return here after each linked step.
+Use this complete path for a new Azure subscription or tenant. It owns foundation and credential setup and includes the final lab deployment; do not repeat the README quick start afterward. Follow the checklist in order, using the optional CI links only when required.
 
 ## Before You Start
 
@@ -18,13 +18,13 @@ Never share private keys, passwords, or secret-bearing terminal output. Secret-w
 |---|---|---|
 | 1 | [Select Azure context and initialize values](#azure-context-and-foundation) | Capture the target subscription and tenant; initialize shared variables. |
 | 2 | [Register providers and create the foundation group](#azure-context-and-foundation) | The group must exist before vault or identity creation. |
-| 3 | [Create or reuse the vault](access-and-administration.md#create-or-reuse-key-vault), then [grant your user access](access-and-administration.md#user-secret-access) | Produces `kvId` and `userObjectId`. Do not run GitHub-app access yet. |
-| 4 | [Create or reuse the managed identity](deployment.md#managed-identity), then [assign its role](deployment.md#required-role-assignment) | Produces `automationIdentity.id` and `automationIdentity.principalId`. |
-| 5 | [Prepare SSH keys](access-and-administration.md#ssh-key-setup) and [administrator passwords](access-and-administration.md#admin-password-setup) | Requires vault access; allow RBAC propagation if necessary. |
-| 6 | Optional: [choose the OIDC create/reuse path](ci-cd-validation.md#bootstrapping-oidc-for-a-new-subscription-or-tenant), then [grant the app vault access](access-and-administration.md#github-actions-secret-access) | Configure main, active-branch, and PR credentials on the same app. |
+| 3 | [Create or reuse the managed identity](#managed-identity), then [assign its role](#required-role-assignment) | Produces `automationIdentity.id` and `automationIdentity.principalId`. |
+| 4 | [Create or reuse the vault](#create-or-reuse-key-vault), then [grant your user access](#user-secret-access) | Produces `kvId` and `userObjectId`. Do not run GitHub-app access yet. |
+| 5 | [Prepare SSH keys](#ssh-key-setup) and [administrator passwords](#admin-password-setup) | Requires vault access; allow RBAC propagation if necessary. |
+| 6 | Optional: [choose the OIDC create/reuse path](ci-cd-validation.md#bootstrapping-oidc-for-a-new-subscription-or-tenant), then [grant the app vault access](#github-actions-secret-access) | Configure main, active-branch, and PR credentials on the same app. |
 | 7 | [Configure deployment parameters and public IP](#configure-deployment-parameters) | Use this subscription's resource IDs and verified inventory. |
 | 8 | Optional: [set GitHub secrets and variables](ci-cd-validation.md#github-actions-secrets-and-variables) | Requires GitHub authentication and repository administration access. |
-| 9 | [Apply the foundation deletion lock](access-and-administration.md#foundation-deletion-lock) | Foundation resources and roles must already be in place. |
+| 9 | [Apply the foundation deletion lock](#foundation-deletion-lock) | Foundation resources and roles must already be in place. |
 | 10 | [Check regional availability and quota](deployment.md#preflight-checks), then [build, lint, validate, and preview](ci-cd-validation.md#local-validation) | Resolve errors and review what-if before deploying. |
 | 11 | [Deploy greenfield](deployment.md#greenfield-deployment), then [review deployment and guest results](validation-and-troubleshooting.md#post-deployment-review) | Deployment success alone does not prove operational readiness. |
 
@@ -39,7 +39,6 @@ az login --output none
 az account list --query "[].{name:name,subscriptionId:id,tenantId:tenantId}" -o table
 $subscriptionId = '<target-subscription-id>'
 az account set --subscription $subscriptionId
-if ($LASTEXITCODE -ne 0) { throw 'Could not select the target subscription.' }
 $azureContext = az account show | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0 -or $azureContext.id -ne $subscriptionId) {
   throw 'Azure context does not match the selected subscription.'
@@ -72,13 +71,140 @@ This repository is `andriesdutoit-svg/azure-multiregion-lab`; fork owners must u
 ```powershell
 foreach ($namespace in @('Microsoft.Compute', 'Microsoft.Network', 'Microsoft.KeyVault', 'Microsoft.ManagedIdentity', 'Microsoft.Storage', 'Microsoft.ContainerInstance')) {
   az provider register --namespace $namespace --wait --output none
-  if ($LASTEXITCODE -ne 0) { throw "Provider registration failed: $namespace" }
 }
 az group create --name $foundationRg --location $foundationLocation --output none
-if ($LASTEXITCODE -ne 0) { throw 'Foundation resource-group creation failed.' }
 ```
 
-Storage and Container Instance support the cleanup Deployment Script. `--output none` avoids printing the provider catalogue. If the foundation group already exists, inspect it with `az group show --name $foundationRg --query "{name:name,location:location}" -o json` and reuse its location rather than trying to move it.
+Storage and Container Instance support the network-reconciliation Deployment Script. `--output none` avoids printing the provider catalogue. If the foundation group already exists, inspect it with `az group show --name $foundationRg --query "{name:name,location:location}" -o json` and reuse its location rather than trying to move it.
+
+### Managed Identity
+
+After creating the foundation group, inspect its identities. Create the selected identity only if it does not already exist:
+
+```powershell
+az identity list --resource-group $foundationRg --query "[].{name:name,resourceId:id,principalId:principalId}" -o table
+$automationIdentity = az identity create --name $automationIdentityName `
+  --resource-group $foundationRg --location $foundationLocation | ConvertFrom-Json
+```
+
+For an existing identity, use this instead of `create`:
+
+```powershell
+$automationIdentity = az identity show --name $automationIdentityName `
+  --resource-group $foundationRg | ConvertFrom-Json
+```
+
+### Required Role Assignment
+
+Grant the identity Network Contributor access to the target subscription for applicable peering/Bastion cleanup:
+
+```powershell
+az role assignment create `
+  --assignee-object-id $automationIdentity.principalId `
+  --assignee-principal-type ServicePrincipal `
+  --role "Network Contributor" `
+  --scope "/subscriptions/$($azureContext.id)" --output none
+```
+
+Use `$automationIdentity.id` in the deployment parameter file. The identity is used when network reconciliation runs, not for every VM guest operation. See [Reconciliation RBAC](deployment.md#rbac-requirements-for-network-reconciliation) for its operational scope.
+
+## Key Vault Setup
+
+Parameter files reference credentials through Key Vault rather than embedding them. Required secret names are `sshPublicKey`, `sshPrivateKey`, `jumpboxAdminPassword`, `serverAdminPassword`, and `clientAdminPassword`.
+
+### Create Or Reuse Key Vault
+
+Inspect existing vaults and create the selected vault only if it does not already exist:
+
+```powershell
+az keyvault list --resource-group $foundationRg --query "[].{name:name,id:id}" -o table
+az keyvault create --name $vaultName --resource-group $foundationRg --location $foundationLocation `
+  --enable-rbac-authorization true --enabled-for-template-deployment true `
+  --enable-purge-protection true --output none
+```
+
+`--enabled-for-template-deployment true` allows ARM/Bicep to resolve secret references. Purge protection is irreversible: a deleted vault cannot be permanently purged until its soft-delete retention expires. It protects recovery but does not prevent soft deletion.
+
+### User Secret Access
+
+Grant the signed-in administrator permission to write secrets in the selected vault:
+
+```powershell
+$kvId = az keyvault show --name $vaultName --resource-group $foundationRg --query id -o tsv
+$userObjectId = az ad signed-in-user show --query id -o tsv
+az role assignment create --assignee-object-id $userObjectId `
+  --assignee-principal-type User --role "Key Vault Secrets Officer" --scope $kvId --output none
+```
+
+Allow time for RBAC propagation before writing secrets; do not recreate the vault or broaden permissions merely to bypass propagation delays.
+
+### SSH Key Setup
+
+Use a dedicated lab key rather than a personal GitHub or production key. Generate it interactively at a new path without overwriting an existing key:
+
+```powershell
+$sshKeyPath = Join-Path $HOME '.ssh/amrl_ed25519'
+if (-not (Test-Path -LiteralPath $sshKeyPath)) {
+  New-Item -ItemType Directory -Path (Split-Path $sshKeyPath -Parent) -Force | Out-Null
+  ssh-keygen -t ed25519 -f $sshKeyPath
+  if ($LASTEXITCODE -ne 0) { throw 'SSH key generation failed.' }
+}
+az keyvault secret set --vault-name $vaultName --name sshPublicKey `
+  --value ((Get-Content "$sshKeyPath.pub" -Raw).Trim()) --output none
+az keyvault secret set --vault-name $vaultName --name sshPrivateKey --file $sshKeyPath --output none
+```
+
+Keep passphrases out of scripts and chat; a protected key must be unlocked when SSH uses it, and AMRL does not distribute the passphrase. Keep `--output none` on secret-writing commands so the response does not print the private key.
+
+### Admin Password Setup
+
+Set distinct, strong passwords using masked prompts. Run interactively on a protected workstation without transcripts or diagnostic tracing; the CLI receives temporary plaintext in process memory/arguments:
+
+```powershell
+foreach ($secretName in @('jumpboxAdminPassword', 'serverAdminPassword', 'clientAdminPassword')) {
+  $securePassword = Read-Host "Password for $secretName" -AsSecureString
+  try {
+    $passwordValue = [System.Net.NetworkCredential]::new('', $securePassword).Password
+    az keyvault secret set --vault-name $vaultName --name $secretName --value $passwordValue --output none
+  }
+  finally {
+    $passwordValue = $null
+    $securePassword.Dispose()
+  }
+}
+az keyvault secret list --vault-name $vaultName --query "[].{name:name,enabled:attributes.enabled}" -o table
+```
+
+These secrets initialize local VM accounts, not generated AD users. Generated users receive independent random passwords and require a separate secure reset/delivery process. If credentials were exposed, rotate both vault secrets and credentials on retained guests; updating the vault alone does not rotate existing VM passwords or authorized SSH keys.
+
+### GitHub Actions Secret Access
+
+Optional for CI automation. Complete or reload the [OIDC app setup](ci-cd-validation.md#bootstrapping-oidc-for-a-new-subscription-or-tenant) first. Use its Application (client) ID to resolve the service principal in the current tenant:
+
+```powershell
+$githubActionsAppId = $app.appId
+if ([string]::IsNullOrWhiteSpace($githubActionsAppId)) { throw 'Complete or reload OIDC app setup first.' }
+$githubActionsSpObjectId = az ad sp show --id $githubActionsAppId --query id -o tsv
+az role assignment create --assignee-object-id $githubActionsSpObjectId `
+  --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" --scope $kvId --output none
+```
+
+### Foundation Deletion Lock
+
+After creating foundation resources and their RBAC assignments, protect the group from accidental control-plane deletion:
+
+```powershell
+az lock create `
+  --name protect-foundation `
+  --lock-type CanNotDelete `
+  --resource-group $foundationRg --output none
+```
+
+The lock covers the group and contained resources while permitting updates and secret operations. It does not prevent data-plane secret deletion; soft delete and purge protection govern recovery. Remove it only for intentional foundation deletion, then restore it after maintenance:
+
+```powershell
+az lock delete --name protect-foundation --resource-group $foundationRg --output none
+```
 
 ## Configure Deployment Parameters
 

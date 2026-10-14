@@ -4,17 +4,44 @@
 
 AMRL is a subscription-scope Bicep deployment for a multi-region Azure lab. It creates resource groups, selectable VNet topologies, subnet and NSG segmentation, virtual machines, and optional Active Directory automation.
 
-The primary region is always the hub and control-plane anchor. It hosts `dc01` and `jmp01`; other selected regions are spokes. `networkMode` selects connectivity and routing without changing this placement model.
+The first selected region is the hub and control-plane anchor. Newly placed `dc01` and `jmp01` are assigned there; additional regions provide spoke capacity. `networkMode` selects connectivity and routing independently of VM placement. Retained VMs keep their declared locations.
+
+## Deployment Model
+
+The root template derives placements from parameter files and declared existing inventory, evaluates configuration findings, and orchestrates three stages:
+
+```mermaid
+flowchart LR
+  P[Parameters and existing inventory] --> R[Placement model and validation gate]
+  R --> N[Network stage]
+  N --> C[Compute stage]
+  C --> I[Identity stage]
+  F[Key Vault and automation identity] -.-> N
+  F -.-> C
+  I --> A[AD forest, groups, users, and domain membership]
+  I --> O[Optional shares and Linux desktops]
+```
+
+Network outputs supply subnet IDs to compute. Compute creates missing VMs; identity configures guest services and can also activate missing workload creation when needed. Foundation resources hold credentials and authorize applicable automation. See [Deployment Stages](deployment.md#stages) for stage prerequisites.
+
+| Component | Role in the lab |
+|---|---|
+| Primary and replica DCs | Host AD and domain DNS when identity automation is enabled. |
+| Jumpboxes | Provide the administration hop to private workload VMs; Bastion is an optional additional access path. |
+| Windows/Linux servers and clients | Exercise domain membership, administration policy, applications, and optional desktop access. |
+| Directory and file services | Provide the departmental user/group model, GPOs, and optional group-based share permissions. |
+
+Region and VM counts, role-specific images/sizes/disks, and optional services are data-driven. New-VM creation uses missing identities only; identity automation can also target retained VMs. Detailed placement rules belong in [Placement and Reconciliation](placement-and-reconciliation.md), and guest configuration in [Identity and Domain Join](identity-and-domain-join.md).
 
 ## Core Terminology
 
 - **Greenfield deployment**: Creating entirely new infrastructure from scratch. All networking, compute, and identity resources are created fresh.
 - **Brownfield deployment**: Reusing existing infrastructure (typically networking) and adding new resources on top. Controlled by the `existingRegions` parameter.
-- **Reconciliation model**: Identity automation that can be safely re-executed. Scripts check whether the target state already exists before making changes; missing objects are recreated automatically.
+- **Reconciliation model**: Declared inventories retain existing VM identities while selected automation creates missing objects and repairs supported configuration.
 - **AGDLP**: Global Security Groups (containing users) are nested into Domain Local Security Groups (which hold the actual file share permissions).
 - **Stage**: Deployment execution mode that controls which resource types are deployed (`network`, `compute`, `identity`, or `all`). See [Deployment Guide](deployment.md#stages).
 - **DC (Domain Controller)**: Primary (`dc01`) or replica (`dc02`, `dc03`, etc.) domain controllers. The primary DC creates the forest; replicas sync from it.
-- **Idempotent**: Deployments can be run multiple times safely. Re-running produces the same end state without errors or unwanted recreation.
+- **Idempotent**: Repeated execution avoids unnecessary recreation for supported operations; each feature has its own repair and migration boundaries.
 
 ## Design Principles
 
@@ -37,6 +64,10 @@ The root [main.bicep](../main.bicep) orchestrates the deployment. Reusable modul
 - `modules/identity` owns AD automation, domain joining, and departmental file-service provisioning.
 - `modules/logic` owns configuration and capacity validation.
 
+### Source Organization
+
+[main.bicep](../main.bicep) groups inputs, placement calculations, stage orchestration, and outputs by purpose. Module and script introductions explain ownership, prerequisites, and reconciliation boundaries. Bicep references and `dependsOn` determine deployment order; scripts retain dependency-sensitive execution order.
+
 ## Resource Scope
 
 `main.bicep` uses subscription scope so it can create one resource group per selected region. Regional resources are deployed into their corresponding resource group with module-level resource-group scope.
@@ -53,7 +84,7 @@ The `networkMode` parameter supports three topology creation modes:
 
 `hubSpoke` is suitable for management-focused or firewall-introduction staging environments. It is not a lower-cost replacement for firewall-routed cross-spoke workloads. `fullMesh` avoids Azure Firewall and UDR management, but VNet peering traffic costs and the growing number of peerings should be considered.
 
-The `hubSpoke -> hubSpokeFirewall` transition is supported with `stage=network`: `AzureFirewallSubnet` is reconciled independently of greenfield subnet creation, allowing it to be added to an existing hub VNet. Other topology migrations do not currently remove resources from the prior mode.
+For existing environments, [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) describes supported transitions, peering cleanup, and Bastion retirement.
 
 ## Network Layout
 
@@ -67,10 +98,11 @@ Subnet indexes are supplied through `subnetIndexMap`. The standard layout is:
 
 ```text
 firewall = 0
-jumpbox  = 1
-dc       = 2
-server   = 3
-client   = 4
+bastion  = 1
+jumpbox  = 2
+dc       = 3
+server   = 4
+client   = 5
 ```
 
 All modes contain control-plane and role-based workload subnets. In `hubSpokeFirewall`, the hub additionally contains the firewall and `AzureFirewallSubnet`, while spokes receive route tables. NSGs restrict administration and AD traffic by subnet role in every mode.
@@ -113,16 +145,7 @@ All rules use `protocol: '*'` and `sourcePortRange: '*'`, relying on Azure NSG s
 
 ### IP Addressing Strategy
 
-All VM NICs, including DC NICs, use dynamic private IP allocation. Because AMRL uses dedicated DC-only subnets, a DC is highly likely to receive `.4`, the first usable address, in a fresh, otherwise untouched subnet. The template does not explicitly reserve or verify that address.
-
-Multiple DCs in the same subnet are not inherently a problem: one would normally receive `.4` and another `.5`, and either can serve domain DNS after successful promotion. Concurrent creation does not guarantee which named DC receives `.4`, but DNS does not require a particular DC identity there.
-
-The `.4` assumption can fail, or cease to provide a usable DNS endpoint, when:
-
-- The DC and NIC occupying `.4` are deleted while another DC remains at a different address, such as `.5`.
-- A DC is moved, recreated, or manually readdressed and its actual address differs from the calculated candidate; declared inventory may also be stale or incomplete.
-- An unrelated NIC occupies `.4`, contrary to the DC-only subnet design.
-- A DC occupies `.4` but AD promotion or DNS startup fails, the service later becomes unavailable, or the selected topology or network rules prevent clients from reaching it. These are service or connectivity failures, not address-allocation failures.
+All VM NICs, including DC NICs, use dynamic private IP allocation. In a fresh DC-only subnet, a DC is likely to receive `.4`, the first usable address, but the template does not reserve or verify it. Multiple DCs may occupy different addresses; the important requirement is that the configured DNS endpoint hosts a reachable, working domain DNS service. See [DNS and Domain Connectivity](validation-and-troubleshooting.md#dns-and-domain-connectivity) for lifecycle and readiness checks.
 
 ### DNS Configuration and Strategy
 
@@ -141,7 +164,7 @@ Verify actual DC private IPs and VNet DNS settings during readiness checks, part
 All VMs (`modules/compute/vm-windows.bicep`, `modules/compute/vm-linux.bicep`) share the same security profile:
 
 - **Trusted Launch**: SecureBoot and vTPM enabled to protect against boot-level attacks and rootkits.
-- **System-assigned managed identity**: enables Azure VM Run Commands to execute without external authentication.
+- **System-assigned managed identity**: available to guest workloads for authorized Azure access; VM Run Command invocation is governed separately by deployment permissions.
 - **Boot diagnostics**: enabled for troubleshooting startup issues.
 - **Public IP assignment**: jumpbox VMs only; all other roles remain private.
 
@@ -153,7 +176,7 @@ This is a controlled-egress design rather than a block-all design: outbound conn
 
 ## Topology Transition Boundary
 
-The deployment creates and reconciles resources required by the selected mode, but it does not fully retire resources that are no longer selected. Brownfield cleanup can remove candidate spoke-to-spoke peerings for non-`fullMesh` modes, inferred from `existingRegions`; it does not discover the prior topology. It does not retire firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or resources retained from reverse or expansion transitions. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for the operational boundary and verification requirement.
+The deployment creates and reconciles resources required by the selected mode, but it does not fully retire resources that are no longer selected. The network-reconciliation script enumerates candidate spoke-to-spoke peerings from `existingRegions` only for `hubSpoke` or `hubSpokeFirewall`; `fullMesh` skips peering queries and removal. Independently, it attempts retirement of framework-owned Bastion resources when `enableBastion=false`. It does not discover the prior topology. Firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, and broader reverse-transition retirement remain outside the cleanup scope. See [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification) for invocation conditions, independent action gates, and verification requirements.
 
 ## Desired State
 

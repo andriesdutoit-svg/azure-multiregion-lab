@@ -26,10 +26,11 @@
 - **v2.7**: Windows/Linux endpoint administration and configuration reconciliation.
 - **v2.8**: Blocking/advisory validation findings, `reportOnly`/`enforce` modes, pre-stage deployment gating, and remediation details.
 - **v2.8.1**: Engineering hardening for deployment logging, retained-jumpbox SSH-key targeting, and network-coverage validation.
+- **v2.9 (development branch)**: Optional hub-region Azure Bastion, desired-state peering/Bastion cleanup without a separate execution flag, and reconciliation-identity validation. Implementation on this branch does not by itself imply a published release or full live-transition sign-off.
 
 ## Roadmap
 
-- **v2.9-v2.12:** Azure Bastion, Azure Arc, service accounts and file-server reconciliation, then monitoring and observability. The service-account and file-migration architecture will be scoped during v2.11 development.
+- **v2.10-v2.12:** Azure Arc, service accounts and file-server reconciliation, then monitoring and observability. The service-account and file-migration architecture will be scoped during v2.11 development.
 - **v3.0-v3.3:** Security enhancements and policy baselines, public key infrastructure, hybrid identity, then multi-forest support.
 - **v4.x:** Automatic discovery, explicit DC IP allocation and safe DNS reconciliation, full topology reconciliation, reverse transitions, and zero-VM deployment support.
 - **Stretch goals:** Advanced networking, security, and lab lifecycle automation.
@@ -62,7 +63,7 @@ Validation outputs and Run Command instance views expose placement decisions, ca
 - Azure SKU availability and quota must be checked against the target subscription.
 - Region indexes determine VNet address spaces and must be treated as part of the deployed network contract.
 - Identity scripts are idempotent, but guest networking, DNS, Kerberos, LDAP, and Azure VM Agent health can still affect execution.
-- Topology modes create the resources for the selected mode but do not automatically retire peerings, firewall resources, route tables, UDR associations, or `AzureFirewallSubnet` from a previous mode. Planned topology reconciliation will use manually declared current and desired topologies, analogous to the existing region and VM inventories.
+- Supported network reconciliation retires candidate spoke-to-spoke peerings for hub-spoke targets and disabled framework-owned Bastion resources. Broader firewall, route-table, association, and region retirement remains future work; see [deployment boundaries](deployment.md#brownfield-topology-simplification).
 
 ## Third-Party Components
 

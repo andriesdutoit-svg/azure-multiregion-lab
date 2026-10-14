@@ -1,8 +1,18 @@
 <#
-Installs the shared SSH private key on a jumpbox so admins can SSH from the
-jumpbox into Linux workload VMs without distributing the key more widely.
+.SYNOPSIS
+Installs the shared Linux-administration SSH private key on a Windows jumpbox.
+.DESCRIPTION
+Writes C:\ProgramData\ssh\ssh-key and applies administrator/account ACLs so
+operators can hop to Linux workloads without placing the private key on each VM.
+The caller supplies the key and selects new or retained jumpboxes. This does not
+rotate public keys in retained Linux authorized_keys files.
+.NOTES
+Runs through Azure VM Run Command with local filesystem/ACL permissions.
+Key material must not be logged. ReconciliationToken is accepted for the caller's
+rerun contract; the script reapplies the file and ACL commands on each invocation.
 #>
 
+# 1. Caller inputs
 param(
     [Parameter(Mandatory)]
     [string]$AdminUsername,
@@ -13,11 +23,13 @@ param(
     [string]$ReconciliationToken
 )
 
+# 2. Canonical guest paths
 $sshFolder = "C:\ProgramData\ssh"
 $keyPath = Join-Path $sshFolder 'ssh-key'
 
 Write-Host '[Info] Installing the jumpbox SSH private key.'
 
+# 3. Write the key as UTF-8 without a BOM and retain the terminating newline
 if (-not (Test-Path $sshFolder)) {
     New-Item `
         -ItemType Directory `
@@ -31,6 +43,8 @@ if (-not (Test-Path $sshFolder)) {
     [System.Text.UTF8Encoding]::new($false)
 )
 
+# 4. Restrict inherited and explicit access
+# Preserve command order: create the file before modifying its ACLs.
 icacls $sshFolder /inheritance:r | Out-Null
 icacls $keyPath /inheritance:r | Out-Null
 

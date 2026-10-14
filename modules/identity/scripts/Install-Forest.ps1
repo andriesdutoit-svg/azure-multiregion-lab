@@ -1,4 +1,11 @@
 
+# Forest bootstrap overview
+# Creates the requested AD forest on a provisioned Windows DC VM using the supplied
+# password as the DSRM password. An existing Get-ADDomain result ends the script early.
+# The identity stage orders this before replica promotion and directory population.
+# Promotion initiates a reboot; command completion alone is not an AD-readiness probe.
+# ReconciliationToken participates in the caller's rerun contract, not forced forest recreation.
+
 <#
 This script contains logic derived from and inspired by:
 
@@ -11,6 +18,7 @@ Adapted and integrated for this project.
 Forest creation logic separated from AD population logic.
 #>
 
+# 1. Inputs and secure DSRM password preparation
 param(
     [string]$DomainName,
     [string]$ServerAdminPassword,
@@ -29,6 +37,7 @@ $DsrmPassword = ConvertTo-SecureString `
     -AsPlainText `
     -Force
 
+# 2. Ensure the AD DS role is available before querying forest state
 if ((Get-WindowsFeature AD-Domain-Services).Installed) {
     Write-Host '[Verified] Active Directory Domain Services role is installed.'
 }
@@ -45,7 +54,8 @@ Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 Write-Host "[Info] Checking for an existing Active Directory forest before creating $DomainName."
 
 # ============================================================================
-# IDEMPOTENCY CHECK: VERIFY FOREST DOES NOT ALREADY EXIST
+# PHASE 3: CHECK FOR A DISCOVERABLE EXISTING DOMAIN
+# A successful query exits without creating a new forest; query failures fall through.
 # ============================================================================
 
 try {
@@ -61,7 +71,7 @@ catch {
 # ============================================================================
 # CREATE ACTIVE DIRECTORY FOREST
 # Forest creation triggers automatic VM reboot.
-# Azure VM Run Command handles reconnection and completion detection.
+# Verify post-reboot DC services separately rather than relying on Run Command completion alone.
 # ============================================================================
 
 Write-Host "[Info] Starting Active Directory forest creation for $DomainName."
