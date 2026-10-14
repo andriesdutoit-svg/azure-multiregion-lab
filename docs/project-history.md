@@ -26,7 +26,7 @@
 - **v2.7**: Windows/Linux endpoint administration and configuration reconciliation.
 - **v2.8**: Blocking/advisory validation findings, `reportOnly`/`enforce` modes, pre-stage deployment gating, and remediation details.
 - **v2.8.1**: Engineering hardening for deployment logging, retained-jumpbox SSH-key targeting, and network-coverage validation.
-- **v2.9 (development branch)**: Optional hub-region Azure Bastion, desired-state peering/Bastion cleanup without a separate execution flag, and reconciliation-identity validation. Implementation on this branch does not by itself imply a published release or full live-transition sign-off.
+- **v2.9 (completed)**: Optional hub-region Azure Bastion, independently gated peering/Bastion cleanup without a separate execution flag, and reconciliation-identity validation. Completion covers the delivered scope, not exhaustive live-transition verification.
 
 ## Roadmap
 
