@@ -1,3 +1,17 @@
+<#
+.SYNOPSIS
+Joins a Windows workload VM to the declared AD domain and OU.
+.DESCRIPTION
+Consumes the serialized directory model and VM role to construct the computer OU.
+Validates inputs, returns when any domain membership is already reported, prepares
+domain credentials, waits for DNS, joins, verifies membership, and requests a reboot.
+The caller orders this after directory population and GPO provisioning.
+.NOTES
+Administrator group membership is owned by Group Policy, not repaired by this script.
+The early return does not verify the existing domain or move an already joined computer
+to a newly requested OU. Passwords must not be logged. The rerun token is caller metadata.
+#>
+
 param(
     [string]$DomainName,
     [string]$DirectoryModel,
@@ -55,7 +69,8 @@ if ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {
 
 Write-Host '[Info] Domain join inputs were parsed.'
 
-# Check if the computer is already joined to a domain
+# Return on existing domain membership before preparing credentials or issuing a new join.
+# This preserves retained guest state; it does not prove membership in the requested domain.
 
 $computerSystem = Get-CimInstance Win32_ComputerSystem
 
@@ -87,6 +102,7 @@ $credential = New-Object System.Management.Automation.PSCredential(
 
 # ============================================================================
 # PHASE 3: WAIT FOR DOMAIN DNS RESOLUTION
+# Up to 30 attempts allow DNS/forest setup to settle; this checks name resolution, not all AD services.
 # ============================================================================
 
 $dnsResolved = $false
@@ -144,7 +160,7 @@ if (-not $computerSystem.PartOfDomain) {
 Write-Host "[Verified] Computer reports domain membership after the join."
 
 # ============================================================================
-# PHASE 5: CONFIGURE LOCAL ADMINISTRATOR ACCESS
+# PHASE 5: DEFER ADMINISTRATOR MEMBERSHIP TO GPO AND RESTART
 # ============================================================================
 
 Write-Host '[Info] Local administrator assignment is managed by Group Policy.'

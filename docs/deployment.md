@@ -13,6 +13,44 @@
 
 For a new subscription or tenant, follow [New Subscription Setup](new-subscription-setup.md) instead of starting with the commands below. It includes prerequisites, shared values, and the complete sequence through deployment.
 
+## Deployment Workflow
+
+1. Choose regions, topology, VM counts, and optional identity/file services in the [parameter file](configuration-parameters-reference.md).
+2. Check [regional availability and quota](#preflight-checks), then [build, validate, and preview](ci-cd-validation.md#local-validation).
+3. Use the greenfield or brownfield path below and select the appropriate stage.
+4. Review [deployment outputs and guest results](validation-and-troubleshooting.md#post-deployment-review).
+5. Connect using [Access and Administration](access-and-administration.md).
+
+## Stages
+
+| Stage | Behavior |
+|---|---|
+| `network` | Creates or reuses regional networking and peerings. |
+| `compute` | Creates missing DCs, jumpboxes, and workload VMs. Target VNets and role subnets must already exist. |
+| `identity` | Configures AD, GPOs, workload domain membership, and enabled file/desktop services. Can create missing workloads; control-plane DCs must exist. |
+| `all` | Runs the complete workflow. |
+
+Use `stage=all` when both networking and VM creation are needed. For separate runs, use `network -> compute -> identity`, keeping declared inventory current between deployments. Stage flags select resources, but shared placement, validation, and module contracts are still evaluated.
+
+```mermaid
+flowchart LR
+  N[stage=network] --> C[stage=compute]
+  C --> I[stage=identity optional]
+```
+
+Use a new deployment name when rerunning identity automation so Azure reapplies the VM Run Commands. Verify required connectivity, sign-in, and services after deployment; stage completion alone does not prove readiness.
+
+### Validation Mode
+
+- `reportOnly` reports blocking and advisory findings and allows the selected stages to run.
+- `enforce` fails the validation gate when blocking findings are active; dependent stages do not run. Advisory findings remain non-blocking.
+
+The engine completes before the gate, so its nested deployment retains diagnostics after enforcement failure. See [Deployment Results and Troubleshooting](validation-and-troubleshooting.md#post-deployment-review).
+
+### Optional File Services
+
+Set `enableIdentity=true` and `enableFileServices=true` and run `identity` or `all`. Shares use the primary DC unless `useDedicatedFileServer=true`, which selects the first `srvwin` VM in the final model. Request or inventory that server before enabling dedicated mode; [target reassignment is not data migration](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
+
 ## Greenfield Deployment
 
 For a new environment, use an empty `existingRegions` array and an empty `existingVmPlacements` array. Set `vmCounts.dc` to at least `1`.
@@ -74,58 +112,29 @@ The hub remains the control-plane region in all modes. Selecting a mode does not
 
 Changing `networkMode` from `fullMesh` to `hubSpoke`, `fullMesh` to `hubSpokeFirewall`, or `hubSpoke` to `hubSpokeFirewall` and running `stage=network` is the currently supported brownfield topology simplification path. In these transitions, the deployment removes unneeded full-mesh peerings and adds the target-mode resources required by the new topology without recreating VMs or identity resources. The firewall subnet is reconciled even when the hub VNet is listed in `existingRegions`.
 
-Network reconciliation is directly determined by declared desired state (`networkMode` and `enableBastion`). During `stage=network` or `stage=all`, the `${prefix}-network-reconciliation` Deployment Script is instantiated in brownfield deployments when:
+Network reconciliation is directly determined by declared desired state (`networkMode` and `enableBastion`), without an `executeNetworkReconciliation` flag. During `stage=network` or `stage=all`, the `${prefix}-network-reconciliation` Deployment Script is instantiated in brownfield deployments when:
 1. `networkMode` is `hubSpoke` or `hubSpokeFirewall` and `existingRegions` is populated (to remove candidate spoke-to-spoke peerings that do not belong in the target topology), or
-2. `enableBastion` is `false` and the hub region is present in `existingRegions` (to remove obsolete Bastion hosts, public IPs, and `AzureBastionSubnet`).
+2. `enableBastion` is `false` and the hub region is present in `existingRegions` (to remove the framework-owned Bastion host, Bastion Public IP, and `AzureBastionSubnet`).
 
-The script automatically executes the necessary reconciliation actions to align the environment with the declared desired state. The script is not instantiated for greenfield deployments, or in full-mesh deployments where Bastion is enabled.
+Peering cleanup runs only for `hubSpoke` or `hubSpokeFirewall`; Bastion cleanup runs independently when `enableBastion=false`, preserving full-mesh peerings. Review script outputs and warnings to confirm removal succeeded.
 
-The script infers candidate peerings from `existingRegions`; it does not discover or validate the previously deployed topology. The current implementation removes candidate full-mesh peerings and disabled Bastion resources; it does not retire firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or handle reverse transitions or broader discovery.
+The reconciliation scope does not include Public IP assignment or removal on retained jumpboxes, arbitrary-resource discovery, or full environment convergence. See [Bastion And Retained Jumpboxes](access-and-administration.md#bastion-and-retained-jumpboxes) before disabling Bastion.
 
-This support is intentionally narrow. It does not yet automate reverse topology transitions, broader discovery of existing topology, or retirement of firewall resources, route tables, UDR associations, `AzureFirewallSubnet`, or other previous-mode resources when they are no longer needed. Planned topology reconciliation will use manually declared current and desired topologies, analogous to `existingRegions` and `existingVmPlacements`, to determine resource retirement before considering a topology migration complete.
-
-The planned roadmap for later work includes topology discovery, region discovery, VM discovery, firewall retirement, route-table retirement, `AzureFirewallSubnet` retirement, reverse topology transitions, and zero-VM deployment support.
+Reconciliation uses `existingRegions` and framework naming conventions to identify cleanup targets. It supports topology simplification by removing obsolete spoke-to-spoke peerings and retires the hub's Bastion host, Public IP, and dedicated subnet when Bastion is disabled.
 
 ## RBAC Requirements for Network Reconciliation
 
-AMRL uses an Azure Deployment Script to identify and optionally remove obsolete spoke-to-spoke VNet peerings when transitioning from a `fullMesh` topology to either `hubSpoke` or `hubSpokeFirewall`.
+AMRL uses an Azure Deployment Script to attempt removal of candidate spoke-to-spoke VNet peerings and disabled framework-owned Bastion resources under the conditions above. The script's identity must be valid and authorized whenever the script is scheduled to run, even if no cleanup targets are found. `automationManagedIdentityResourceId` remains a required template input; its missing/malformed identity finding is active only when reconciliation is scheduled.
 
 Create a User Assigned Managed Identity, grant it the **Network Contributor** role, and supply the identity resource ID through the `automationManagedIdentityResourceId` parameter.
 
 ### Managed Identity
 
-Create a User Assigned Managed Identity after [creating the foundation group](new-subscription-setup.md#azure-context-and-foundation). These commands require `$foundationRg`, `$foundationLocation`, `$automationIdentityName`, and `$azureContext` from that setup step. Retrieve existing identities instead of replacing them:
-
-```powershell
-az identity list --resource-group $foundationRg --query "[].{name:name,resourceId:id,principalId:principalId}" -o table
-$automationIdentity = az identity create --name $automationIdentityName `
-  --resource-group $foundationRg --location $foundationLocation | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or -not $automationIdentity.id -or -not $automationIdentity.principalId) {
-  throw 'Managed identity creation failed.'
-}
-```
-
-For an identity that already exists, use this instead of `create`:
-
-```powershell
-$automationIdentity = az identity show --name $automationIdentityName `
-  --resource-group $foundationRg | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or -not $automationIdentity.principalId) {
-  throw 'Managed identity not found in the selected subscription.'
-}
-```
+Follow [Managed Identity](new-subscription-setup.md#managed-identity) in the foundation setup walkthrough to create or retrieve the identity. Pass its resource ID through `automationManagedIdentityResourceId`.
 
 ### Required Role Assignment
 
-Grant the managed identity the **Network Contributor** role at subscription scope:
-
-```powershell
-az role assignment create `
-  --assignee-object-id $automationIdentity.principalId `
-  --assignee-principal-type ServicePrincipal `
-  --role "Network Contributor" `
-  --scope "/subscriptions/$($azureContext.id)" --output none
-```
+The setup walkthrough [assigns Network Contributor](new-subscription-setup.md#required-role-assignment) at subscription scope, covering the regional network resources targeted by cleanup.
 
 ### Why This Permission Is Required
 
@@ -139,63 +148,7 @@ Without the **Network Contributor** role, the Deployment Script cannot query or 
 
 ### Managed Identity Configuration
 
-The Deployment Script resource must be configured to use the managed identity:
-
-```bicep
-identity: {
-  type: 'UserAssigned'
-  userAssignedIdentities: {
-    '/subscriptions/<subscriptionId>/resourceGroups/amrl-foundation-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/amrl-deployment-mi': {}
-  }
-}
-```
-
-## Stages
-
-| Stage | Behavior |
-|---|---|
-| `network` | Creates or reuses regional networking and peerings. |
-| `compute` | Creates missing DCs, jumpboxes, and workload VMs. All target VNets and role subnets must already exist; this stage does not create or repair networking. |
-| `identity` | Runs AD bootstrap, replica promotion, directory population, domain join automation, and optional departmental file-service provisioning. It may also create missing workload VMs needed by the identity flow. Existing control-plane DCs are required. |
-| `all` | Runs the complete workflow. |
-
-### Validation Mode
-
-`validationMode` controls how findings affect deployment:
-
-- `reportOnly` reports blocking and advisory findings, then allows the selected stages to run.
-- `enforce` fails the validation gate when any blocking finding is active. Network, compute, and identity stages depend on the gate and do not run after it fails. Advisory findings do not block enforcement mode.
-
-The validation engine completes before the gate evaluates its results, so its nested deployment retains diagnostic outputs after an enforcement failure. See [Deployment Results and Troubleshooting](validation-and-troubleshooting.md) for retrieving them.
-
-Stages are dependency layers, not independent deployment products. Stage selection gates stage-owned resources, while shared placement and validation logic and the stage modules remain part of the evaluated template. `stage=all` is the end-to-end path when networking and VM creation are both required in the same deployment.
-
-For a compute-only deployment, first ensure the project-managed VNet and required role subnets exist in every target region. When adding a region or missing networking, run `stage=network` before `stage=compute`, or use `stage=all` to run the complete workflow.
-
-Typical staged order:
-
-```text
-network -> compute -> identity
-```
-
-```mermaid
-flowchart LR
-  N[stage=network] --> C[stage=compute]
-  C --> I[stage=identity optional]
-  A[stage=all] --> N
-  E[existingRegions includes a region] -.-> N
-```
-
-Use a new deployment name when rerunning identity automation so Azure reapplies the VM Run Command resources.
-
-A successful deployment stage is not by itself a guarantee of operational readiness. Review validation outputs and VM Run Command guest execution results, then verify required connectivity, administrative sign-in, and platform services independently.
-
-When enabling departmental file services:
-
-- Set `enableIdentity=true` and `enableFileServices=true`.
-- Leave `useDedicatedFileServer=false` to host shares on the primary DC.
-- Set `useDedicatedFileServer=true` and request or inventory at least one `srvwin` VM to host shares on the first Windows server in the final placement model.
-- Run `stage=identity` or `stage=all`; file-service provisioning does not run during the other stages.
+The template binds the supplied identity to the Deployment Script. No manual edit to the Bicep identity block is needed.
 
 ## Supported Deployment Models
 

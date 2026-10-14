@@ -1,14 +1,9 @@
-// ========================================
-// MODULE PURPOSE
 // Creates route tables for spoke DC, jumpbox, server, and client subnets.
-// Route table association is handled elsewhere.
-// ========================================
+// roleSubnets.bicep owns subnet association; this module defines route-table contents only.
+// Control-plane subnets receive internal-range routes; workload subnets also receive a default route.
+// The firewall private IP is supplied by the caller. Disabling this module does not delete old route tables.
 
-// ========================================
-// INPUTS
-// Location, firewall next hop, and managed spoke subnet names.
-// ========================================
-
+// 1. Location, firewall next hop, and role subnet names
 param location string
 param nextHopIp string
 
@@ -17,13 +12,10 @@ param jumpboxSubnetName string
 param serverSubnetName string
 param clientSubnetName string
 
-// ========================================
-// RESOURCE CREATED: ROUTE TABLES
-// One route table per subnet role.
-// ========================================
+// 2. Control-plane route tables
 
 // Spoke DCs send private cross-spoke traffic through the hub firewall.
-// Internet traffic remains direct because this route table has no default route.
+// No default Internet route is declared here; other network settings still govern egress.
 resource rtDc 'Microsoft.Network/routeTables@2023-02-01' = {
   name: '${dcSubnetName}-rt'
   location: location
@@ -59,8 +51,8 @@ resource rtJumpbox 'Microsoft.Network/routeTables@2023-02-01' = {
   }
 }
 
-// Server route table
-// Default outbound traffic is forced through the firewall next hop so workload subnets no longer use direct Internet egress.
+// 3. Workload route tables
+// Server and client default routes send outbound traffic to the firewall next hop.
 resource rtServer 'Microsoft.Network/routeTables@2023-02-01' = {
   name: '${serverSubnetName}-rt'
   location: location
@@ -86,8 +78,6 @@ resource rtServer 'Microsoft.Network/routeTables@2023-02-01' = {
   }
 }
 
-// Client route table
-// Default outbound traffic is forced through the firewall next hop so workload subnets no longer use direct Internet egress.
 resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
   name: '${clientSubnetName}-rt'
   location: location
@@ -113,8 +103,8 @@ resource rtClient 'Microsoft.Network/routeTables@2023-02-01' = {
   }
 }
 
+// 4. Association IDs by role
 output dcRouteTableId string = rtDc.id
 output jumpboxRouteTableId string = rtJumpbox.id
 output serverRouteTableId string = rtServer.id
-
 output clientRouteTableId string = rtClient.id

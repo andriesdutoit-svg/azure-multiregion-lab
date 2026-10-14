@@ -1,48 +1,35 @@
 targetScope = 'resourceGroup'
 
-// ========================================
-// MODULE PURPOSE
-// Executes directory population via Azure VM Run Command on primary DC
-// ========================================
+// Populates the declared department and user model on the primary DC.
+// Runs after forest/replica provisioning. The directory model aligns OU/group naming with GPO and joins;
+// names.csv supplies population data, while the guest script owns existing-object handling.
+// Optional file-service groups are controlled here, but share creation belongs to file-services.bicep.
 
-// ========================================
-// CONFIGURATION INPUTS
-// ========================================
-
+// 1. Target and directory model
 param dcVmName string
 param domainName string
+param directoryModel string
 
-param usersPerDepartment int
+// Population settings and optional file-service groups
 param sysAdminDepartment object
 param additionalDepartments object
 param departmentCount int
-param directoryModel string
+param usersPerDepartment int
 param enableFileServices bool
 
 param reconciliationToken string
 
-// ========================================
-// CONFIGURATION VARIABLES
-// ========================================
+// 2. Guest script and source names
+// Structured department inputs are serialized below for the Run Command interface.
 
 var populateAdScript = loadTextContent('./scripts/Populate-AD.ps1')
 var namesCsvContent = loadTextContent('./data/names.csv')
 
-// ========================================
-// RESOURCES
-// ========================================
-
-// ----
-// Reference to primary DC VM
-// ----
+// 3. Existing primary DC and Run Command
 
 resource dcVm 'Microsoft.Compute/virtualMachines@2022-08-01' existing = {
   name: dcVmName
 }
-
-// ----
-// Directory population run command
-// ----
 
 resource populateDirectory 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' = {
   parent: dcVm
@@ -51,7 +38,7 @@ resource populateDirectory 'Microsoft.Compute/virtualMachines/runCommands@2023-0
   location: resourceGroup().location
 
   properties: {
-    
+
     source: {
       script: populateAdScript
     }

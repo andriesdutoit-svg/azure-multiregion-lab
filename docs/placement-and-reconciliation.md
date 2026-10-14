@@ -21,8 +21,8 @@ var missingVmList = filter(
 
 ## Placement Rules
 
-1. `dc01` and `jmp01` are pinned to the primary region, which is the hub.
-2. Workload VMs are placed on spokes and do not use hub workload capacity.
+1. New `dc01` and `jmp01` are pinned to the primary region, which is the hub. Retained VMs keep their declared locations.
+2. In multi-region deployments, new workloads use spoke capacity. Single-region placement uses the only selected region.
 3. New DCs and jumpboxes fill spoke capacity first-fit, in region-index order, one spoke to its full capacity before the next (not round-robin across spokes).
 4. Existing VMs reduce the available capacity of their regions before new placement occurs.
 5. Workloads use the remaining spoke capacity after existing and new control-plane occupancy is accounted for.
@@ -89,7 +89,7 @@ The `useDedicatedFileServer` parameter controls the file server target:
 
 File services are provisioned only when `enableFileServices=true` during an `identity` or `all` stage. Dedicated mode also requires `enableIdentity=true`; the validation module reports unsupported combinations.
 
-The file server target is recomputed on every deployment. If a greenfield deployment has no Windows server (file services run on the DC) and a later brownfield deployment adds one, the file server target switches to the new Windows server on that run.
+The file server target is recomputed on every deployment. Enabling dedicated mode when adding a Windows server selects that server instead of the DC. If dedicated mode was already enabled without a server, adding one replaces the invalid configuration's DC fallback. With dedicated mode disabled, adding a server does not change the DC target.
 
 This switch is a target change only, not a migration:
 

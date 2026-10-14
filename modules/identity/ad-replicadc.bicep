@@ -1,45 +1,30 @@
 targetScope = 'resourceGroup'
 
-// ========================================
-// MODULE PURPOSE
-// Executes replica DC promotion via Azure VM Run Command
-// ========================================
+// Promotes the designated replica DC; the caller orders this after primary-forest readiness.
+// Consumes the domain, target VM, and domain-administrator credentials. Guest promotion and
+// existing-role detection belong to the script; this module does not create the VM or change placement.
 
-// ========================================
-// CONFIGURATION INPUTS
-// ========================================
-
+// 1. Target and domain
+param dcVmName string
 param domainName string
 
+// Domain administrator credentials and guest-automation rerun token
 param serverAdminUsername string
 @secure()
 param serverAdminPassword string
 
-param dcVmName string
-
 param reconciliationToken string
 
-// ========================================
-// CONFIGURATION VARIABLES
-// ========================================
+// 2. Script content
 
 var promoteReplicaDcScript = loadTextContent('./scripts/Promote-ReplicaDC.ps1')
 
-// ========================================
-// RESOURCES
-// ========================================
-
-// ----
-// Reference to replica DC VM
-// ----
+// 3. Existing replica DC and Run Command
+// Referencing the VM does not redeploy its disks, NIC, or operating-system configuration.
 
 resource dcVm 'Microsoft.Compute/virtualMachines@2022-08-01' existing = {
   name: dcVmName
 }
-
-// ----
-// Replica promotion run command
-// ----
 
 resource replicaBootstrap 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' = {
   parent: dcVm

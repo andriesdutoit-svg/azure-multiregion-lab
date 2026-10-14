@@ -1,32 +1,25 @@
-// ========================================
-// MODULE PURPOSE
 // Deploys a Linux VM with SSH key authentication and optional public IP.
-// ========================================
+// Owns the VM, its NIC, and optional Public IP; the current compute-stage caller keeps Linux workloads private.
+// Image/disk settings and SSH administrator identity come from the caller, while domain join is separate.
+// Associated-resource delete options apply to VM deletion, not retirement of resources omitted from templates.
 
-// ========================================
-// INPUTS
-// VM identity, networking, image, role-selected size, role-selected OS disk profile, and access mode.
-// ========================================
-
+// 1. Parameters
+// Identity and role-selected compute configuration
 param vmName string
-param subnetId string
-param vmSize string
-param adminUsername string
-param sshPublicKey string
 param tags object = {}
+param vmSize string
 param image object
 param osDisk object
 param vmAutoDeleteOptions object
+
+// Network attachment and SSH-only administrator access
+param subnetId string
 param assignPublicIp bool
+param adminUsername string
+param sshPublicKey string
 
-// ========================================
-// RESOURCES & OUTPUTS
-// ========================================
-
-// ========================================
-// Network Interface
-// ========================================
-
+// 2. Network interface
+// References create the required NIC/Public IP/VM dependencies; textual order is not execution order.
 resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
   name: '${vmName}-nic'
   location: resourceGroup().location
@@ -50,10 +43,8 @@ resource nic 'Microsoft.Network/networkInterfaces@2022-07-01' = {
   }
 }
 
-// ========================================
-// Linux VM
-// System-assigned identity, Trusted Launch, SSH-only authentication
-// ========================================
+// 3. Virtual machine
+// Password SSH authentication is disabled; the supplied public key provisions the local administrator.
 
 resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
   name: vmName
@@ -123,10 +114,8 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-08-01' = {
   }
 }
 
-// ========================================
-// CONDITIONAL RESOURCE: PUBLIC IP
-// Created only when assignPublicIp is true.
-// ========================================
+// 4. Optional Public IP
+// Conditional creation alone does not retire an existing IP when assignPublicIp becomes false.
 
 resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = if (assignPublicIp) {
   name: '${vmName}-pip'

@@ -1,6 +1,15 @@
-# Azure Multi-Region Lab (AMRL) 2.9
+# Azure Multi-Region Lab (AMRL)
 
-AMRL is a subscription-scope Azure lab implemented with Bicep. It demonstrates modular Infrastructure as Code, parameter-driven desired state, staged deployment, selectable network topologies, capacity-aware VM placement, and idempotent Active Directory automation.
+AMRL deploys a multi-region Azure lab of Windows and Linux machines, connected networks, and optional Active Directory services using Bicep. Parameter files control the lab's size, placement, topology, and enabled services, supporting both new environments and expansion of existing AMRL labs.
+
+## What You Deploy
+
+- Regional VNets, role subnets, and NSGs, with full-mesh or hub-spoke connectivity and optional Azure Firewall routing.
+- Domain-controller and jumpbox VMs in the primary region, with additional DCs, jumpboxes, and Windows/Linux workloads placed according to capacity.
+- Optional AD forest and replica promotion, departmental OUs/groups/users, Group Policy, and workload domain joining.
+- Jumpbox-based administration, optional Azure Bastion, departmental file shares, and Linux client desktops.
+
+The project demonstrates modular Infrastructure as Code, staged deployment, declared-inventory reconciliation, and configuration validation. See [Architecture](docs/architecture.md) for how these parts fit together.
 
 See [Project History and Learning Notes](docs/project-history.md) for release history, learning outcomes, and the roadmap.
 
@@ -34,8 +43,8 @@ Use this quick start only when the Key Vault, secrets, and deployment managed id
 2. Replace `<YOUR_PUBLIC_IP>` with your public IPv4 address (the demo adds `/32`), `<KEYVAULT_ID>` with your Key Vault resource ID, and `<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>` with your User Assigned Managed Identity resource ID.
 3. Ensure the Key Vault contains the referenced `sshPublicKey`, `sshPrivateKey`, `jumpboxAdminPassword`, `serverAdminPassword`, and `clientAdminPassword` secrets. Keep the Key Vault references in the parameter file; do not paste SSH keys or passwords into it.
 4. Set `existingRegions` and `existingVmPlacements` to empty arrays.
-5. Set `vmCounts.dc` to at least `1`.
-6. Deploy the Bicep template:
+5. Keep at least one DC and one jumpbox, then choose the required workload counts and topology.
+6. Complete [Local Validation](docs/ci-cd-validation.md#local-validation), including what-if review, then deploy:
 
 ```powershell
 $parameterFile = '.\main.parameters.local.json'
@@ -48,7 +57,7 @@ az deployment sub create `
         --parameters $parameterFile
 ```
 
-The managed identity is used only for applicable brownfield network reconciliation during `stage=network` or `stage=all`; the reconciliation script is not deployed for greenfield deployments. For Key Vault setup and parameter details, see [Deployment Guide](docs/deployment.md) and [Configuration Parameters Reference](docs/configuration-parameters-reference.md).
+Review [deployment and guest results](docs/validation-and-troubleshooting.md#post-deployment-review), then follow [Access and Administration](docs/access-and-administration.md) to connect. For foundation setup and parameter details, see [New Subscription Setup](docs/new-subscription-setup.md) and [Configuration Parameters Reference](docs/configuration-parameters-reference.md).
 
 ## Quick Start: Brownfield
 
@@ -61,15 +70,6 @@ For an existing AMRL environment:
 5. Use a new deployment name when rerunning identity automation.
 
 See [Brownfield Deployment](docs/deployment.md#brownfield-deployment) for an inventory example and [Placement and Reconciliation](docs/placement-and-reconciliation.md) for the complete model.
-
-## What This Project Demonstrates
-
-- Modular Bicep infrastructure with explicit scopes and staged deployment.
-- Parameter-driven greenfield and brownfield deployment using declared inventories.
-- Deterministic, capacity-aware placement across selectable network topologies.
-- Active Directory automation, Group Policy, and Windows/Linux endpoint administration.
-- Optional departmental file services and Linux client desktops.
-- Key Vault-backed credentials and classified validation findings with optional deployment enforcement.
 
 ## Network Topology
 
@@ -107,14 +107,14 @@ See [Deployment Results and Troubleshooting](docs/validation-and-troubleshooting
 ## Repository Structure
 
 ```text
-main.bicep                         Subscription-scope orchestrator
-main.parameters.*.json             Deployment parameter examples
-modules/networking                 VNets, subnets, NSGs, firewall, routes
-modules/networking/peering.bicep   Mode-specific hub-spoke or full-mesh peering
-modules/compute                    Windows and Linux VM resources
-modules/identity                   AD and domain-join automation
-modules/logic                      Placement and configuration validation
-docs/                              Detailed project documentation
+main.bicep                        Placement model and subscription-scope orchestration
+main.parameters.*.json            Deployment parameter examples
+modules/stages                   Network, compute, and identity stage contracts
+modules/networking               VNets, subnets, NSGs, peerings, firewall, routes, Bastion
+modules/compute                  Windows and Linux VM resources and guest helpers
+modules/identity                 AD, domain-join, and departmental share automation
+modules/logic                    Configuration/capacity validation and enforcement gate
+docs/                            Detailed project documentation
 ```
 
 ## Known Limitations

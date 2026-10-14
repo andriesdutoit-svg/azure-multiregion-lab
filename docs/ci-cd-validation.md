@@ -2,6 +2,41 @@
 
 [Back to README](../README.md)
 
+Start with local checks for manual deployments. GitHub Actions and OIDC setup are optional automation paths; they are not prerequisites for running the lab from your workstation.
+
+## Local Validation
+
+Prerequisites: Azure CLI authenticated to the target subscription, an existing parameter file, and referenced foundation resources. Set the parameter path and deployment metadata location explicitly, or reuse the values from [New Subscription Setup](new-subscription-setup.md):
+
+```powershell
+$parameterFile = '.\main.parameters.local.json'
+$deploymentLocation = 'westeurope'
+if (-not (Test-Path -LiteralPath $parameterFile)) { throw 'Configure the parameter file before validation.' }
+```
+
+Build and lint locally, then validate the deployment and preview proposed changes without creating resources:
+
+```powershell
+az bicep build --file main.bicep
+az bicep lint --file main.bicep
+```
+
+```powershell
+az deployment sub validate `
+  --location $deploymentLocation `
+  --template-file main.bicep `
+  --parameters $parameterFile
+```
+
+```powershell
+az deployment sub what-if `
+  --location $deploymentLocation `
+  --template-file main.bicep `
+  --parameters $parameterFile
+```
+
+Review the proposed changes before [deploying](deployment.md). For outputs and guest-readiness checks afterward, use [Deployment Results and Troubleshooting](validation-and-troubleshooting.md).
+
 ## GitHub Actions
 
 The workflow at `.github/workflows/validate.yml` runs for pushes to `main`, pushes to feature branches, pushes to fix branches, manual runs via `workflow_dispatch`, and pull requests targeting `main`.
@@ -69,9 +104,7 @@ Use this path only if the app and service principal do not already exist in the 
 az ad app list --display-name $appDisplayName --query "[].{name:displayName,clientId:appId,objectId:id}" -o table
 # Create the app registration and service principal
 $app = az ad app create --display-name $appDisplayName | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or -not $app.appId) { throw 'App registration creation failed.' }
 $servicePrincipal = az ad sp create --id $app.appId | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or -not $servicePrincipal.id) { throw 'Service principal creation failed.' }
 ```
 
 ### Reuse Existing App
@@ -81,9 +114,7 @@ If the app was already created, skip the create path. Populate the variables usi
 ```powershell
 $githubActionsAppId = '<application-client-id>'
 $app = az ad app show --id $githubActionsAppId | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or -not $app.id) { throw 'App registration not found in the current tenant.' }
 $servicePrincipal = az ad sp show --id $app.appId | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or -not $servicePrincipal.id) { throw 'Service principal not found; create it before continuing.' }
 ```
 
 ### Grant Access And Configure Credentials
@@ -176,9 +207,7 @@ Retrieve the resource IDs rather than typing them. Public-IP discovery belongs t
 ```powershell
 if ([string]::IsNullOrWhiteSpace($publicIp)) { throw 'Complete public-IP setup before setting GitHub variables.' }
 $kvId = az keyvault show --name $vaultName --resource-group $foundationRg --query id -o tsv
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($kvId)) { throw 'Vault resource ID lookup failed.' }
 $automationIdentityResourceId = az identity show --name $automationIdentityName --resource-group $foundationRg --query id -o tsv
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($automationIdentityResourceId)) { throw 'Managed identity resource ID lookup failed.' }
 
 gh variable set YOUR_PUBLIC_IP -b $publicIp -R $githubRepository
 gh variable set KEYVAULT_ID -b $kvId -R $githubRepository
@@ -188,41 +217,6 @@ gh variable list -R $githubRepository
 ```
 
 `YOUR_PUBLIC_IP` is the IPv4 address without `/32`; the workflow adds the CIDR suffix. Secret listing shows names, not secret values. Local-only deployments do not need this GitHub configuration.
-
-## Local Validation
-
-Prerequisites: Azure CLI authenticated to the target subscription, an existing parameter file, and referenced foundation resources. Set the parameter path and deployment metadata location explicitly, or reuse the values from [New Subscription Setup](new-subscription-setup.md):
-
-```powershell
-$parameterFile = '.\main.parameters.local.json'
-$deploymentLocation = 'westeurope'
-if (-not (Test-Path -LiteralPath $parameterFile)) { throw 'Configure the parameter file before validation.' }
-```
-
-Build and lint the template locally:
-
-```powershell
-az bicep build --file main.bicep
-az bicep lint --file main.bicep
-```
-
-Validate a deployment without creating resources:
-
-```powershell
-az deployment sub validate `
-  --location $deploymentLocation `
-  --template-file main.bicep `
-  --parameters $parameterFile
-```
-
-Preview changes:
-
-```powershell
-az deployment sub what-if `
-  --location $deploymentLocation `
-  --template-file main.bicep `
-  --parameters $parameterFile
-```
 
 ## Validation Reference
 

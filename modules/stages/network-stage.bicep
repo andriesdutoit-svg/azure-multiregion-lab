@@ -1,36 +1,32 @@
 targetScope = 'subscription'
 
-// ========================================
-// NETWORK STAGE
-//
+// Network stage overview
 // Responsibilities:
-// - Resource Groups
-// - VNets
-// - Peerings
-// - Azure Firewall
-// - Route tables
-// - Role subnets and additional policy-neutral subnets
-//
+// - Declare regional resource groups and create/reuse VNets with managed role NSGs and subnets.
+// - Provision topology-specific firewall, route tables, peerings, and optional hub Bastion.
+// - Run bounded cleanup of candidate spoke peerings and disabled framework-owned Bastion resources.
+// Consumes:
+// - The root's ordered region model, declared existing network inventory, and addressing/policy inputs.
+// - Stage activation, topology/access settings, and the cleanup managed identity.
 // Provides:
-// - subnetMap
-//
-// Consumed by:
-// - compute-stage
-// ========================================
+// - subnetMap with dc/jumpbox/server/client IDs per region for compute-stage.
+// Boundaries:
+// - Resource groups are declared on every invocation; network modules require deployNetwork.
+// - VM placement stays in main.bicep; this stage neither discovers arbitrary resources
+//   nor changes Public IPs on retained jumpboxes.
 
-// Outputs:
-//
-// subnetMap
-//
-// Consumed by:
-// compute-stage.bicep
-
+// 1. Parameters
+// Resource metadata and stage activation
 param prefix string
-param regionKeys array
-param hubRegion string
-
+param tags object
 param deployNetwork bool
 
+// Desired regions and declared existing network inventory
+param regionKeys array
+param hubRegion string
+param existingRegions array
+
+// Topology, administrator ingress, and cleanup identity
 @description('Network topology mode.')
 @allowed([
   'hubSpokeFirewall'
@@ -38,13 +34,6 @@ param deployNetwork bool
   'fullMesh'
 ])
 param networkMode string
-
-@description('Resource ID of the User Assigned Managed Identity used by Deployment Scripts.')
-param automationManagedIdentityResourceId string
-
-param tags object
-
-param existingRegions array
 
 param enableBastion bool
 @allowed([
@@ -54,15 +43,19 @@ param enableBastion bool
 ])
 param bastionSku string
 
+@description('Resource ID of the User Assigned Managed Identity used by Deployment Scripts.')
+param automationManagedIdentityResourceId string
+
+// Addressing and subnet policy inputs aligned by regionKeys index
 param addressPrefixes array
 param subnetPrefixesArray array
+param additionalSubnetsByRegion array
 
 param dnsServers array
 param jumpboxSubnets array
 param jumpboxAllowedSources array
-param additionalSubnetsByRegion array
 
-// Capability helpers
+// 2. Topology capabilities and reconciliation gate
 var deployFirewall = contains([
   'hubSpokeFirewall'
 ], networkMode)
@@ -79,11 +72,14 @@ var deployPeerings = contains([
 
 // Network reconciliation runs in brownfield deployments when resources outside desired state require removal:
 // 1. Candidate spoke-to-spoke peerings when moving to a non-full-mesh topology
-// 2. Existing Bastion resources in the hub when enableBastion is false
+// 2. Framework-owned Bastion resources when disabled and the hub is in existingRegions
+// Script creation requires authorized identity access even if no obsolete resource is found.
 var requiresPeeringReconciliation = deployNetwork && networkMode != 'fullMesh' && length(existingRegions) > 0
 var requiresBastionReconciliation = deployNetwork && !enableBastion && contains(existingRegions, hubRegion)
 var requiresNetworkReconciliation = requiresPeeringReconciliation || requiresBastionReconciliation
 
+// 3. Regional resource groups and VNet assembly
+// Resource groups are declared for every stage; networking modules are gated by deployNetwork.
 resource rgs 'Microsoft.Resources/resourceGroups@2022-09-01' = [
   for region in regionKeys: {
     name: '${prefix}-rg-${region}'
@@ -108,11 +104,14 @@ module vnets '../networking/vnet.bicep' = [
     params: {
       vnetName: '${prefix}-vnet-${region}'
       location: region
+      tags: union(tags, {
+        project: prefix
+      })
+
       isHub: region == hubRegion
+      existingRegions: existingRegions
       deployAzureFirewallSubnet: deployFirewall
       enableBastion: enableBastion
-
-      existingRegions: existingRegions
 
       addressPrefix: addressPrefixes[i]
       subnetPrefix: subnetPrefixesArray[i]
@@ -121,13 +120,12 @@ module vnets '../networking/vnet.bicep' = [
       dnsServers: dnsServers
       jumpboxSubnets: jumpboxSubnets
       jumpboxAllowedSources: jumpboxAllowedSources
-      tags: union(tags, {
-        project: prefix
-      })
     }
   }
 ]
 
+// 4. Optional hub infrastructure and spoke routing
+// Explicit dependencies preserve hub-subnet readiness and the firewall next-hop contract.
 module firewall '../networking/firewall.bicep' = if (deployNetwork && deployFirewall) {
   name: '${prefix}-firewall-${hubRegion}'
 
@@ -192,6 +190,8 @@ module bastion '../networking/bastion.bicep' = if (deployNetwork && enableBastio
   }
 }
 
+// 5. Standard and additional subnet updates
+// Module-output references order spoke policy associations after VNet/NSG and route-table provisioning.
 module roleSubnets '../networking/roleSubnets.bicep' = [
   for (region, i) in regionKeys: if (deployNetwork && region != hubRegion) {
     name: '${prefix}-role-subnets-${region}'
@@ -239,6 +239,8 @@ module additionalSubnets '../networking/additionalSubnets.bicep' = [
   }
 ]
 
+// 6. Desired peerings and bounded cleanup
+// Creation and cleanup are separate operations, not full topology discovery or retirement.
 module peerings '../networking/peering.bicep' = [
   for source in regionKeys: if (deployNetwork && deployPeerings) {
     name: '${prefix}-peerings-${source}'
@@ -249,10 +251,10 @@ module peerings '../networking/peering.bicep' = [
       additionalSubnets
     ]
     params: {
+      prefix: prefix
       vnetName: '${prefix}-vnet-${source}'
       regionKeys: regionKeys
       sourceRegion: source
-      prefix: prefix
       hubRegion: hubRegion
       networkMode: networkMode
     }
@@ -269,19 +271,13 @@ module networkReconciliation '../networking/network-reconciliation.bicep' = if (
     hubRegion: hubRegion
     existingRegions: existingRegions
     networkMode: networkMode
-    automationManagedIdentityResourceId: automationManagedIdentityResourceId
     enableBastion: enableBastion
+    automationManagedIdentityResourceId: automationManagedIdentityResourceId
   }
 }
 
-// ========================================
-// NETWORK STAGE OUTPUT CONTRACT
-// ========================================
-//
-// Output contract consumed by compute-stage
-//
-
-
+// 7. Compute subnet contract
+// Preserve region order and the dc/jumpbox/server/client ID shape expected by compute.
 output subnetMap array = [
   for (region, i) in regionKeys: {
     regionKey: region

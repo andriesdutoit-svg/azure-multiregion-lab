@@ -1,68 +1,74 @@
 targetScope = 'subscription'
 
-// ========================================
-// MODULE PURPOSE
 // Evaluates placement and configuration rules and returns deterministic validation outputs.
-// ========================================
+// This module reports findings; validation-gate.bicep applies the enforcement decision.
+// Consumes: declared counts, stage flags, address/role configuration, and the root's
+// new/final VM models, including operator-maintained retained inventory.
+// Provides: ordered block/advisory findings, diagnostic projections, capacity summaries,
+// and the decision/message forwarded to the gate.
+// Boundaries: no Azure discovery, RBAC query, deployment, or guest-readiness probe runs here.
+// Report-only and enforcement modes share finding evaluation; only blocking behavior differs.
 
-// ========================================
-// INPUTS
-// ========================================
-
+// 1. Parameters
+// Validation behavior and activated deployment groups
 @allowed([
   'reportOnly'
   'enforce'
 ])
 param validationMode string
+param deployNetwork bool
+param deployControl bool
+param deployWorkload bool
 
+// Region model and declared retained/new inventory
+param regionIndexMap object
+param regionCount int
+param regionKeys array
+param primaryRegion string
+param hubRegion string
+param existingRegions array = []
+param existingVmPlacements array = []
+param vmPlacements array
+param newVmPlacements array
+param invalidExistingRegions array
+param invalidExistingVmPlacementCount int = 0
+
+// Requested compute configuration and capacity inputs
 param vmCounts object
+param maxVmsPerRegion int
+param hasTooManyDcs bool
 param vmSizes object
 param osDisks object
 param windowsServerImage object
 param windowsClientImage object
 param ubuntuImage object
-param regionCount int
-param regionIndexMap object
+
+// Addressing, access policy, and cleanup authorization
+param networkMode string
+param enableBastion bool = false
+param automationManagedIdentityResourceId string
 param subnetIndexMap object
 param jumpboxAllowedSources array
-param networkMode string
-param automationManagedIdentityResourceId string
-param vmPlacements array
-param newVmPlacements array
-param regionKeys array
-param maxVmsPerRegion int
-param primaryRegion string
-param hubRegion string
-param hasTooManyDcs bool
+
+// Identity, Group Policy, and directory population
+param enableIdentity bool
+// Domain and GPO names feed guest DN/SYSVOL construction and packaged backup matching.
+param domainName string = ''
+param gpoNames object = {}
 param sysAdminDepartment object
 param additionalDepartments object
 param departmentCount int
 param usersPerDepartment int
-param invalidExistingRegions array
-param invalidExistingVmPlacementCount int = 0
-// Stage-based deployment flags for brownfield and dependency validation.
-param deployNetwork bool
-param deployControl bool
-param deployWorkload bool
-// Full existingRegions array used for brownfield consistency checks.
-param existingRegions array = []
-// Existing VM inventory used for brownfield capacity validation.
-param existingVmPlacements array = []
-// Dedicated file server mode: requires at least one srvwin VM to exist.
-param enableIdentity bool
-param enableBastion bool = false
-param useDedicatedFileServer bool
-param enableFileServices bool
-param fileServerVmAvailable bool
-// Domain name consumed by the Group Policy Run Command to build DNs and SYSVOL paths.
-param domainName string = ''
-// GPO display names consumed by the import script and matched against Backup.xml.
-param gpoNames object = {}
 
-// ========================================
-// PLACEMENT & CAPACITY VALIDATION
-// Counts and boolean checks evaluated from the final placement result, including retained brownfield VMs.
-// ========================================
+// Optional file services and target availability
+param enableFileServices bool
+param useDedicatedFileServer bool
+param fileServerVmAvailable bool
+
+// 2. Finding predicates and diagnostic data
+
+// 2.1 Placement and aggregate capacity
+// vmPlacements includes retained and newly planned VMs; these are modeled counts, not live discovery.
 
 var vmPerRegionCounts = [
   for region in regionKeys: length(filter(vmPlacements, vm => vm.regionKey == region))
@@ -88,6 +94,8 @@ var newNonControlVmCount = nonControlVmCount - existingNonControlVmCount
 var totalVMs = vmCounts.dc + vmCounts.jumpbox + vmCounts.windowsServer + vmCounts.windowsClient + vmCounts.linuxServer + vmCounts.linuxClient
 var totalCapacity = regionCount * maxVmsPerRegion
 var invalidCapacity = totalVMs > totalCapacity
+
+// 2.2 Address-map completeness, uniqueness, bounds, and sequence
 var hasInvalidRegionIndex = [
   for region in regionKeys: contains(regionIndexMap, region) ? false : true
 ]
@@ -114,7 +122,14 @@ var outOfBoundsSubnetIndexFlags = [
 ]
 var hasOutOfBoundsSubnetIndex = contains(outOfBoundsSubnetIndexFlags, true)
 
-// Existing inventory must map one-to-one to the logical VM model.
+var hasMissingIndexes = [
+  for i in range(1, length(regionIndexMap)): empty(filter(items(regionIndexMap), r => r.value == i))
+]
+
+var invalidIndexSequence = contains(hasMissingIndexes, true)
+
+// 2.3 Retained inventory consistency
+// Type/index pairs must be unique and remain inside the requested logical VM ranges.
 var supportedExistingVmTypes = [
   'dc'
   'jmp'
@@ -150,23 +165,19 @@ var invalidExistingVmIndexFlags = [
 ]
 var hasInvalidExistingVmIndex = contains(invalidExistingVmIndexFlags, true)
 
-// Empty or public-wide jumpbox access is reported for operator review without blocking deployment.
+// 2.4 Administrator ingress and scheduled cleanup identity
+// Empty or public-wide jumpbox access is advisory, not a deployment blocker.
 var hasUnsafeJumpboxAllowedSources = empty(jumpboxAllowedSources) || contains(jumpboxAllowedSources, '0.0.0.0/0')
 
-// Network reconciliation requires a User Assigned Managed Identity only when the reconciliation script is deployed.
-// The script is deployed when brownfield peerings need reconciliation (non-fullMesh with existing regions)
-// or when Bastion is disabled in brownfield (hub in existingRegions) and needs cleanup.
+// Keep this scheduling predicate aligned with network-stage. Identity shape is checked
+// when cleanup is scheduled, even if no obsolete resources are found; RBAC is not queried here.
 var requiresNetworkReconciliationScript = deployNetwork && !empty(existingRegions) && ((networkMode != 'fullMesh' && length(existingRegions) > 0) || (!enableBastion && contains(existingRegions, hubRegion)))
 var hasMissingPeeringCleanupIdentity = empty(automationManagedIdentityResourceId)
 var hasMalformedPeeringCleanupIdentity = !startsWith(toLower(automationManagedIdentityResourceId), '/subscriptions/') || !contains(toLower(automationManagedIdentityResourceId), '/providers/microsoft.managedidentity/userassignedidentities/')
 var hasInvalidPeeringCleanupIdentity = requiresNetworkReconciliationScript && (hasMissingPeeringCleanupIdentity || hasMalformedPeeringCleanupIdentity)
 
-// ========================================
-// ROLE CONFIG VALIDATION
-// Ensures all role-based sizing and disk maps contain the required workload keys.
-// ========================================
-
-// Required role keys for role-based compute configuration.
+// 2.5 Role sizing, disk profiles, and image references
+// Public compute-role keys differ from the short role codes used in VM placements.
 var requiredRoleKeys = [
   'dc'
   'jumpbox'
@@ -176,12 +187,12 @@ var requiredRoleKeys = [
   'linuxClient'
 ]
 
-// Flag any missing vmSizes role keys before module/resource evaluation fails deeper in the graph.
+// Report missing role keys; this finding is not a guard around every downstream expression.
 var vmSizeRoleMissingFlags = [
   for role in requiredRoleKeys: !contains(vmSizes, role)
 ]
 
-// Flag any missing osDisks role keys before VM modules consume per-role disk settings.
+// Disk-key completeness is reported alongside value checks; malformed inputs can still fail evaluation.
 var osDiskRoleMissingFlags = [
   for role in requiredRoleKeys: !contains(osDisks, role)
 ]
@@ -218,20 +229,8 @@ var incompleteImageReferenceFlags = [
 ]
 var hasIncompleteImageReference = contains(incompleteImageReferenceFlags, true)
 
-var hasMissingIndexes = [
-  for i in range(1, length(regionIndexMap)): empty(filter(items(regionIndexMap), r => r.value == i))
-]
-
-var invalidIndexSequence = contains(hasMissingIndexes, true)
-
-// ========================================
-// BROWNFIELD & DEPLOYMENT DEPENDENCY VALIDATION
-// Ensures network infrastructure and brownfield coverage meet stage requirements
-// ========================================
-
-// ----
-// Stage-to-brownfield dependency validation
-// ----
+// 2.6 Stage prerequisites and mixed create/reuse coverage
+// Skipping network creation requires declared existing networks for the activated VM groups.
 
 var nonNetworkStageDeployed = deployControl || deployWorkload
 var networkStageSkipped = !deployNetwork
@@ -245,15 +244,9 @@ var newVmRegionsWithoutNetwork = filter(regionKeys, region => !deployNetwork && 
 
 var hasUncoveredNewVmNetworks = !empty(newVmRegionsWithoutNetwork)
 
-// ----
-// Hub region availability validation
-// ----
+// Hub and spoke coverage diagnostics complement the per-VM coverage checks above.
 
 var hubRequiredButMissing = (deployControl || deployWorkload) && !deployNetwork && !contains(existingRegions, hubRegion)
-
-// ----
-// Spoke region coverage validation
-// ----
 
 var spokesNotCovered = filter(
   regionKeys,
@@ -262,24 +255,17 @@ var spokesNotCovered = filter(
 
 var spokeRegionsCovered = empty(spokesNotCovered)
 
-// ----
-// Greenfield vs brownfield consistency
-// ----
-
 var hasMixedCreationMode = deployNetwork && length(existingRegions) > 0 && length(existingRegions) < regionCount
 
+// File-service settings must align with identity activation and target availability.
 var missingDedicatedFileServer = useDedicatedFileServer && !fileServerVmAvailable
 
 var invalidDedicatedFileServerConfiguration = !enableFileServices && useDedicatedFileServer
 var invalidFileServicesIdentityConfiguration = !enableIdentity && (enableFileServices || useDedicatedFileServer)
 
-// ========================================
-// WORKLOAD CAPACITY VALIDATION
-// Confirms that spokes have remaining workload slots after control-plane placement
-// ========================================
-
-// Per-region control-plane occupancy and remaining workload capacity.
-// Existing VMs are part of vmPlacements, and the hub contributes zero workload capacity by design.
+// 2.7 Spoke workload capacity
+// Report remaining capacity after modeled control-plane occupancy. The hub contributes zero
+// slots here; this validation metric is distinct from the root's new-placement slot allocation.
 var workloadCapacityByRegion = [
   for region in regionKeys: {
     region: region
@@ -306,10 +292,7 @@ var totalWorkloadRegionCapacity = reduce(
 
 var hasInsufficientWorkloadCapacity = newNonControlVmCount > totalWorkloadRegionCapacity
 
-// ========================================
-// IDENTITY & DIRECTORY POPULATION VALIDATION
-// Validates department/user input integrity for identity population
-// ========================================
+// 2.8 Directory population integrity
 
 var totalAvailableDepartments = length(items(sysAdminDepartment)) + length(items(additionalDepartments))
 
@@ -331,12 +314,10 @@ var duplicateDepartmentCodes = length(distinct(departmentCodes)) != length(depar
 // Includes one manager account per department in addition to usersPerDepartment user accounts.
 var requestedDirectoryAccounts = departmentCount * (usersPerDepartment + 1)
 
-// ========================================
-// GROUP POLICY PROVISIONING VALIDATION
+// 2.9 Group Policy prerequisites
 // The GPO Run Command derives the domain DN and the SYSVOL UNC path holding
 // Groups.xml from domainName, and reconciles the Windows admins group that
 // directory population creates from the system administration department.
-// ========================================
 
 var domainLabels = split(domainName, '.')
 
@@ -356,17 +337,15 @@ var emptySysAdminDepartmentCodeFlags = [
 // The GPO group reference resolves GGS_<windowsAdmins>, which population sources from this code.
 var hasEmptySysAdminDepartmentCode = enableIdentity && (empty(items(sysAdminDepartment)) || contains(emptySysAdminDepartmentCodeFlags, true))
 
-// Group Policy is provisioned on the primary DC, so a missing primary DC pin also breaks GPO import.
+// Missing primary-region DC pinning raises a GPO-target advisory; this check does not probe the guest.
 var hasNoGpoTargetDc = enableIdentity && missingPinnedDc
 var hasInvalidGpoNames = enableIdentity && (empty(gpoNames.?serverAdministration) || empty(gpoNames.?clientAdministration) || empty(gpoNames.?windowsLaps))
 
-// ========================================
-// VALIDATION FINDING CATALOG
-// Each finding owns its flag state, severity, category, and message.
-// Blocking findings are defined first, followed by advisory findings.
-// ========================================
+// 3. Ordered finding catalogs
+// Preserve array order, flag names, severities, messages, and remediation text. The first
+// active finding becomes validationMessage; blocking findings precede advisory findings.
 
-// Blocking findings.
+// 3.1 Blocking findings
 
 var blockingValidationFindings = [
   {
@@ -600,11 +579,8 @@ var blockingValidationFindings = [
   }
 ]
 
-// ========================================
-// ADVISORY VALIDATION FINDINGS
-// Non-blocking validation findings that
-// provide design and operational guidance.
-// ========================================
+// 3.2 Advisory findings
+// These remain reportable under enforcement but do not cause the gate to fail.
 
 var advisoryValidationFindings = [
   {
@@ -735,7 +711,7 @@ var advisoryValidationFindings = [
     message: 'GPO names must define non-empty serverAdministration, clientAdministration, and windowsLaps values so the import script can match the exported backups.'
     remediation: 'Set all three gpoNames values to the corresponding display names in the exported GPO backups.'
   }
-    {
+  {
     flag: 'hasUnsafeJumpboxAllowedSources'
     active: hasUnsafeJumpboxAllowedSources
     severity: 'advisory'
@@ -753,16 +729,7 @@ var advisoryValidationFindings = [
   }
 ]
 
-var blockingValidationDetails = map(
-  activeBlockingValidationFindings,
-  item => {
-    category: item.category
-    flag: item.flag
-    message: item.message
-    remediation: item.remediation
-  }
-)
-
+// 4. Active finding selection and report projections
 var validationFindings = concat(
   blockingValidationFindings,
   advisoryValidationFindings
@@ -781,15 +748,6 @@ var activeValidationFindings = filter(
   item => item.active
 )
 
-// The primary validation message is the first active finding
-// in catalog order. Blocking findings are evaluated before
-// advisory findings because validationFindings is assembled
-// as blockingValidationFindings followed by advisoryValidationFindings.
-
-var validationMessage = empty(activeValidationFindings)
-  ? 'All validation checks passed.'
-  : activeValidationFindings[0].message
-
 var activeBlockingValidationFindings = filter(
   validationFindings,
   item => item.active && item.severity == 'block'
@@ -800,6 +758,34 @@ var activeAdvisoryValidationFindings = filter(
   item => item.active && item.severity == 'advisory'
 )
 
+// A deterministic first message is a concise entry point; details preserve all active findings.
+var validationMessage = empty(activeValidationFindings)
+  ? 'All validation checks passed.'
+  : activeValidationFindings[0].message
+
+// Blocking report projections
+var blockingValidationFlags = map(
+  activeBlockingValidationFindings,
+  item => item.flag
+)
+
+var blockingValidationDetails = map(
+  activeBlockingValidationFindings,
+  item => {
+    category: item.category
+    flag: item.flag
+    message: item.message
+    remediation: item.remediation
+  }
+)
+
+var hasBlockingValidationFailures = !empty(blockingValidationFlags)
+
+var blockingValidationSummary = empty(blockingValidationFlags)
+  ? 'No blocking validation failures detected.'
+  : 'Blocking validation failures detected: ${join(blockingValidationFlags, ', ')}'
+
+// Advisory report projections
 var advisoryValidationFlags = map(
   activeAdvisoryValidationFindings,
   item => item.flag
@@ -815,22 +801,8 @@ var advisoryValidationDetails = map(
   }
 )
 
-var blockingValidationFlags = map(
-  activeBlockingValidationFindings,
-  item => item.flag
-)
-
-var hasBlockingValidationFailures = !empty(blockingValidationFlags)
-
-var blockingValidationSummary = empty(blockingValidationFlags)
-  ? 'No blocking validation failures detected.'
-  : 'Blocking validation failures detected: ${join(blockingValidationFlags, ', ')}'
-
-// ========================================
-// ENFORCEMENT MODE DECISION
-// Combine blocking findings with validationMode to determine
-// whether the deployment gate should fail.
-// ========================================
+// 5. Enforcement decision
+// reportOnly exposes the same findings without blocking; enforce fails only on active block findings.
 
 var enforcementEnabled = validationMode == 'enforce'
 
@@ -840,11 +812,10 @@ var deploymentBlockMessage = shouldBlockDeployment
   ? 'Deployment blocked by validation enforcement. ${length(activeBlockingValidationFindings)} blocking validation finding(s) detected. Review blockingValidationDetails for full diagnostics.'
   : 'Deployment not blocked.'
 
-// ========================================
-// OUTPUTS
-// ========================================
+// 6. Output contract
+// These are configuration diagnostics, not proof of Azure resource or guest readiness.
 
-// Validation findings and deployment enforcement outputs.
+// 6.1 Findings and deployment enforcement
 
 output validationFlags object = validationFlags
 output validationMessage string = validationMessage
@@ -859,7 +830,7 @@ output blockingValidationDetails array = blockingValidationDetails
 output advisoryValidationFlags array = advisoryValidationFlags
 output advisoryValidationDetails array = advisoryValidationDetails
 
-// Capacity and placement summaries.
+// 6.2 Capacity and placement summaries
 output totalVMs int = totalVMs
 output totalCapacity int = totalCapacity
 output vmPerRegionCounts array = vmPerRegionCounts
@@ -867,12 +838,12 @@ output nonControlVmCount int = nonControlVmCount
 output totalWorkloadRegionCapacity int = totalWorkloadRegionCapacity
 output workloadCapacityByRegion array = workloadCapacityByRegion
 
-// Identity population metrics.
+// 6.3 Identity population metrics
 output departmentCount int = departmentCount
 output usersPerDepartment int = usersPerDepartment
 output requestedDirectoryAccounts int = requestedDirectoryAccounts
 
-// Brownfield inventory and network diagnostics.
+// 6.4 Brownfield inventory and network diagnostics
 output invalidExistingRegions array = invalidExistingRegions
 output invalidExistingVmPlacementCount int = invalidExistingVmPlacementCount
 output hasInvalidExistingVmPlacements bool = hasInvalidExistingVmPlacements

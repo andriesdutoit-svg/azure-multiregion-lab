@@ -1,13 +1,9 @@
-// ========================================
-// MODULE PURPOSE
 // Deploys Azure Bastion and its Public IP.
-// Assumes AzureBastionSubnet already exists.
-// ========================================
+// The network stage must provision AzureBastionSubnet before calling this module.
+// Consumes canonical host/Public IP names and SKU; exposes the host resource ID to its caller.
+// Disabling its caller's condition skips deployment, so removal of old Bastion resources needs separate cleanup.
 
-// ========================================
-// INPUTS
-// ========================================
-
+// 1. Resource identities and SKU
 param location string
 param bastionName string
 param vnetName string
@@ -20,9 +16,7 @@ param publicIpName string
 ])
 param bastionSku string
 
-// ========================================
-// RESOURCE CREATED: PUBLIC IP
-// ========================================
+// 2. Public IP and existing subnet references
 
 resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = {
   name: publicIpName
@@ -35,10 +29,6 @@ resource publicIp 'Microsoft.Network/publicIPAddresses@2023-02-01' = {
   }
 }
 
-// ========================================
-// EXISTING DEPENDENCIES
-// ========================================
-
 resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
   name: vnetName
 }
@@ -48,9 +38,8 @@ resource bastionSubnet 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' ex
   name: 'AzureBastionSubnet'
 }
 
-// ========================================
-// RESOURCE CREATED: BASTION HOST
-// ========================================
+// 3. Bastion host
+// The Public IP reference orders creation; retirement is owned by network reconciliation.
 
 resource bastion 'Microsoft.Network/bastionHosts@2023-09-01' = {
   name: bastionName
@@ -75,8 +64,6 @@ resource bastion 'Microsoft.Network/bastionHosts@2023-09-01' = {
   }
 }
 
-// ========================================
-// OUTPUTS
-// ========================================
+// 4. Host identity
 
 output bastionId string = bastion.id

@@ -1,107 +1,31 @@
 targetScope = 'subscription'
 
-// ========================================
-// IDENTITY STAGE
-//
+// Identity stage overview
 // Responsibilities:
-// - AD Forest deployment
-// - Replica DC deployment
-// - AD population
-// - Group Policy provisioning
-// - Windows domain join
-// - Linux domain join
-// - File services
-// - Linux desktop configuration
-//
+// - Bootstrap the primary forest, promote replicas, populate AD, and provision Group Policy.
+// - Join Windows/Linux workloads, configure Linux client desktops, and provision optional shares.
 // Consumes:
-// - Placement results
-// - Compute-stage outputs
-// - Identity configuration
-//
-// Provides:
-// - Configured identity environment
-// - Joined machines
-// - File services (optional)
-// ========================================
+// - The root's primary/replica/file-server targets and combined retained/new VM placement model.
+// - Domain, department, GPO, credential, and rerun-token configuration.
+// Prerequisites and workflow:
+// - main.bicep orders this stage after compute completion; identity-only runs require existing DCs.
+// - Forest/replicas precede population; population precedes GPO; GPO precedes domain joins.
+// - Linux joins also wait for desktop prerequisites; file services wait for Windows joins.
+// Boundaries:
+// - deployIdentity gates guest-automation modules. Scripts own supported existing-state repair.
+// - No VMs are recreated here and no output values are exposed to downstream stages.
 
-// Internal responsibilities:
-//
-// directoryModel
-//
-// adForest
-// replicaDcs
-// adPopulate
-// adGpo
-//
-// domainJoinWindows
-// domainJoinLinux
-//
-// fileServices
-//
-// linuxDesktop
-
-// Dependencies
-// Placement outputs:
-// - primaryDc
-// - replicaDcList
-// - fileServerVm
-// - fileServerName
-// - finalVmPlacements
-
-// Compute stage:
-// - VM availability before domain-join and file-service commands run
-
-// Inputs
-// prefix
-//
-// deployIdentity
-//
-// primaryDc
-// replicaDcList
-//
-// fileServerVm
-// fileServerName
-//
-// domainName
-// gpoNames
-//
-// usersPerDepartment
-// departmentCount
-//
-// sysAdminDepartment
-// additionalDepartments
-//
-// enableFileServices
-//
-// serverAdminUsername
-// serverAdminPassword
-//
-// reconciliationToken
-
-// ========================================
-// IDENTITY STAGE OUTPUT CONTRACT
-// ========================================
-//
-// This stage has no outputs consumed by downstream modules.
-//
-// Consumed by:
-// - main.bicep
-
-// ========================================
-// STAGE CONTROL
-// Identity resources and Run Commands are activated only when deployIdentity is true.
-// ========================================
-
+// 1. Parameters
+// Naming and guest-automation rerun token
 param prefix string
-
-param deployIdentity bool
-
 param reconciliationToken string
 
-// ========================================
-// PLACEMENT OUTPUTS
-// ========================================
+// Stage and optional service activation
+param deployIdentity bool
+param enableFileServices bool
 
+// Targets from the combined retained/new placement model
+param finalVmPlacements array
 param primaryDc object
 
 param replicaDcList array
@@ -110,37 +34,29 @@ param fileServerVm object
 
 param fileServerName string
 
-param finalVmPlacements array
-
-// ========================================
-// IDENTITY CONFIGURATION
-// ========================================
+// Directory structure and population settings
 
 param domainName string
 
 param gpoNames object
 
-param usersPerDepartment int
-
-param departmentCount int
-
 param sysAdminDepartment object
 
 param additionalDepartments object
 
-param enableFileServices bool
+param departmentCount int
+param usersPerDepartment int
 
-// ========================================
-// CREDENTIALS
-// ========================================
+// Domain administrator credentials
 
 param serverAdminUsername string
 
 @secure()
 param serverAdminPassword string
 
-// Directory shape passed (as a JSON string) to every identity Run Command script.
-// It centralizes OU paths, group naming, and admin group names so scripts never hardcode AD structure.
+// 2. Shared directory model
+// Serialized for every identity script to keep OU, group, GPO, and share configuration aligned.
+// Preserve customOus order: parent paths precede their child paths.
 var directoryModel = {
   preventOuDeletion: false
 
@@ -201,14 +117,15 @@ var directoryModel = {
   }
 }
 
+// 3. Guest-automation modules
+// Explicit dependencies, not textual order, control execution. Targets include retained VMs.
+
+// 3.1 Primary forest and replica promotion
 module adForest '../identity/ad-forest.bicep' = if (deployIdentity) {
   name: '${prefix}-ad-forest'
   scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
 
-  // The bootstrap command must run after the target Windows DC VM exists.
-  // In staged workflows, run control before identity.
-  // Dependency will be provided by stage orchestration
-  // through compute-stage.
+  // The root's compute dependency provides VM readiness; an identity-only run requires existing DCs.
 
   params: {
     dcVmName: primaryDc!.name
@@ -238,6 +155,8 @@ module replicaDcs '../identity/ad-replicadc.bicep' = [
   }
 ]
 
+// 3.2 Directory population and Group Policy
+// Group Policy runs after group/OU provisioning; domain joins depend on its completion.
 module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
   name: '${prefix}-ad-populate'
 
@@ -251,11 +170,11 @@ module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
   params: {
     dcVmName: primaryDc!.name
     domainName: domainName
-    usersPerDepartment: usersPerDepartment
+    directoryModel: string(directoryModel)
     sysAdminDepartment: sysAdminDepartment
     additionalDepartments: additionalDepartments
     departmentCount: departmentCount
-    directoryModel: string(directoryModel)
+    usersPerDepartment: usersPerDepartment
     enableFileServices: enableFileServices
     reconciliationToken: reconciliationToken
   }
@@ -278,6 +197,8 @@ module adGpo '../identity/ad-gpo.bicep' = if (deployIdentity) {
   }
 }
 
+// 3.3 Optional file services
+// The forward domainJoinWindows dependency ensures a dedicated server joins before share ACL setup.
 module fileServices '../identity/file-services.bicep' = if (deployIdentity && enableFileServices) {
   name: '${prefix}-file-services'
 
@@ -298,12 +219,8 @@ module fileServices '../identity/file-services.bicep' = if (deployIdentity && en
   }
 }
 
-// ========================================
-// DEPLOYMENT STAGE 7b: WINDOWS DOMAIN JOIN
-// Joins Windows servers (srvwin) and clients (cliwin) to the AD domain.
-// Runs after directory population. OU placement is driven by VM type via the directory model.
-// Participates in the reconciliation model: existing domain membership is detected and skipped.
-// ========================================
+// 3.4 Windows domain membership
+// GPO provisioning precedes joins. The script skips joining an already domain-joined machine.
 
 module domainJoinWindows '../identity/domain-join.bicep' = [
   for vm in filter(finalVmPlacements, vm => vm.type == 'srvwin' || vm.type == 'cliwin'): if (deployIdentity) {
@@ -326,12 +243,9 @@ module domainJoinWindows '../identity/domain-join.bicep' = [
   }
 ]
 
-// ========================================
-// DEPLOYMENT STAGE 8b: LINUX DOMAIN JOIN
-// Joins Linux servers (srvlin) and clients (clilin) to the AD domain using realmd/SSSD integration.
-// Runs after directory population. OU placement is driven by VM type via the directory model.
-// Participates in the reconciliation model: existing domain membership is detected and skipped.
-// ========================================
+// 3.5 Linux domain membership and supported guest repair
+// Both GPO and Linux desktop prerequisites complete before these commands; the script
+// owns realm detection and selected configuration repair on retained endpoints.
 
 module domainJoinLinux '../identity/domain-join-linux.bicep' = [
   for vm in filter(finalVmPlacements, vm => vm.type == 'srvlin' || vm.type == 'clilin'): if (deployIdentity) {
@@ -356,14 +270,15 @@ module domainJoinLinux '../identity/domain-join-linux.bicep' = [
   }
 ]
 
+// 3.6 Linux client desktop prerequisites
+// DomainJoinLinux references this collection even though it is declared later in the file.
 module linuxDesktop '../compute/linux-desktop.bicep' = [
   for vm in filter(finalVmPlacements, vm => vm.type == 'clilin'): if (deployIdentity) {
     name: '${prefix}-desktop-${vm.name}'
 
     scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
 
-    // Dependency will be provided by stage orchestration
-    // through compute-stage.
+    // VM availability is provided by the root's compute-stage dependency.
 
     params: {
       vmName: vm.name

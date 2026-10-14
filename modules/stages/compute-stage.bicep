@@ -1,87 +1,23 @@
 targetScope = 'subscription'
 
-// ========================================
-// COMPUTE STAGE
-//
+// Compute stage overview
 // Responsibilities:
-// - Windows VM deployment
-// - Linux VM deployment
-// - Jumpbox SSH key deployment
-//
+// - Create missing Windows and Linux VMs with role-specific sizing, images, and administrator access.
+// - Keep new workloads private and assign Public IPs to new jumpboxes.
+// - Install the shared Linux-administration private key on selected new and retained jumpboxes.
 // Consumes:
-// - Placement results
-// - Deployment-stage flags
-// - Compute configuration
-// - subnetMap (from network-stage)
-//
+// - New-VM collections and the full SSH-key jumpbox collection derived by main.bicep.
+// - Stage flags, compute settings, credentials, and network-stage's region/role subnetMap.
 // Provides:
-// - VM infrastructure required by identity-stage
-// ========================================
+// - VM deployment completion for identity-stage; there are no downstream output values.
+// Boundaries:
+// - Identity runs can create missing workloads but not missing control-plane VMs.
+// - Retained VMs are excluded from creation loops; their NIC/Public IP configuration is not reconciled.
 
-// Stage inputs:
-//
-// deployControl and deployWorkload select the VM groups created by the public compute stage.
-// deployIdentity allows identity-stage runs to create workload VMs needed for domain join.
-// deployIdentity
-//
-// windowsVMList
-// linuxVMList
-//
-// roleSizingMap
-//
-// finalTags
-//
-// windowsServerImage
-// windowsClientImage
-// ubuntuImage
-//
-// vmAutoDeleteOptions
-//
-// jumpboxAdminUsername
-// jumpboxAdminPassword
-//
-// serverAdminUsername
-// serverAdminPassword
-//
-// clientAdminUsername
-// clientAdminPassword
-//
-// sshPublicKey
-// sshPrivateKey
-//
-// Network Contract:
-//
-// subnet IDs for:
-// - dc
-// - jumpbox
-// - server
-// - client
-
-// Internal responsibilities:
-//
-// controlWindowsVMs
-// workloadWindowsVMs
-// deployIdentityTargets
-// activeWindowsVMs
-//
-// activeLinuxVMs
-//
-// hasLinuxVMs
-// jumpboxLinuxSshKeyVMs
-//
-// windowsVMs
-// linuxVMs
-// installJumpboxSshKey
-
-//
-// Networking contract:
-// - dc subnet ID
-// - jumpbox subnet ID
-// - server subnet ID
-// - client subnet ID
-
+// 1. Parameters
+// Resource metadata and guest-automation rerun token
 param prefix string
-
+param finalTags object
 param reconciliationToken string
 
 // Deployment control
@@ -92,13 +28,16 @@ param deployIdentity bool
 // Placement results
 param windowsVMList array
 param linuxVMList array
+param sshKeyJumpboxPlacements array
 param hasLinuxVMs bool
 
-param sshKeyJumpboxPlacements array
+// Network contract: [{ regionKey, subnets: { dc, jumpbox, server, client } }], with an id per role.
+// The ordered network result is converted to a region-key lookup before role-specific selection.
+// Entries must cover each activated VM region; this module does not discover missing networks.
+param subnetMap array
 
 // Compute configuration
 param roleSizingMap object
-param finalTags object
 
 param windowsServerImage object
 param windowsClientImage object
@@ -124,35 +63,9 @@ param sshPublicKey string
 @secure()
 param sshPrivateKey string
 
-// Network contract
-param subnetMap array
-
-// subnetMap contract:
-//
-// [
-//   {
-//     regionKey: 'westeurope'
-//
-//     subnets: {
-//       dc: {
-//         id: '...'
-//       }
-//
-//       jumpbox: {
-//         id: '...'
-//       }
-//
-//       server: {
-//         id: '...'
-//       }
-//
-//       client: {
-//         id: '...'
-//       }
-//     }
-//   }
-// ]
-
+// 2. Active VM collections and subnet selection
+// Control-plane creation is separate from workload creation so identity runs can add
+// missing workloads without redeploying DCs or jumpboxes.
 var controlWindowsVMs = filter(windowsVMList, vm =>
   vm.type == 'dc' || vm.type == 'jmp'
 )
@@ -174,10 +87,12 @@ var activeLinuxVMs = deployIdentityTargets
   ? linuxVMList
   : []
 
+// SSH-key targeting uses the full jumpbox inventory, not just newly created Windows VMs.
 var jumpboxLinuxSshKeyVMs = (deployControl || deployWorkload || deployIdentity) && hasLinuxVMs
   ? sshKeyJumpboxPlacements
   : []
 
+// Map ordered network outputs by region identity, then resolve each VM's role subnet.
 var subnetMapByRegion = toObject(subnetMap, item => item.regionKey, item => item.subnets)
 
 func getSubnetId(vm object) string =>
@@ -189,9 +104,8 @@ func getSubnetId(vm object) string =>
         ? subnetMapByRegion[vm.regionKey].server.id
         : subnetMapByRegion[vm.regionKey].client.id
 
-// ========================================
-// Windows VM deployment
-// ========================================
+// 3. New Windows VMs
+// New jumpboxes receive Public IPs; this loop does not mutate retained jumpbox NICs.
 
 module windowsVMs '../compute/vm-windows.bicep' = [
   for (vm, i) in activeWindowsVMs: {
@@ -203,8 +117,25 @@ module windowsVMs '../compute/vm-windows.bicep' = [
 
     params: {
       vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-      // Resolve compute sizing from the role map so each VM role can scale independently.
+      tags: union(finalTags, {
+        role: vm.type == 'dc'
+          ? 'domain-controller'
+          : vm.type == 'jmp'
+            ? 'jumpbox'
+            : vm.type == 'srvwin'
+              ? 'server'
+              : 'client'
+      })
+
       vmSize: roleSizingMap[vm.type].vmSize
+      image: vm.type == 'cliwin'
+        ? windowsClientImage
+        : windowsServerImage
+      osDisk: roleSizingMap[vm.type].osDisk
+      vmAutoDeleteOptions: vmAutoDeleteOptions
+
+      subnetId: getSubnetId(vm)
+      assignPublicIp: vm.type == 'jmp'
 
       adminUsername: vm.type == 'jmp'
         ? jumpboxAdminUsername
@@ -217,43 +148,12 @@ module windowsVMs '../compute/vm-windows.bicep' = [
         : (vm.type == 'dc' || vm.type == 'srvwin'
           ? serverAdminPassword
           : clientAdminPassword)
-      
-      // BCP318 suppressions below are intentional: subnet outputs are resolved by VM type at runtime,
-      // but the static analyser cannot always prove the selected branch is non-null in this conditional chain.
-      // Role-to-subnet mapping: DC→dc subnet, JMP→jumpbox subnet, Windows servers→server subnet, clients→client subnet.
-      // Each role has a dedicated subnet enforcing network segmentation and security group policies.
-
-      subnetId: getSubnetId(vm)
-
-      assignPublicIp: vm.type == 'jmp'
-
-      tags: union(finalTags, {
-        role: vm.type == 'dc'
-          ? 'domain-controller'
-          : vm.type == 'jmp'
-            ? 'jumpbox'
-            : vm.type == 'srvwin'
-              ? 'server'
-              : 'client'
-      })
-
-      image: vm.type == 'cliwin'
-        ? windowsClientImage
-        : windowsServerImage
-
-      // Resolve OS disk profile per role (SKU + capacity).
-      osDisk: roleSizingMap[vm.type].osDisk
-
-      vmAutoDeleteOptions: vmAutoDeleteOptions
     }
   }
 ]
 
-// ========================================
-// LINUX VM deployment
-// ========================================
-
-// Network-stage outputs establish subnet pathing before this stage provisions VMs.
+// 4. New Linux VMs
+// Workloads remain private and use the configured local administrator's SSH public key.
 
 module linuxVMs '../compute/vm-linux.bicep' = [
   for vm in activeLinuxVMs: {
@@ -265,34 +165,25 @@ module linuxVMs '../compute/vm-linux.bicep' = [
 
     params: {
       vmName: '${prefix}-${vm.type}${padLeft(string(vm.index + 1), 2, '0')}'
-      // Resolve compute sizing from the role map so each VM role can scale independently.
-      vmSize: roleSizingMap[vm.type].vmSize
-
-      adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
-      sshPublicKey: sshPublicKey
-
-      // Role-to-subnet mapping for Linux VMs: srvlin→server subnet, clilin→client subnet.
-      // Each role has a dedicated subnet enforcing network segmentation and security group policies.
-      // BCP318 suppressions below are intentional: subnet output selection is conditional by VM type,
-      // and the static analyser treats these indexed outputs as potentially nullable.
-
-      subnetId: getSubnetId(vm)
-
-      assignPublicIp: false
-
       tags: union(finalTags, {
         role: vm.type == 'srvlin' ? 'server' : 'client'
       })
 
+      vmSize: roleSizingMap[vm.type].vmSize
       image: ubuntuImage
-      // Resolve OS disk profile per role (SKU + capacity).
       osDisk: roleSizingMap[vm.type].osDisk
-
       vmAutoDeleteOptions: vmAutoDeleteOptions
+
+      subnetId: getSubnetId(vm)
+      assignPublicIp: false
+
+      adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
+      sshPublicKey: sshPublicKey
     }
   }
 ]
 
+// 5. Jumpbox SSH-key installation
 // Deploys the SSH private key onto jumpboxes only, so admins can hop from a jumpbox to Linux VMs
 // without distributing the private key to every workload VM.
 module installJumpboxSshKey '../compute/ssh-key.bicep' = [
@@ -318,10 +209,6 @@ module installJumpboxSshKey '../compute/ssh-key.bicep' = [
   }
 ]
 
-// ========================================
-// COMPUTE STAGE OUTPUT CONTRACT
-// ========================================
-//
 // This stage has no outputs consumed by downstream modules.
 // Identity-stage receives VM placement data from main.bicep and depends on
 // compute-stage completion before running identity operations.

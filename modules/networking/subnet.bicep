@@ -1,29 +1,20 @@
-// ========================================
-// MODULE PURPOSE
-// Creates a subnet in an existing VNet, with optional NSG association.
-// ========================================
+// Creates or updates a subnet under an existing VNet with explicit security and routing associations.
+// The caller supplies the complete intended prefix and association IDs and orders shared-parent writes.
+// Returned subnetId supports downstream wiring; changing prefixes or associations is a real network update.
 
-// ========================================
-// INPUTS
-// ========================================
-
+// 1. Parent, address space, and optional associations
 param vnetName string
 param subnetName string
 param addressPrefix string
 param nsgId string
 param routeTableId string = ''
 
-// ========================================
-// EXISTING DEPENDENCY: PARENT VNET
-// ========================================
+// 2. Existing parent and subnet update
+// This is a full declaration of the managed properties, not an additive association patch.
 
 resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = {
   name: vnetName
 }
-
-// ========================================
-// RESOURCE CREATED: SUBNET
-// ========================================
 
 resource subnet 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
   name: subnetName
@@ -33,20 +24,18 @@ resource subnet 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' = {
 
     privateEndpointNetworkPolicies: 'Disabled'
 
-    // Optional NSG binding: if nsgId is empty, subnet is created without NSG.
+    // An empty ID declares no NSG, including when updating a previously associated subnet.
     networkSecurityGroup: empty(nsgId) ? null : {
       id: nsgId
     }
 
-    // Optional route table binding: if routeTableId is empty, subnet is created without route table.
+    // An empty ID declares no route table; callers must supply associations they intend to retain.
     routeTable: empty(routeTableId) ? null : {
       id: routeTableId
     }
   }
 }
 
-// ========================================
-// OUTPUTS
-// ========================================
+// 3. Subnet identity
 
 output subnetId string = subnet.id

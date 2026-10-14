@@ -1,44 +1,51 @@
-// ========================================
-// MODULE PURPOSE
-// Creates a VNet and, optionally, NSGs/subnets for role-based segmentation.
-// Supports greenfield (create) and brownfield (reuse existing) flows.
-// ========================================
+// Regional VNet assembly overview
+// Responsibilities:
+// - Create a new regional VNet or resolve a declared existing VNet without replacing its properties.
+// - Compose and deploy role-specific NSGs, create new hub role subnets, and manage optional hub subnets.
+// Create/reuse contract:
+// - existingRegions selects the path; it is operator inventory rather than live resource discovery.
+// - New VNets receive the declared address space and DNS. Reused VNet address space and DNS are unchanged.
+// - NSGs remain managed in both paths. Spoke role-subnet updates belong to roleSubnets.bicep.
+// - AzureFirewallSubnet and AzureBastionSubnet can be created/updated on existing hubs when enabled.
+// Provides:
+// - VNet identity, create/reuse flags, and normalized subnet/NSG objects for network-stage consumers.
+// - Stable resource IDs do not themselves confirm that every referenced subnet is already present.
 
-// ========================================
-// INPUTS
-// ========================================
-
+// 1. Parameters
+// Resource metadata and declared region state
 param vnetName string
 param location string
+param tags object = {}
+param isHub bool
+param existingRegions array = []
+
+// Addressing and administrator access
 param addressPrefix string
 param subnetPrefix object
-param isHub bool
 param dnsServers array
 param jumpboxSubnets array
-param existingRegions array = []
 param jumpboxAllowedSources array
+
+// Optional hub infrastructure
 param deployAzureFirewallSubnet bool
 param enableBastion bool
 param bastionSubnetPrefix string
-param tags object = {}
 
+// 2. Create/reuse decisions and policy data
+// Declared inventory selects reuse; it is not a live check for VNet existence.
 var isExistingRegion = contains(existingRegions, location)
 
 var createSubnets = !isExistingRegion
 
 var internalNetworkRange = '10.0.0.0/8'
 
-// ========================================
-// SECURITY RULE BUILDING BLOCKS
-// Rule arrays are composed by role-specific NSG to enforce segmentation:
-// - adRules: Core AD services (DNS, Kerberos, LDAP) for domain join
-// - adAdvancedRules: Advanced AD services (NTP, Global Catalog, LDAPS, RPC)
-// - jumpboxRules: SSH inbound + AD client access (for domain join)
-// - serverRules: Workload services (WinRM, SSH) + AD access
-// - clientRules: AD access only (for domain join)
-// - firewallRules: Internal + VPN routing
-// Each role-specific NSG combines the applicable rule sets.
-// ========================================
+// 2.1 Shared service and administrator-access rules
+// Building blocks:
+// - adRules: DNS, Kerberos, and LDAP from the internal range.
+// - adAdvancedRules: NTP, password changes, SMB, Global Catalog, LDAPS, and RPC services.
+// - rdpRules/sshRules: allow jumpbox subnet sources before denying other internal sources.
+// NSG priority derives from array position. Keep rule and concatenation order unchanged:
+// approved jumpbox access rules precede the matching internal deny rules.
 
 var adRules = [
   {
@@ -168,10 +175,11 @@ var sshRules = [
   }
 ]
 
-// ========================================
-// ROLE-BASED NSG RULE COMPOSITION
-// Final NSG policy payloads per subnet role.
-// ========================================
+// 2.2 Role policies
+// DCs combine basic/advanced AD services and RDP rules. Servers combine SSH, RDP, and
+// basic AD rules; clients combine SSH and RDP rules. Jumpboxes receive the approved-source RDP rule.
+// These are managed custom inbound rules, not a complete description of Azure's default NSG rules.
+// Bastion enablement does not replace the jumpbox rule or alter retained jumpbox Public IPs.
 
 var nsgRules = {
   dc: concat(
@@ -191,17 +199,14 @@ var nsgRules = {
     sshRules,
     rdpRules,
     adRules
-  )  
+  )
   client: concat(
     sshRules,
     rdpRules
   )
 }
 
-// ========================================
-// NAMING MODEL
-// Deterministic subnet names derived from vnetName.
-// ========================================
+// 2.3 Canonical names and output ID selection
 
 var subnetNames = {
   dc: '${vnetName}-subnet-dc'
@@ -210,10 +215,21 @@ var subnetNames = {
   jumpbox: '${vnetName}-subnet-jumpbox'
 }
 
-// ========================================
-// CORE RESOURCE: VNET
-// Always created by this module.
-// ========================================
+// Existing resource references below supply stable subnet IDs without dereferencing conditional
+// subnet-module outputs. NSG selection uses new module outputs on create paths and canonical
+// resource IDs on reuse paths, while the NSG modules still manage policy in both paths.
+var clientSubnetId = subnetClientExisting.id
+var dcSubnetId = subnetDcExisting.id
+var jumpboxSubnetId = subnetJumpboxExisting.id
+var serverSubnetId = subnetServerExisting.id
+
+var serverNsgId = createSubnets ? nsgServer!.outputs.nsgId : nsgServerExisting.id
+var clientNsgId = createSubnets ? nsgClient!.outputs.nsgId : nsgClientExisting.id
+var dcNsgId = createSubnets ? nsgDc!.outputs.nsgId : nsgDcExisting.id
+var jumpboxNsgId = createSubnets ? nsgJumpbox!.outputs.nsgId : nsgJumpboxExisting.id
+
+// 3. VNet create/reuse paths
+// Only the greenfield branch declares VNet properties; existing paths resolve identity only.
 
 resource existingVnet 'Microsoft.Network/virtualNetworks@2022-07-01' existing = if (isExistingRegion) {
   name: vnetName
@@ -233,12 +249,11 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-07-01' = if (!isExistingRe
   }
 }
 
-// ========================================
-// CONDITIONAL MODULE DEPLOYMENTS
-// 1) AzureFirewallSubnet on the hub when firewall mode is selected
-// 2) NSGs per role
-// 3) Greenfield hub standard subnets with NSG association
-// ========================================
+// 4. Role NSGs and hub subnets
+// NSGs are managed in both create and reuse paths. Hub standard subnets are created
+// only for new VNets; spoke subnet creation/reconciliation belongs to roleSubnets.bicep.
+// Explicit subnet dependencies serialize related VNet writes. The optional firewall/Bastion
+// subnet conditions are independent of createSubnets so supported hub additions work in brownfield.
 
 module nsgDc 'nsg.bicep' = {
   name: '${vnetName}-nsg-dc'
@@ -331,6 +346,7 @@ module subnetHub 'subnet.bicep' = if (isHub && deployAzureFirewallSubnet) {
   }
 }
 
+// Bastion subnet reconciliation also runs for an existing hub when enabled.
 module subnetBastion 'subnet.bicep' = if (isHub && enableBastion) {
   name: 'AzureBastionSubnet'
   dependsOn: [
@@ -344,14 +360,10 @@ module subnetBastion 'subnet.bicep' = if (isHub && enableBastion) {
   }
 }
 
-// ========================================
-// EXISTING RESOURCE REFERENCES
-// In brownfield deployments, existing VNets and standard subnets are reused while NSGs,
-// route tables, and supported subnet changes remain managed by the network stage.
-// Existing resource references allow safe ID resolution without module.outputs access,
-// avoiding null-reference errors in conditional-module paths.
-// ========================================
-
+// 5. Stable subnet and NSG references
+// These declarations resolve IDs for create and reuse paths; they do not provision or repair resources.
+// They avoid using conditional standard-subnet outputs for ID selection. The network-stage
+// orchestration is responsible for creating or reconciling the referenced spoke subnets.
 
 resource subnetClientExisting 'Microsoft.Network/virtualNetworks/subnets@2022-07-01' existing = {
   parent: existingVnet
@@ -389,32 +401,13 @@ resource nsgClientExisting 'Microsoft.Network/networkSecurityGroups@2022-07-01' 
   name: '${vnetName}-nsg-client'
 }
 
-// ========================================
-// ID RESOLUTION
-// Unified IDs for both create and reuse paths.
-// ========================================
+// 6. Output contract
+// Preserve both NSG object shapes: downstream callers use their existing property names.
+// subnetNames, subnetPrefixes, and nsgIds feed spoke role-subnet updates; subnets supplies
+// the role ID shape later exposed as network-stage.subnetMap. IDs describe intended resource
+// identities, not discovery results or guest/network readiness checks.
 
-var clientSubnetId = subnetClientExisting.id
-var dcSubnetId = subnetDcExisting.id
-var jumpboxSubnetId = subnetJumpboxExisting.id
-var serverSubnetId = subnetServerExisting.id
-
-// ========================================
-// NSG ID RESOLUTION
-// Greenfield (create new) or brownfield (reuse existing) NSG ID selection.
-// ========================================
-
-
-var serverNsgId = createSubnets ? nsgServer!.outputs.nsgId : nsgServerExisting.id
-var clientNsgId = createSubnets ? nsgClient!.outputs.nsgId : nsgClientExisting.id
-var dcNsgId = createSubnets ? nsgDc!.outputs.nsgId : nsgDcExisting.id
-var jumpboxNsgId = createSubnets ? nsgJumpbox!.outputs.nsgId : nsgJumpboxExisting.id
-
-// ========================================
-// OUTPUTS
-// VNet metadata plus normalised NSG/subnet objects for downstream modules.
-// ========================================
-
+// 6.1 VNet identity and create/reuse state
 output vnetId string = isExistingRegion
   ? existingVnet.id
   : vnet.id
@@ -423,19 +416,12 @@ output vnetName string = isExistingRegion
   ? existingVnet.name
   : vnet.name
 
-output nsgs object = {
-  server: serverNsgId
-  client: clientNsgId
-  dc: dcNsgId
-  jumpbox: jumpboxNsgId
-}
+output isExistingRegion bool = isExistingRegion
+output isHub bool = isHub
+output createSubnets bool = createSubnets
 
-// ========================================
-// SUBNET OUTPUTS
-// ========================================
-// Resolve subnet IDs using existing resource references.
-// Avoids module.outputs access because subnet modules are conditional (module | null).
-// Resolves to newly-created subnets from modules (greenfield) or existing subnets (brownfield).
+// 6.2 Standard subnet configuration and identities
+// Subnet IDs are stable references, not evidence that every role subnet has already been created.
 
 output subnets object = {
   client: {
@@ -452,10 +438,16 @@ output subnets object = {
   }
 }
 
-output isExistingRegion bool = isExistingRegion
 output subnetNames object = subnetNames
 output subnetPrefixes object = subnetPrefix
-output createSubnets bool = createSubnets
+
+// 6.3 Role NSG identities and compatibility aliases
+output nsgs object = {
+  server: serverNsgId
+  client: clientNsgId
+  dc: dcNsgId
+  jumpbox: jumpboxNsgId
+}
 
 output nsgIds object = {
   dc: dcNsgId
@@ -463,5 +455,3 @@ output nsgIds object = {
   server: serverNsgId
   client: clientNsgId
 }
-
-output isHub bool = isHub

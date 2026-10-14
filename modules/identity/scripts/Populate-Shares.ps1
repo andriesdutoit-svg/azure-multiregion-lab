@@ -1,3 +1,17 @@
+<#
+.SYNOPSIS
+Creates departmental SMB shares and applies the declared NTFS group permissions.
+.DESCRIPTION
+Consumes directory/department JSON on the selected primary DC or dedicated file server.
+Mandatory departments are retained; remaining slots select additional departments in input order.
+Missing directories/shares are created, root access is adjusted, and department RW/RO ACLs are applied.
+.NOTES
+Requires Windows SMB/ACL administration and resolvable AD groups; the caller waits for
+population and Windows domain join. Existing share paths are not checked or migrated,
+unrequested shares are not retired, and unrelated ACLs are not comprehensively reconciled.
+#>
+
+# 1. Inputs and directory-model validation
 param(
     [string]$DirectoryModel,
     [string]$SysAdminDepartmentJson,
@@ -24,11 +38,9 @@ if (-not $model) {
 Write-Host '[Info] Starting share population.'
 Write-Host "[Info] Requested department count: $DepartmentCount."
 
-# # Get-SelectedDepartments: Filter department lists to match InputDepartmentCount.
-# # Always includes all sysAdminDepartments (mandatory); fills remaining slots with additionalDepartments.
-# # Example: sysAdminDepartments=[IT], additionalDepartments=[Finance,HR], InputDepartmentCount=2
-# #   → Returns [IT, Finance] (IT mandatory + 1 additional)
-# # Validates that InputDepartmentCount >= length(sysAdminDepartments); throws if underconstrained.
+# 2. Department selection helper
+# All system-administration departments are mandatory; additional departments fill remaining
+# slots in JSON property order. A request smaller than the mandatory set is rejected.
 
 function Get-SelectedDepartments {
     param(
@@ -71,6 +83,8 @@ function Get-SelectedDepartments {
     )
 }
 
+# 3. Share and ACL provisioning helper
+# Preserve the sequence: root directory/ACLs, departmental directory/share, then department ACLs.
 function Initialize-DepartmentShares {
     param(
         [object[]]$SelectedDepartments,
@@ -145,6 +159,7 @@ function Initialize-DepartmentShares {
 
             Write-Host "[Info] Processing share configuration for $($department.Name)."
 
+        # Existing share identity is checked by name only; its configured path is not repaired here.
         if (-not (Get-SmbShare -Name $code -ErrorAction SilentlyContinue)) {
 
             New-SmbShare `
@@ -202,6 +217,7 @@ function Initialize-DepartmentShares {
 
 }
 
+# 4. Execute selection and provisioning
 $departments = Get-SelectedDepartments `
     -SysAdminDepartmentJson $SysAdminDepartmentJson `
     -AdditionalDepartmentsJson $AdditionalDepartmentsJson `

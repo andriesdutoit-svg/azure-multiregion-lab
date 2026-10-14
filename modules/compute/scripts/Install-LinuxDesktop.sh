@@ -4,7 +4,12 @@
 # LINUX DESKTOP INSTALLATION SCRIPT
 # Installs a GUI desktop environment and RDP access on Linux client VMs.
 # Also configures Polkit so the AD-based Linux administrators group receives
-# interactive authorization for desktop actions.
+# authorization for desktop actions in the declared active/inactive/other contexts.
+# Inputs DomainName and DirectoryModel are supplied by VM Run Command; run with
+# package/service configuration permissions on an Ubuntu client. Identity-stage
+# completes this desktop prerequisite before domain-join commands run.
+# Reruns reapply package installation, service enablement, and the managed Polkit file;
+# this script does not join the domain, create AD groups, or change network exposure.
 # ============================================================================
 
 set -euo pipefail
@@ -61,8 +66,9 @@ echo "[Info] Ubuntu desktop packages installed."
 
 #
 # Phase 4 - Polkit configuration
-# Grants the Linux administrators group interactive authorization for all desktop actions
-# (ResultActive=yes), matching the sudo rights configured during domain join.
+# Grants the modeled Linux administrators group all actions for ResultAny, ResultInactive,
+# and ResultActive. This is broad lab authorization, separate from the sudoers policy
+# configured during domain join; the heredoc is the managed policy payload, not commentary.
 #
 
 echo "[Info] Configuring Polkit for Linux administrators."
