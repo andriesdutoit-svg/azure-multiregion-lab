@@ -4,6 +4,7 @@ targetScope = 'subscription'
 // Responsibilities:
 // - Bootstrap the primary forest, promote replicas, populate AD, and provision Group Policy.
 // - Join Windows/Linux workloads, configure Linux client desktops, and provision optional shares.
+// - Install optional Windows Admin Center after AD DNS is available.
 // Consumes:
 // - The root's primary/replica/file-server targets and combined retained/new VM placement model.
 // - Domain, department, GPO, credential, and rerun-token configuration.
@@ -23,6 +24,7 @@ param reconciliationToken string
 // Stage and optional service activation
 param deployIdentity bool
 param enableFileServices bool
+param enableWindowsAdminCenter bool
 
 // Targets from the combined retained/new placement model
 param finalVmPlacements array
@@ -33,6 +35,7 @@ param replicaDcList array
 param fileServerVm object
 
 param fileServerName string
+param wacHostVm object
 
 // Directory structure and population settings
 
@@ -243,7 +246,25 @@ module domainJoinWindows '../identity/domain-join.bicep' = [
   }
 ]
 
-// 3.5 Linux domain membership and supported guest repair
+// 3.5 Windows Admin Center
+// Wait for directory provisioning and Windows joins so the selected host has working domain DNS.
+module windowsAdminCenter '../compute/wac.bicep' = if (deployIdentity && enableWindowsAdminCenter) {
+  name: '${prefix}-wac-${wacHostVm.name}'
+
+  scope: resourceGroup('${prefix}-rg-${wacHostVm.regionKey}')
+
+  dependsOn: [
+    adGpo
+    domainJoinWindows
+  ]
+
+  params: {
+    vmName: wacHostVm.name
+    reconciliationToken: reconciliationToken
+  }
+}
+
+// 3.6 Linux domain membership and supported guest repair
 // Both GPO and Linux desktop prerequisites complete before these commands; the script
 // owns realm detection and selected configuration repair on retained endpoints.
 
@@ -270,7 +291,7 @@ module domainJoinLinux '../identity/domain-join-linux.bicep' = [
   }
 ]
 
-// 3.6 Linux client desktop prerequisites
+// 3.7 Linux client desktop prerequisites
 // DomainJoinLinux references this collection even though it is declared later in the file.
 module linuxDesktop '../compute/linux-desktop.bicep' = [
   for vm in filter(finalVmPlacements, vm => vm.type == 'clilin'): if (deployIdentity) {

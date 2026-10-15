@@ -25,10 +25,6 @@ param deployControl bool
 param deployWorkload bool
 param deployIdentity bool
 
-// Windows Admin Center configuration and host selection
-param enableWindowsAdminCenter bool
-param wacHostVm object
-
 // Placement results
 param windowsVMList array
 param linuxVMList array
@@ -187,29 +183,7 @@ module linuxVMs '../compute/vm-linux.bicep' = [
   }
 ]
 
-// 5. Windows Admin Center
-// Installs and configures Windows Admin Center on the selected management host.
-// The preferred host is the first Windows server in the final placement model.
-// If no Windows server exists, the primary jumpbox is used instead.
-// The selected host may be newly created or retained from a previous deployment.
-module windowsAdminCenter '../compute/wac.bicep' = if (enableWindowsAdminCenter && (deployControl || deployWorkload)) {
-  name: '${prefix}-wac-${wacHostVm.name}'
-
-  scope: resourceGroup('${prefix}-rg-${wacHostVm.regionKey}')
-
-  dependsOn: [
-    windowsVMs
-    linuxVMs
-  ]
-
-  params: {
-    vmName: wacHostVm.name
-
-    reconciliationToken: reconciliationToken
-  }
-}
-
-// 6. Jumpbox SSH-key installation
+// 5. Jumpbox SSH-key installation
 // Deploys the SSH private key onto jumpboxes only, so admins can hop from a jumpbox to Linux VMs
 // without distributing the private key to every workload VM.
 module installJumpboxSshKey '../compute/ssh-key.bicep' = [

@@ -176,12 +176,12 @@ Use a matching SSH key pair. See [SSH Key Setup](access-and-administration.md#ss
 
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
-| `enableWindowsAdminCenter` | boolean | Install Windows Admin Center on the selected management host during `compute`, `all`, or `identity` when identity is enabled. The host requires outbound HTTPS access for first-time installer download. | `false` |
+| `enableWindowsAdminCenter` | boolean | Install Windows Admin Center on the selected management host after AD/GPO setup during `identity` or `all`. Requires `enableIdentity=true`; the host needs outbound HTTPS and DNS for installer download. | `false` |
 | `useDedicatedWacHost` | boolean | Prefer the first `srvwin` in the final placement model instead of the primary jumpbox. Requires `enableWindowsAdminCenter=true`; if no `srvwin` exists, the primary jumpbox is used and `missingDedicatedWacHost` is reported as advisory. | `false` |
 
 `useDedicatedWacHost=true` while `enableWindowsAdminCenter=false` activates the blocking `invalidDedicatedWacHostConfiguration` finding.
 
-WAC listens on HTTPS TCP `6516` with an installer-generated certificate. AMRL does not add inbound HTTPS rules or configure WAC gateway connections; see [Windows Admin Center access](access-and-administration.md#windows-admin-center).
+`enableWindowsAdminCenter=true` with `enableIdentity=false` activates the blocking `invalidWindowsAdminCenterIdentityConfiguration` finding. If WAC is enabled for a stage that does not run identity, `windowsAdminCenterSkippedForStage` is advisory. The script uses the WAC v2 installer's silent defaults; AMRL does not set listener/auth/TLS options, add inbound web rules, or configure WAC gateway connections. See [Windows Admin Center access](access-and-administration.md#windows-admin-center).
 
 ## File Server Configuration (Optional)
 

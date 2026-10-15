@@ -19,6 +19,7 @@ param validationMode string
 param deployNetwork bool
 param deployControl bool
 param deployWorkload bool
+param deployIdentity bool = false
 
 // Region model and declared retained/new inventory
 param regionIndexMap object
@@ -268,6 +269,8 @@ var invalidFileServicesIdentityConfiguration = !enableIdentity && (enableFileSer
 var hasWindowsServerVm = !empty(filter(vmPlacements, vm => vm.type == 'srvwin'))
 var invalidDedicatedWacHostConfiguration = useDedicatedWacHost && !enableWindowsAdminCenter
 var missingDedicatedWacHost = enableWindowsAdminCenter && useDedicatedWacHost && !hasWindowsServerVm
+var invalidWindowsAdminCenterIdentityConfiguration = enableWindowsAdminCenter && !enableIdentity
+var windowsAdminCenterSkippedForStage = enableWindowsAdminCenter && enableIdentity && !deployIdentity
 
 // 2.7 Spoke workload capacity
 // Report remaining capacity after modeled control-plane occupancy. The hub contributes zero
@@ -591,6 +594,14 @@ var blockingValidationFindings = [
     message: 'useDedicatedWacHost cannot be true when enableWindowsAdminCenter is false.'
     remediation: 'Enable Windows Admin Center or set useDedicatedWacHost to false.'
   }
+  {
+    flag: 'invalidWindowsAdminCenterIdentityConfiguration'
+    active: invalidWindowsAdminCenterIdentityConfiguration
+    severity: 'block'
+    category: 'WindowsAdminCenter'
+    message: 'enableWindowsAdminCenter requires enableIdentity=true because WAC installation runs in the identity stage.'
+    remediation: 'Enable identity or disable Windows Admin Center.'
+  }
 ]
 
 // 3.2 Advisory findings
@@ -692,6 +703,14 @@ var advisoryValidationFindings = [
     category: 'WindowsAdminCenter'
     message: 'useDedicatedWacHost is true but no srvwin VM exists. Windows Admin Center will fall back to the primary jumpbox.'
     remediation: 'Add or retain at least one srvwin VM, or set useDedicatedWacHost to false.'
+  }
+  {
+    flag: 'windowsAdminCenterSkippedForStage'
+    active: windowsAdminCenterSkippedForStage
+    severity: 'advisory'
+    category: 'WindowsAdminCenter'
+    message: 'Windows Admin Center is enabled but the selected stage does not run identity; WAC installation will be skipped.'
+    remediation: 'Run stage=identity or stage=all to install Windows Admin Center.'
   }
   {
     flag: 'hasInvalidPeeringCleanupIdentity'

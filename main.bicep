@@ -622,6 +622,7 @@ module validationEngine 'modules/logic/validation.bicep' = {
     deployNetwork: deployNetwork
     deployControl: deployControl
     deployWorkload: deployWorkload
+    deployIdentity: deployIdentity
 
     regionIndexMap: regionIndexMap
     regionCount: regionCount
@@ -726,9 +727,6 @@ module computeStage 'modules/stages/compute-stage.bicep' = {
     deployWorkload: deployWorkload
     deployIdentity: deployIdentity
 
-    enableWindowsAdminCenter: enableWindowsAdminCenter
-    wacHostVm: wacHostVm
-
     windowsVMList: windowsVMList
     linuxVMList: linuxVMList
     sshKeyJumpboxPlacements: sshKeyJumpboxPlacements
@@ -774,6 +772,8 @@ module identityStage 'modules/stages/identity-stage.bicep' = {
 
     deployIdentity: deployIdentity
     enableFileServices: enableFileServices
+    enableWindowsAdminCenter: enableWindowsAdminCenter
+    wacHostVm: wacHostVm
 
     finalVmPlacements: finalVmPlacements
     primaryDc: primaryDc

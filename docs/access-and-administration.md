@@ -43,11 +43,11 @@ mstsc /v:$windowsVmFqdn
 
 ### Windows Admin Center
 
-When `enableWindowsAdminCenter=true`, AMRL installs the Windows Admin Center gateway on the selected host during an active compute deployment. The default host is the primary jumpbox; `useDedicatedWacHost=true` selects the first `srvwin` in the final placement model, falling back to the primary jumpbox if no Windows server is modeled.
+When `enableWindowsAdminCenter=true` and identity is enabled, AMRL installs the Windows Admin Center gateway during `stage=identity` or `stage=all`, after AD/GPO setup and Windows domain joins. The default host is the primary jumpbox; `useDedicatedWacHost=true` selects the first `srvwin` in the final placement model, falling back to the primary jumpbox if no Windows server is modeled.
 
-The installer configures HTTPS on TCP port `6516` with a generated certificate and starts the `ServerManagementGateway` service. It does not configure WAC-managed connections or add inbound HTTPS access. Reachability depends on the selected host's existing network and guest-firewall rules; AMRL does not expose the listener to the Internet. The generated certificate may require trust configuration in the browser.
+The current script downloads the WAC v2 EXE from `https://aka.ms/WACDownload` and runs it silently; it does not explicitly set the listener port, authentication, TLS certificate, or WinRM options. Inspect the installed WAC configuration for its actual listener settings. AMRL does not configure WAC-managed connections or add inbound web access. Reachability depends on the selected host's network and guest-firewall rules; AMRL does not expose the listener to the Internet.
 
-From a network permitted to reach the selected host, browse to `https://<wac-hostname>:6516`. Disabling WAC in a later deployment does not uninstall it from the host.
+From a network permitted to reach the selected host, browse to `https://<wac-hostname>:<configured-wac-port>` and trust/configure the installed certificate as required. Disabling WAC in a later deployment does not uninstall it from the host.
 
 For domain-joined workloads, use an authorized domain account for routine administration. Administration GPOs assign the modeled Windows administrators group. Where Windows LAPS applies, use [LAPS recovery](#windows-laps-break-glass-access) rather than assuming the original local password remains current.
 
