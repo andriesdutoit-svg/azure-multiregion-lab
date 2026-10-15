@@ -17,7 +17,7 @@ Never share private keys, passwords, or secret-bearing terminal output. Secret-w
 | Step | Action | Required State / Result |
 |---|---|---|
 | 1 | [Select Azure context and initialize values](#azure-context-and-foundation) | Capture the target subscription and tenant; initialize shared variables. |
-| 2 | [Register providers and create the foundation group](#azure-context-and-foundation) | The group must exist before vault or identity creation. |
+| 2 | [Check/register providers and create the foundation group](#azure-context-and-foundation) | The group must exist before vault or identity creation. |
 | 3 | [Create or reuse the managed identity](#managed-identity), then [assign its role](#required-role-assignment) | Produces `automationIdentity.id` and `automationIdentity.principalId`. |
 | 4 | [Create or reuse the vault](#create-or-reuse-key-vault), then [grant your user access](#user-secret-access) | Produces `kvId` and `userObjectId`. Do not run GitHub-app access yet. |
 | 5 | [Prepare SSH keys](#ssh-key-setup) and [administrator passwords](#admin-password-setup) | Requires vault access; allow RBAC propagation if necessary. |
@@ -66,11 +66,22 @@ if (@($foundationLocation, $vaultName) | Where-Object { [string]::IsNullOrWhiteS
 }
 ```
 
-This repository is `andriesdutoit-svg/azure-multiregion-lab`; fork owners must use their own owner/name. Register providers once per subscription and create the foundation group:
+This repository is `andriesdutoit-svg/azure-multiregion-lab`; fork owners must use their own owner/name. Check the required providers and register only those not already registered, then create the foundation group:
 
 ```powershell
 foreach ($namespace in @('Microsoft.Compute', 'Microsoft.Network', 'Microsoft.KeyVault', 'Microsoft.ManagedIdentity', 'Microsoft.Storage', 'Microsoft.ContainerInstance')) {
-  az provider register --namespace $namespace --wait --output none
+  $registrationState = az provider show --namespace $namespace --query registrationState --output tsv
+  if ($LASTEXITCODE -ne 0) { throw "Could not check registration state for $namespace." }
+
+  if ($registrationState -ne 'Registered') {
+    az provider register --namespace $namespace --wait --output none
+    if ($LASTEXITCODE -ne 0) { throw "Provider registration failed for $namespace." }
+
+    $registrationState = az provider show --namespace $namespace --query registrationState --output tsv
+    if ($LASTEXITCODE -ne 0 -or $registrationState -ne 'Registered') {
+      throw "Provider $namespace did not reach Registered state. Current state: $registrationState."
+    }
+  }
 }
 az group create --name $foundationRg --location $foundationLocation --output none
 ```

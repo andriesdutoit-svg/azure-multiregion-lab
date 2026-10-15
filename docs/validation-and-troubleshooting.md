@@ -79,6 +79,7 @@ It checks:
 - Department and identity configuration.
 - File services requiring identity automation.
 - Dedicated file-server mode requiring enabled file services and an available `srvwin` VM. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
+- Windows Admin Center dedicated-host mode requiring WAC to be enabled, and the availability of a modeled `srvwin` when dedicated hosting is requested.
 
 The current template requires `vmCounts.dc >= 1` for every deployment. It evaluates the primary DC and `fileServerName` before the identity and file-service feature flags can suppress their resource modules. With `vmCounts.dc=0`, template evaluation fails because no primary DC exists to supply `fileServerName`; set `dc` to at least `1` and redeploy.
 
@@ -126,6 +127,8 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 - `missingDedicatedFileServer`: `useDedicatedFileServer` is `true` but no `srvwin` VM exists. Target selection falls back to the primary DC so template evaluation can continue, but the configuration is invalid and should be corrected.
 - `invalidDedicatedFileServerConfiguration`: `useDedicatedFileServer` is `true` while `enableFileServices` is `false`.
 - `invalidFileServicesIdentityConfiguration`: `enableFileServices` or `useDedicatedFileServer` is `true` while `enableIdentity` is `false`.
+- `invalidDedicatedWacHostConfiguration`: blocking; `useDedicatedWacHost` is `true` while `enableWindowsAdminCenter` is `false`.
+- `missingDedicatedWacHost`: advisory; WAC and dedicated-host mode are enabled, but the final placement model has no `srvwin`. WAC falls back to the primary jumpbox; add or retain a Windows server, or disable dedicated-host preference.
 - `hasMalformedDomainName`: `enableIdentity` is `true` but `domainName` is blank, single-label, or contains a space, backslash, forward slash, or `@`. Group Policy provisioning builds the domain DN and SYSVOL path to `Groups.xml` from this value. The flag reports the issue before the Run Command, though validation flags are diagnostic and do not by themselves block deployment.
 - `hasEmptySysAdminDepartmentCode`: `sysAdminDepartment` is empty or its department code is blank. Group Policy provisioning resolves the Windows admins group created by directory population from this code.
 - `hasNoGpoTargetDc`: `enableIdentity` is `true` but `dc01` is not pinned to the primary region. Group Policy is provisioned on the primary domain controller, so there is no target for the import.

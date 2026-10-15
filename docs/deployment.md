@@ -26,8 +26,8 @@ For a new subscription or tenant, follow [New Subscription Setup](new-subscripti
 | Stage | Behavior |
 |---|---|
 | `network` | Creates or reuses regional networking and peerings. |
-| `compute` | Creates missing DCs, jumpboxes, and workload VMs. Target VNets and role subnets must already exist. |
-| `identity` | Configures AD, GPOs, workload domain membership, and enabled file/desktop services. Can create missing workloads; control-plane DCs must exist. |
+| `compute` | Creates missing DCs, jumpboxes, and workload VMs; installs WAC when enabled. Target VNets and role subnets must already exist. |
+| `identity` | Configures AD, GPOs, workload domain membership, and enabled file/desktop services. Can create missing workloads and install WAC when identity is enabled; control-plane DCs must exist. |
 | `all` | Runs the complete workflow. |
 
 Use `stage=all` when both networking and VM creation are needed. For separate runs, use `network -> compute -> identity`, keeping declared inventory current between deployments. Stage flags select resources, but shared placement, validation, and module contracts are still evaluated.
@@ -50,6 +50,14 @@ The engine completes before the gate, so its nested deployment retains diagnosti
 ### Optional File Services
 
 Set `enableIdentity=true` and `enableFileServices=true` and run `identity` or `all`. Shares use the primary DC unless `useDedicatedFileServer=true`, which selects the first `srvwin` VM in the final model. Request or inventory that server before enabling dedicated mode; [target reassignment is not data migration](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
+
+### Optional Windows Admin Center
+
+Set `enableWindowsAdminCenter=true` to install Windows Admin Center when compute resources are active (`compute`, `all`, or `identity` with `enableIdentity=true`). By default it targets the primary jumpbox. Set `useDedicatedWacHost=true` to prefer the first `srvwin` in the final placement model; if none is modeled, installation falls back to the primary jumpbox and reports the advisory `missingDedicatedWacHost`. Enabling the dedicated-host preference while WAC is disabled is a blocking `invalidDedicatedWacHostConfiguration` finding.
+
+The installer downloads the current MSI from `https://aka.ms/WACDownload`, configures TCP port `6516`, and generates a certificate. The selected host needs outbound HTTPS access for first-time installation. AMRL does not add inbound HTTPS rules, configure a public listener, or configure the gateway's managed-server connections. Plan browser access, certificate trust, guest firewall, and any required ingress separately; do not expose the listener broadly.
+
+The installer checks for the `ServerManagementGateway` service and starts it if stopped. If the service already exists, the script exits without upgrading or repairing the installation. Setting `enableWindowsAdminCenter=false` skips future installation commands; it does not uninstall WAC from a retained VM.
 
 ## Greenfield Deployment
 

@@ -41,6 +41,14 @@ $windowsVmFqdn = '<prefix>-srvwin01.<domainName>'
 mstsc /v:$windowsVmFqdn
 ```
 
+### Windows Admin Center
+
+When `enableWindowsAdminCenter=true`, AMRL installs the Windows Admin Center gateway on the selected host during an active compute deployment. The default host is the primary jumpbox; `useDedicatedWacHost=true` selects the first `srvwin` in the final placement model, falling back to the primary jumpbox if no Windows server is modeled.
+
+The installer configures HTTPS on TCP port `6516` with a generated certificate and starts the `ServerManagementGateway` service. It does not configure WAC-managed connections or add inbound HTTPS access. Reachability depends on the selected host's existing network and guest-firewall rules; AMRL does not expose the listener to the Internet. The generated certificate may require trust configuration in the browser.
+
+From a network permitted to reach the selected host, browse to `https://<wac-hostname>:6516`. Disabling WAC in a later deployment does not uninstall it from the host.
+
 For domain-joined workloads, use an authorized domain account for routine administration. Administration GPOs assign the modeled Windows administrators group. Where Windows LAPS applies, use [LAPS recovery](#windows-laps-break-glass-access) rather than assuming the original local password remains current.
 
 ## Linux

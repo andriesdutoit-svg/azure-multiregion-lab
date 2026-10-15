@@ -172,6 +172,17 @@ Use a matching SSH key pair. See [SSH Key Setup](access-and-administration.md#ss
 | `departmentCount` | integer | Total departments to provision, including `sysAdminDepartment` | `2` |
 | `usersPerDepartment` | integer | Standard user accounts to create per department, excluding the department manager | `5` |
 
+## Windows Admin Center Configuration (Optional)
+
+| Parameter | Type | Purpose | Example |
+|---|---|---|---|
+| `enableWindowsAdminCenter` | boolean | Install Windows Admin Center on the selected management host during `compute`, `all`, or `identity` when identity is enabled. The host requires outbound HTTPS access for first-time installer download. | `false` |
+| `useDedicatedWacHost` | boolean | Prefer the first `srvwin` in the final placement model instead of the primary jumpbox. Requires `enableWindowsAdminCenter=true`; if no `srvwin` exists, the primary jumpbox is used and `missingDedicatedWacHost` is reported as advisory. | `false` |
+
+`useDedicatedWacHost=true` while `enableWindowsAdminCenter=false` activates the blocking `invalidDedicatedWacHostConfiguration` finding.
+
+WAC listens on HTTPS TCP `6516` with an installer-generated certificate. AMRL does not add inbound HTTPS rules or configure WAC gateway connections; see [Windows Admin Center access](access-and-administration.md#windows-admin-center).
+
 ## File Server Configuration (Optional)
 
 | Parameter | Type | Purpose | Example |

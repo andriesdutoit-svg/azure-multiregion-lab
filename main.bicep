@@ -119,6 +119,10 @@ param sshPrivateKey string
 // Identity and directory management
 @description('Enable Active Directory forest, replica, population, and domain-join automation.')
 param enableIdentity bool
+@description('Deploy Windows Admin Center on the selected management host.')
+param enableWindowsAdminCenter bool
+@description('Prefer the first modeled Windows server for Windows Admin Center; fall back to the primary jumpbox if none exists.')
+param useDedicatedWacHost bool
 @description('Active Directory DNS domain name for the lab environment.')
 param domainName string
 @description('System administration department definition used for directory groups and permissions.')
@@ -545,6 +549,10 @@ var primaryDc = first(filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index == 0
 ))!
 
+var primaryJumpbox = first(filter(finalVmPlacements, vm =>
+  vm.type == 'jmp' && vm.index == 0
+))!
+
 var replicaDcList = filter(finalVmPlacements, vm =>
   vm.type == 'dc' && vm.index > 0
 )
@@ -563,6 +571,15 @@ var fileServerVm = useDedicatedFileServer && length(fileServerVmList) > 0
 var fileServerName = useDedicatedFileServer
   ? fileServerVm.name
   : primaryDc!.name
+
+// Prefer a dedicated Windows Server host when requested.
+// If no Windows Server exists, fall back to the primary jumpbox.
+// When a dedicated host is not requested, always use the primary jumpbox.
+var wacHostVm = useDedicatedWacHost
+  ? (length(fileServerVmList) > 0
+    ? fileServerVmList[0]
+    : primaryJumpbox)
+  : primaryJumpbox
 
 // 4.4 DNS candidates from modeled DC regions
 // Candidates use declared/planned placement, not live NIC discovery. The network
@@ -708,6 +725,9 @@ module computeStage 'modules/stages/compute-stage.bicep' = {
     deployControl: deployControl
     deployWorkload: deployWorkload
     deployIdentity: deployIdentity
+
+    enableWindowsAdminCenter: enableWindowsAdminCenter
+    wacHostVm: wacHostVm
 
     windowsVMList: windowsVMList
     linuxVMList: linuxVMList
