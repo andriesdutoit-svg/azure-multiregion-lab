@@ -25,6 +25,8 @@ resource installWindowsAdminCenter 'Microsoft.Compute/virtualMachines/runCommand
 
   properties: {
     asyncExecution: false
+    timeoutInSeconds: 3600
+    treatFailureAsDeploymentFailure: true
 
     source: {
       script: installWacScript

@@ -248,7 +248,7 @@ module domainJoinWindows '../identity/domain-join.bicep' = [
 
 // 3.5 Windows Admin Center
 // Wait for directory provisioning and Windows joins so the selected host has working domain DNS.
-module windowsAdminCenter '../compute/wac.bicep' = if (deployIdentity && enableWindowsAdminCenter) {
+module windowsAdminCenter '../identity/wac.bicep' = if (deployIdentity && enableWindowsAdminCenter) {
   name: '${prefix}-wac-${wacHostVm.name}'
 
   scope: resourceGroup('${prefix}-rg-${wacHostVm.regionKey}')

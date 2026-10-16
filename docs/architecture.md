@@ -63,7 +63,7 @@ The root [main.bicep](../main.bicep) orchestrates the deployment. Reusable modul
 - `modules/networking` owns VNets, role subnets, NSGs, firewalls, and route tables.
 - `modules/networking/peering.bicep` owns mode-specific hub-spoke or full-mesh peering.
 - `modules/compute` owns Windows and Linux VM resources.
-- `modules/compute/wac.bicep` owns optional Windows Admin Center installation through VM Run Command.
+- `modules/identity/wac.bicep` owns optional Windows Admin Center installation through VM Run Command.
 - `modules/identity` owns AD automation, domain joining, and departmental file-service provisioning.
 - `modules/logic` owns configuration and capacity validation.
 

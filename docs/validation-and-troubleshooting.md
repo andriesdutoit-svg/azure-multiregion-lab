@@ -13,6 +13,7 @@ Identify the failing layer before rerunning a deployment. Configuration findings
 | Jumpbox or workload is inaccessible | [Access path and account](access-and-administration.md), Public IP/Bastion, NSGs, routing, and VM state. |
 | Domain join or name lookup fails | [DNS and domain connectivity](#dns-and-domain-connectivity), DC readiness, then the target Run Command instance view. |
 | Department shares are unavailable | Selected file-server host, domain membership, SMB share presence, and modeled group/NTFS permissions. See [File Services](identity-and-domain-join.md#departmental-file-services). |
+| WAC install fails or is missing | Confirm identity-stage execution, then inspect `install-wac` Run Command `instanceView` for `executionState`, `exitCode`, and output. Check host DNS/HTTPS to `download.microsoft.com`, installer signature, and WAC service/configuration checks. |
 
 ## Post-Deployment Review
 
