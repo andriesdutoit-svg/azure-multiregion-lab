@@ -32,11 +32,7 @@ function Get-WacServices {
         }
     }
 
-    if ($foundServices.Count -gt 0 -and $foundServices.Count -ne $serviceNames.Count) {
-        throw 'A partial Windows Admin Center service installation was detected; repair or remove it before retrying.'
-    }
-
-    return $foundServices
+        return $foundServices
 }
 
 function Start-AndVerifyWacServices {
@@ -58,6 +54,29 @@ function Start-AndVerifyWacServices {
             throw "$($service.Name) did not reach the Running state."
         }
     }
+}
+
+function Repair-WacConfiguration {
+    $configurationModule = Join-Path `
+        $env:ProgramFiles `
+        'WindowsAdminCenter\PowerShellModules\Microsoft.WindowsAdminCenter.Configuration'
+
+    Import-Module `
+        -Name $configurationModule `
+        -ErrorAction Stop
+
+    Set-WACLoginMode `
+        -Mode WindowsAuthentication `
+        -ErrorAction Stop
+
+    Set-WACWinRmOverHttps `
+        -Enabled `
+        -ErrorAction Stop
+
+    Set-WACWinRmTrustedHosts `
+        -ErrorAction Stop
+
+    Restart-WACService
 }
 
 function Test-WacConfiguration {
@@ -137,22 +156,21 @@ function Invoke-WithRetry {
 
 Write-Log "Reconciliation token: $ReconciliationToken"
 
-Write-Log 'Script started.'
-
-Write-Log "Running as: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
-
-Write-Log "PowerShell version: $($PSVersionTable.PSVersion)"
-
 New-Item -Path $downloadDirectory -ItemType Directory -Force | Out-Null
-Set-Content -Path (Join-Path $downloadDirectory 'Install-Wac-ScriptStarted.txt') -Value (Get-Date)
 
 Write-Log "Using Microsoft's $installerChannel WAC v2 download endpoint."
 $existingServices = @(Get-WacServices)
 if ($existingServices.Count -gt 0) {
     Write-Log 'Windows Admin Center is already installed; skipping reinstall and upgrade.'
+
+    Repair-WacConfiguration
+
     Start-AndVerifyWacServices -Services $existingServices
+
     Test-WacConfiguration
+
     Write-Log 'Existing Windows Admin Center installation validated.'
+
     return
 }
 
@@ -183,8 +201,6 @@ if ($signature.Status -ne 'Valid') {
 Write-Log "Installer signer: $($signature.SignerCertificate.Subject)"
 Write-Log 'Installing Windows Admin Center.'
 
-Set-Content -Path (Join-Path $downloadDirectory 'BeforeInstaller.txt') -Value (Get-Date)
-
 $process = Start-Process `
     -FilePath $installerPath `
     -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$installLog`"" `
@@ -206,10 +222,6 @@ do {
 }
 while ((Get-Date) -lt $deadline)
 
-Set-Content `
-    -Path (Join-Path $downloadDirectory 'AfterInstaller.txt') `
-    -Value 'ServicesDetected'
-
 if ($installedServices.Count -ne 2) {
 
     if (Test-Path -LiteralPath $installLog) {
@@ -218,26 +230,7 @@ if ($installedServices.Count -ne 2) {
     throw 'The installer exited successfully, but both WAC services were not found.'
 }
 
-$configurationModule = Join-Path `
-    $env:ProgramFiles `
-    'WindowsAdminCenter\PowerShellModules\Microsoft.WindowsAdminCenter.Configuration'
-
-Import-Module `
-    -Name $configurationModule `
-    -ErrorAction Stop
-
-Set-WACLoginMode `
-    -Mode WindowsAuthentication `
-    -ErrorAction Stop
-
-Set-WACWinRmOverHttps `
-    -Enabled `
-    -ErrorAction Stop
-
-Set-WACWinRmTrustedHosts `
-    -ErrorAction Stop
-
-Start-WACService
+Repair-WacConfiguration
 
 Start-AndVerifyWacServices -Services $installedServices
 Test-WacConfiguration

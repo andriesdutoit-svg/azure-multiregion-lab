@@ -181,7 +181,7 @@ Use a matching SSH key pair. See [SSH Key Setup](access-and-administration.md#ss
 
 `useDedicatedWacHost=true` while `enableWindowsAdminCenter=false` activates the blocking `invalidDedicatedWacHostConfiguration` finding.
 
-`enableWindowsAdminCenter=true` with `enableIdentity=false` activates the blocking `invalidWindowsAdminCenterIdentityConfiguration` finding. If WAC is enabled for a stage that does not run identity, `windowsAdminCenterSkippedForStage` is advisory. Fresh installs use Microsoft's current WAC v2 download alias and verify its Authenticode signature. Successful reruns validate and leave the existing installation unchanged; they do not upgrade it. The installer uses silent defaults; AMRL does not add inbound web rules or configure WAC gateway connections. See [Windows Admin Center access](access-and-administration.md#windows-admin-center).
+`enableWindowsAdminCenter=true` with `enableIdentity=false` activates the blocking `invalidWindowsAdminCenterIdentityConfiguration` finding. If WAC is enabled for a stage that does not run identity, `windowsAdminCenterSkippedForStage` is advisory. Fresh installs use Microsoft's current WAC v2 download alias and verify its Authenticode signature. AMRL sets Windows Authentication and WinRM-over-HTTPS; see [Windows Admin Center access](access-and-administration.md#windows-admin-center) for the full WAC configuration baseline and which values are currently installer defaults rather than explicitly enforced.
 
 ## File Server Configuration (Optional)
 

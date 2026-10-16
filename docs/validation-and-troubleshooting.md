@@ -4,6 +4,28 @@
 
 ## Start Here
 
+If deployment failed with `Deployment blocked by validation enforcement`, inspect the completed validation-engine output first. Replace the placeholders with the root deployment prefix and deployment name; the engine name uses the first 20 characters of the deployment name:
+
+```powershell
+az deployment sub show `
+  --name "<prefix>-validation-engine-<deployment-name-prefix>" `
+  --query "properties.outputs.blockingValidationDetails.value" `
+  --output jsonc
+```
+
+This returns only active blocking findings, including each finding's flag, message, and remediation.
+
+The command above shows only blocking findings. If you also want all Boolean flags and non-blocking warnings, run this expanded query:
+
+```powershell
+az deployment sub show `
+  --name "<prefix>-validation-engine-<deployment-name-prefix>" `
+  --query "properties.outputs.{flags:validationFlags.value,blocking:blockingValidationDetails.value,advisory:advisoryValidationDetails.value}" `
+  --output jsonc
+```
+
+`blocking` contains deployment-stopping findings; `advisory` contains warnings that do not block enforcement. If neither explains the issue, use the symptom guide below to investigate Azure provisioning or guest failures.
+
 Identify the failing layer before rerunning a deployment. Configuration findings, Azure provisioning errors, and guest/service failures need different checks:
 
 | Symptom | First checks |
@@ -17,7 +39,7 @@ Identify the failing layer before rerunning a deployment. Configuration findings
 
 ## Post-Deployment Review
 
-Start with the deployment summary, active findings, placement, and capacity:
+After a successful subscription deployment, query the root deployment to read its saved validation summary, blocking/advisory finding details, capacity, and placement outputs. This command only reads the completed deployment outputs; it does not rerun validation:
 
 ```powershell
 az deployment sub show `
@@ -26,38 +48,7 @@ az deployment sub show `
   --output json
 ```
 
-If enforcement blocks the parent, inspect the completed validation engine directly. Its name uses the prefix and first 20 characters of the deployment name:
-
-```powershell
-az deployment sub show `
-  --name "<prefix>-validation-engine-<deployment-name-prefix>" `
-  --query "properties.outputs.blockingValidationDetails.value" `
-  --output jsonc
-```
-
 Then verify the user-visible result: administration access, expected Windows/Linux domain membership, domain DNS, and enabled shares/desktops. Inspect guest `executionState`, `exitCode`, `error`, and `output`; a successful ARM resource operation alone is not proof of guest readiness.
-
-## DNS and Domain Connectivity
-
-Run these checks from a lab VM with private connectivity to the domain, substituting actual names and addresses:
-
-```powershell
-Resolve-DnsName '<domainName>'
-Resolve-DnsName '<prefix>-srvwin01.<domainName>'
-Test-NetConnection -ComputerName '<dc-private-ip>' -Port 53
-```
-
-Check actual DC NIC addresses, VNet DNS settings, and DC DNS/AD services. Candidate DNS addresses use `.4` in declared DC regions; that address is likely in a fresh DC-only subnet but is not reserved or discovered. Multiple DCs can use different addresses. Deleting/recreating the NIC at `.4`, stale inventory, another NIC occupying it, service failure, or blocked connectivity can invalidate the endpoint. Reused VNets retain their previous DNS settings; verify before making deliberate changes rather than readdressing retained DCs implicitly.
-
-On a Linux workload, realm and identity lookup checks help distinguish domain configuration from infrastructure SSH-key access:
-
-```bash
-realm list
-getent passwd '<domain-user>@<domainName>'
-id '<domain-user>@<domainName>'
-```
-
-The detailed output and finding reference below supports diagnosis after these first checks.
 
 ## Template Validation
 
@@ -142,6 +133,26 @@ The template findings cover configuration it can evaluate; they do not replace g
 `validationFlags` reports each finding independently. `validationMessage` contains only the first active finding in catalog order, with blocking findings listed before advisory findings. In `reportOnly` mode, findings do not block deployment. In `enforce` mode, active blocking findings fail the validation gate before stage modules execute; advisory findings remain non-blocking. This gate does not roll back resources from earlier successful deployments. Some invalid configurations can still fail earlier during template evaluation, such as `vmCounts.dc=0` when the root template requires a primary DC. Also inspect VM Run Command results separately.
 
 The stage network check uses the declared `existingRegions` inventory; it does not discover VNets, confirm role subnets, or verify live connectivity. It checks every selected region because the current subnet contract is produced for the full region set, even when no VM is newly placed there. Network-prerequisite findings are advisory and do not block enforcement mode; confirm that every required VNet and role subnet actually exists before deploying VMs when networking is skipped.
+
+## DNS and Domain Connectivity
+
+Use these checks when a deployment or guest command reports domain lookup or join failures. Run them from a lab VM with private connectivity to the domain, substituting actual names and addresses:
+
+```powershell
+Resolve-DnsName '<domainName>'
+Resolve-DnsName '<prefix>-srvwin01.<domainName>'
+Test-NetConnection -ComputerName '<dc-private-ip>' -Port 53
+```
+
+Check actual DC NIC addresses, VNet DNS settings, and DC DNS/AD services. Candidate DNS addresses use `.4` in declared DC regions; that address is likely in a fresh DC-only subnet but is not reserved or discovered. Multiple DCs may occupy different addresses. Deleting/recreating the NIC at `.4`, stale inventory, another NIC occupying it, service failure, or blocked connectivity can invalidate the endpoint. Reused VNets retain their previous DNS settings; verify before making deliberate changes rather than readdressing retained DCs implicitly.
+
+On a Linux workload, these checks help distinguish domain configuration from infrastructure SSH-key access:
+
+```bash
+realm list
+getent passwd '<domain-user>@<domainName>'
+id '<domain-user>@<domainName>'
+```
 
 ## Automation Log Statuses
 

@@ -45,9 +45,23 @@ mstsc /v:$windowsVmFqdn
 
 When `enableWindowsAdminCenter=true` and identity is enabled, AMRL installs the Windows Admin Center gateway during `stage=identity` or `stage=all`, after AD/GPO setup and Windows domain joins. The default host is the primary jumpbox; `useDedicatedWacHost=true` selects the first `srvwin` in the final placement model, falling back to the primary jumpbox if no Windows server is modeled.
 
-For a fresh install, the script downloads Microsoft's current WAC v2 EXE through `https://aka.ms/WACDownload`, verifies its Authenticode signature, and runs it silently with its defaults. It then verifies service state and reports the installed status, HTTPS port, login mode, endpoint, WinRM-over-HTTPS, and TLS certificate. When both services already exist, reruns validate and leave that installation unchanged; there is no automatic upgrade. AMRL does not configure WAC-managed connections or add inbound web access. Reachability depends on the selected host's network and guest-firewall rules; AMRL does not expose the listener to the Internet.
+For a fresh install, the script downloads Microsoft's current WAC v2 EXE through `https://aka.ms/WACDownload`, verifies its Authenticode signature, and runs it silently. It then configures the WAC profile below. When both services already exist, reruns validate and leave that installation unchanged; there is no automatic upgrade. AMRL does not configure WAC-managed connections or add inbound web access. Reachability depends on the selected host's network and guest-firewall rules; AMRL does not expose the listener to the Internet.
 
-From a network permitted to reach the selected host, browse to `https://<wac-hostname>:<configured-wac-port>` and trust/configure the installed certificate as required. Disabling WAC in a later deployment does not uninstall it from the host.
+| WAC setting | Target value | How AMRL handles it |
+|---|---|---|
+| Installation status | `StandardInstalled` | Checked after installation. |
+| Login mode | `WindowsAuthentication` | Set by `Set-WACLoginMode` and checked. |
+| WinRM over HTTPS | `true` | Enabled by `Set-WACWinRmOverHttps` and checked. |
+| WinRM trusted hosts | Domain-only | Configured by `Set-WACWinRmTrustedHosts`; not independently read back by the script. |
+| HTTPS listener port | `443` | Observed in the manual WAC installation; the script currently checks only that the reported port is valid, not that it equals 443. |
+| Service port range | `6601-6610` | Observed in the manual WAC installation; not currently set or verified by the script. |
+| Software updates | `Automatic` | Observed in the manual WAC installation; not currently set or verified by the script. |
+| Telemetry privacy | `Required` | Observed in the manual WAC installation; not currently set or verified by the script. |
+| Runtime / operation mode | `Service` / `Production` | Observed in the manual WAC installation; not currently checked by the script. |
+
+The installer-generated self-signed certificate is checked for presence, but its identity and trust chain are not validated. For browser access, use `https://<wac-hostname>:443` after confirming the listener configuration and arrange certificate trust as required.
+
+Disabling WAC in a later deployment does not uninstall it from the host.
 
 For domain-joined workloads, use an authorized domain account for routine administration. Administration GPOs assign the modeled Windows administrators group. Where Windows LAPS applies, use [LAPS recovery](#windows-laps-break-glass-access) rather than assuming the original local password remains current.
 
