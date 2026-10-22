@@ -122,6 +122,8 @@ gpoNames.windowsLaps           ->  linked to OU=Servers,OU=Computers and OU=Clie
 
 Windows LAPS is linked separately to the Servers and Clients OUs. The Windows administrators group-reference rewrite applies only to the two administration GPOs.
 
+The Server Administration and Client Administration backups configure the WinRM service to start automatically, enable remote management through WinRM, and add a Windows Firewall rule allowing TCP 5985 and 5986 from `10.0.0.0/8` on the Domain profile. Their local Administrators preference adds `AMRL\GGS_Windows_Admins` without clearing other members. The current WAC configuration uses WinRM over HTTP (5985); the 5986 firewall allowance does not create an HTTPS listener or certificate. Verify that domain policy has applied and that the VM reports `DomainAuthenticated` before relying on the Domain-profile firewall rule.
+
 Missing GPOs are seeded from packaged backups; existing policies are retained. Reruns repair the modeled administrator references, LAPS decryptor, and links. Use a new deployment name to reapply automation, and verify client processing separately.
 
 <details>

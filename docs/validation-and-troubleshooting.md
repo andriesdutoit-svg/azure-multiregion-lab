@@ -4,6 +4,28 @@
 
 ## Start Here
 
+If deployment failed with `Deployment blocked by validation enforcement`, inspect the completed validation-engine output first. Replace the placeholders with the root deployment prefix and deployment name; the engine name uses the first 20 characters of the deployment name:
+
+```powershell
+az deployment sub show `
+  --name "<prefix>-validation-engine-<deployment-name-prefix>" `
+  --query "properties.outputs.blockingValidationDetails.value" `
+  --output jsonc
+```
+
+This returns only active blocking findings, including each finding's flag, message, and remediation.
+
+The command above shows only blocking findings. If you also want all Boolean flags and non-blocking warnings, run this expanded query:
+
+```powershell
+az deployment sub show `
+  --name "<prefix>-validation-engine-<deployment-name-prefix>" `
+  --query "properties.outputs.{flags:validationFlags.value,blocking:blockingValidationDetails.value,advisory:advisoryValidationDetails.value}" `
+  --output jsonc
+```
+
+`blocking` contains deployment-stopping findings; `advisory` contains warnings that do not block enforcement. If neither explains the issue, use the symptom guide below to investigate Azure provisioning or guest failures.
+
 Identify the failing layer before rerunning a deployment. Configuration findings, Azure provisioning errors, and guest/service failures need different checks:
 
 | Symptom | First checks |
@@ -13,10 +35,12 @@ Identify the failing layer before rerunning a deployment. Configuration findings
 | Jumpbox or workload is inaccessible | [Access path and account](access-and-administration.md), Public IP/Bastion, NSGs, routing, and VM state. |
 | Domain join or name lookup fails | [DNS and domain connectivity](#dns-and-domain-connectivity), DC readiness, then the target Run Command instance view. |
 | Department shares are unavailable | Selected file-server host, domain membership, SMB share presence, and modeled group/NTFS permissions. See [File Services](identity-and-domain-join.md#departmental-file-services). |
+| WAC install fails or is missing | Confirm identity-stage execution, then inspect `install-wac` Run Command `instanceView` for `executionState`, `exitCode`, and output. Check host DNS/HTTPS to `download.microsoft.com`, installer signature, and WAC service/configuration checks. |
+| WAC discovers a server but cannot manage it | Separate TCP reachability, guest firewall, WinRM authentication, and WAC credential delegation. See [WAC and WinRM checks](#wac-and-winrm-checks). |
 
 ## Post-Deployment Review
 
-Start with the deployment summary, active findings, placement, and capacity:
+After a successful subscription deployment, query the root deployment to read its saved validation summary, blocking/advisory finding details, capacity, and placement outputs. This command only reads the completed deployment outputs; it does not rerun validation:
 
 ```powershell
 az deployment sub show `
@@ -25,38 +49,25 @@ az deployment sub show `
   --output json
 ```
 
-If enforcement blocks the parent, inspect the completed validation engine directly. Its name uses the prefix and first 20 characters of the deployment name:
-
-```powershell
-az deployment sub show `
-  --name "<prefix>-validation-engine-<deployment-name-prefix>" `
-  --query "properties.outputs.blockingValidationDetails.value" `
-  --output jsonc
-```
-
 Then verify the user-visible result: administration access, expected Windows/Linux domain membership, domain DNS, and enabled shares/desktops. Inspect guest `executionState`, `exitCode`, `error`, and `output`; a successful ARM resource operation alone is not proof of guest readiness.
 
-## DNS and Domain Connectivity
+## WAC And WinRM Checks
 
-Run these checks from a lab VM with private connectivity to the domain, substituting actual names and addresses:
+The current WAC gateway uses WinRM over HTTP (TCP 5985) to manage Windows servers. The gateway's own browser UI uses HTTPS; this is a separate connection. Before changing NSGs, check the complete path and the target's effective guest policy:
 
 ```powershell
-Resolve-DnsName '<domainName>'
-Resolve-DnsName '<prefix>-srvwin01.<domainName>'
-Test-NetConnection -ComputerName '<dc-private-ip>' -Port 53
+Test-NetConnection <server-fqdn> -Port 5985
+Test-WSMan <server-fqdn> -Authentication Kerberos
+Get-NetConnectionProfile
+Get-NetFirewallRule -PolicyStore ActiveStore -Name '*WINRM*'
+gpresult /scope computer /r
 ```
 
-Check actual DC NIC addresses, VNet DNS settings, and DC DNS/AD services. Candidate DNS addresses use `.4` in declared DC regions; that address is likely in a fresh DC-only subnet but is not reserved or discovered. Multiple DCs can use different addresses. Deleting/recreating the NIC at `.4`, stale inventory, another NIC occupying it, service failure, or blocked connectivity can invalidate the endpoint. Reused VNets retain their previous DNS settings; verify before making deliberate changes rather than readdressing retained DCs implicitly.
+`Test-NetConnection` confirms only TCP connectivity. If it fails, verify the source and destination NSGs/routes, WinRM listener, and Windows Firewall. The Administration GPOs allow TCP 5985 and 5986 from `10.0.0.0/8` only on the Domain profile; confirm the target is `DomainAuthenticated` and that the GPO applied. An explicit local firewall allow rule resolved the reported cross-region TCP 5985 failure even though the NSG already allowed the traffic.
 
-On a Linux workload, realm and identity lookup checks help distinguish domain configuration from infrastructure SSH-key access:
+If TCP and `Test-WSMan` work and WAC succeeds with **Manage As** but fails with **Use my Windows account** (`0x8009030e`), investigate Kerberos delegation between the user's browser session, WAC gateway, and target. This symptom points to a delegation issue rather than an NSG port block. RBCD is a candidate future configuration and is not currently provisioned by AMRL. Use explicit Manage As credentials as the current workaround. Do not enable unconstrained delegation as a troubleshooting shortcut.
 
-```bash
-realm list
-getent passwd '<domain-user>@<domainName>'
-id '<domain-user>@<domainName>'
-```
-
-The detailed output and finding reference below supports diagnosis after these first checks.
+WinRM over HTTPS on TCP 5986 is not currently configured: the GPO/NSG allowance alone does not provide a listener or server certificate. HTTPS hardening is deferred until the PKI phase.
 
 ## Template Validation
 
@@ -79,6 +90,7 @@ It checks:
 - Department and identity configuration.
 - File services requiring identity automation.
 - Dedicated file-server mode requiring enabled file services and an available `srvwin` VM. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
+- Windows Admin Center dedicated-host mode requiring WAC to be enabled, and the availability of a modeled `srvwin` when dedicated hosting is requested.
 
 The current template requires `vmCounts.dc >= 1` for every deployment. It evaluates the primary DC and `fileServerName` before the identity and file-service feature flags can suppress their resource modules. With `vmCounts.dc=0`, template evaluation fails because no primary DC exists to supply `fileServerName`; set `dc` to at least `1` and redeploy.
 
@@ -126,6 +138,10 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 - `missingDedicatedFileServer`: `useDedicatedFileServer` is `true` but no `srvwin` VM exists. Target selection falls back to the primary DC so template evaluation can continue, but the configuration is invalid and should be corrected.
 - `invalidDedicatedFileServerConfiguration`: `useDedicatedFileServer` is `true` while `enableFileServices` is `false`.
 - `invalidFileServicesIdentityConfiguration`: `enableFileServices` or `useDedicatedFileServer` is `true` while `enableIdentity` is `false`.
+- `invalidDedicatedWacHostConfiguration`: blocking; `useDedicatedWacHost` is `true` while `enableWindowsAdminCenter` is `false`.
+- `missingDedicatedWacHost`: advisory; WAC and dedicated-host mode are enabled, but the final placement model has no `srvwin`. WAC falls back to the primary jumpbox; add or retain a Windows server, or disable dedicated-host preference.
+- `invalidWindowsAdminCenterIdentityConfiguration`: blocking; `enableWindowsAdminCenter` is `true` while `enableIdentity` is `false`, so the identity-owned WAC module cannot run.
+- `windowsAdminCenterSkippedForStage`: advisory; WAC and identity are enabled, but the selected stage is not `identity` or `all`, so WAC will not be installed in this deployment. Run `stage=identity` or `stage=all` when ready.
 - `hasMalformedDomainName`: `enableIdentity` is `true` but `domainName` is blank, single-label, or contains a space, backslash, forward slash, or `@`. Group Policy provisioning builds the domain DN and SYSVOL path to `Groups.xml` from this value. The flag reports the issue before the Run Command, though validation flags are diagnostic and do not by themselves block deployment.
 - `hasEmptySysAdminDepartmentCode`: `sysAdminDepartment` is empty or its department code is blank. Group Policy provisioning resolves the Windows admins group created by directory population from this code.
 - `hasNoGpoTargetDc`: `enableIdentity` is `true` but `dc01` is not pinned to the primary region. Group Policy is provisioned on the primary domain controller, so there is no target for the import.
@@ -136,6 +152,26 @@ The template findings cover configuration it can evaluate; they do not replace g
 `validationFlags` reports each finding independently. `validationMessage` contains only the first active finding in catalog order, with blocking findings listed before advisory findings. In `reportOnly` mode, findings do not block deployment. In `enforce` mode, active blocking findings fail the validation gate before stage modules execute; advisory findings remain non-blocking. This gate does not roll back resources from earlier successful deployments. Some invalid configurations can still fail earlier during template evaluation, such as `vmCounts.dc=0` when the root template requires a primary DC. Also inspect VM Run Command results separately.
 
 The stage network check uses the declared `existingRegions` inventory; it does not discover VNets, confirm role subnets, or verify live connectivity. It checks every selected region because the current subnet contract is produced for the full region set, even when no VM is newly placed there. Network-prerequisite findings are advisory and do not block enforcement mode; confirm that every required VNet and role subnet actually exists before deploying VMs when networking is skipped.
+
+## DNS and Domain Connectivity
+
+Use these checks when a deployment or guest command reports domain lookup or join failures. Run them from a lab VM with private connectivity to the domain, substituting actual names and addresses:
+
+```powershell
+Resolve-DnsName '<domainName>'
+Resolve-DnsName '<prefix>-srvwin01.<domainName>'
+Test-NetConnection -ComputerName '<dc-private-ip>' -Port 53
+```
+
+Check actual DC NIC addresses, VNet DNS settings, and DC DNS/AD services. Candidate DNS addresses use `.4` in declared DC regions; that address is likely in a fresh DC-only subnet but is not reserved or discovered. Multiple DCs may occupy different addresses. Deleting/recreating the NIC at `.4`, stale inventory, another NIC occupying it, service failure, or blocked connectivity can invalidate the endpoint. Reused VNets retain their previous DNS settings; verify before making deliberate changes rather than readdressing retained DCs implicitly.
+
+On a Linux workload, these checks help distinguish domain configuration from infrastructure SSH-key access:
+
+```bash
+realm list
+getent passwd '<domain-user>@<domainName>'
+id '<domain-user>@<domainName>'
+```
 
 ## Automation Log Statuses
 

@@ -172,6 +172,17 @@ Use a matching SSH key pair. See [SSH Key Setup](access-and-administration.md#ss
 | `departmentCount` | integer | Total departments to provision, including `sysAdminDepartment` | `2` |
 | `usersPerDepartment` | integer | Standard user accounts to create per department, excluding the department manager | `5` |
 
+## Windows Admin Center Configuration (Optional)
+
+| Parameter | Type | Purpose | Example |
+|---|---|---|---|
+| `enableWindowsAdminCenter` | boolean | Install Windows Admin Center on the selected management host after AD/GPO setup during `identity` or `all`. Requires `enableIdentity=true`; the host needs outbound HTTPS and DNS for installer download. | `false` |
+| `useDedicatedWacHost` | boolean | Prefer the first `srvwin` in the final placement model instead of the primary jumpbox. Requires `enableWindowsAdminCenter=true`; if no `srvwin` exists, the primary jumpbox is used and `missingDedicatedWacHost` is reported as advisory. | `false` |
+
+`useDedicatedWacHost=true` while `enableWindowsAdminCenter=false` activates the blocking `invalidDedicatedWacHostConfiguration` finding.
+
+`enableWindowsAdminCenter=true` with `enableIdentity=false` activates the blocking `invalidWindowsAdminCenterIdentityConfiguration` finding. If WAC is enabled for a stage that does not run identity, `windowsAdminCenterSkippedForStage` is advisory. Fresh installs use Microsoft's current WAC v2 download alias and verify its Authenticode signature. AMRL sets Windows Authentication and selects WinRM over HTTP for managed servers (`WinRmOverHttps=false`); WinRM over HTTPS is deferred until PKI is available. See [Windows Admin Center access](access-and-administration.md#windows-admin-center) for the full WAC configuration and validation boundaries.
+
 ## File Server Configuration (Optional)
 
 | Parameter | Type | Purpose | Example |

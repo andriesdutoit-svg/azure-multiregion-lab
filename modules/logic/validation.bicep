@@ -19,6 +19,7 @@ param validationMode string
 param deployNetwork bool
 param deployControl bool
 param deployWorkload bool
+param deployIdentity bool = false
 
 // Region model and declared retained/new inventory
 param regionIndexMap object
@@ -52,6 +53,9 @@ param jumpboxAllowedSources array
 
 // Identity, Group Policy, and directory population
 param enableIdentity bool
+// Optional WAC installation and target preference
+param enableWindowsAdminCenter bool = false
+param useDedicatedWacHost bool = false
 // Domain and GPO names feed guest DN/SYSVOL construction and packaged backup matching.
 param domainName string = ''
 param gpoNames object = {}
@@ -262,6 +266,11 @@ var missingDedicatedFileServer = useDedicatedFileServer && !fileServerVmAvailabl
 
 var invalidDedicatedFileServerConfiguration = !enableFileServices && useDedicatedFileServer
 var invalidFileServicesIdentityConfiguration = !enableIdentity && (enableFileServices || useDedicatedFileServer)
+var hasWindowsServerVm = !empty(filter(vmPlacements, vm => vm.type == 'srvwin'))
+var invalidDedicatedWacHostConfiguration = useDedicatedWacHost && !enableWindowsAdminCenter
+var missingDedicatedWacHost = enableWindowsAdminCenter && useDedicatedWacHost && !hasWindowsServerVm
+var invalidWindowsAdminCenterIdentityConfiguration = enableWindowsAdminCenter && !enableIdentity
+var windowsAdminCenterSkippedForStage = enableWindowsAdminCenter && enableIdentity && !deployIdentity
 
 // 2.7 Spoke workload capacity
 // Report remaining capacity after modeled control-plane occupancy. The hub contributes zero
@@ -577,6 +586,22 @@ var blockingValidationFindings = [
     message: 'enableIdentity must be true when enableFileServices or useDedicatedFileServer is true. File services depend on Active Directory users and groups.'
     remediation: 'Enable identity or disable file services and dedicated file-server mode.'
   }
+  {
+    flag: 'invalidDedicatedWacHostConfiguration'
+    active: invalidDedicatedWacHostConfiguration
+    severity: 'block'
+    category: 'WindowsAdminCenter'
+    message: 'useDedicatedWacHost cannot be true when enableWindowsAdminCenter is false.'
+    remediation: 'Enable Windows Admin Center or set useDedicatedWacHost to false.'
+  }
+  {
+    flag: 'invalidWindowsAdminCenterIdentityConfiguration'
+    active: invalidWindowsAdminCenterIdentityConfiguration
+    severity: 'block'
+    category: 'WindowsAdminCenter'
+    message: 'enableWindowsAdminCenter requires enableIdentity=true because WAC installation runs in the identity stage.'
+    remediation: 'Enable identity or disable Windows Admin Center.'
+  }
 ]
 
 // 3.2 Advisory findings
@@ -670,6 +695,22 @@ var advisoryValidationFindings = [
     category: 'FileServices'
     message: 'useDedicatedFileServer is true but no srvwin virtual machine exists. Add a Windows server (vmCounts.windowsServer) or set useDedicatedFileServer to false.'
     remediation: 'Add or retain at least one srvwin VM, or disable dedicated file-server mode.'
+  }
+  {
+    flag: 'missingDedicatedWacHost'
+    active: missingDedicatedWacHost
+    severity: 'advisory'
+    category: 'WindowsAdminCenter'
+    message: 'useDedicatedWacHost is true but no srvwin VM exists. Windows Admin Center will fall back to the primary jumpbox.'
+    remediation: 'Add or retain at least one srvwin VM, or set useDedicatedWacHost to false.'
+  }
+  {
+    flag: 'windowsAdminCenterSkippedForStage'
+    active: windowsAdminCenterSkippedForStage
+    severity: 'advisory'
+    category: 'WindowsAdminCenter'
+    message: 'Windows Admin Center is enabled but the selected stage does not run identity; WAC installation will be skipped.'
+    remediation: 'Run stage=identity or stage=all to install Windows Admin Center.'
   }
   {
     flag: 'hasInvalidPeeringCleanupIdentity'

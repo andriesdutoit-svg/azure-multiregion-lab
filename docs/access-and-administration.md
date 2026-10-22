@@ -41,6 +41,34 @@ $windowsVmFqdn = '<prefix>-srvwin01.<domainName>'
 mstsc /v:$windowsVmFqdn
 ```
 
+### Windows Admin Center
+
+When `enableWindowsAdminCenter=true` and identity is enabled, AMRL installs the Windows Admin Center gateway during `stage=identity` or `stage=all`, after AD/GPO setup and Windows domain joins. The default host is the primary jumpbox; `useDedicatedWacHost=true` selects the first `srvwin` in the final placement model, falling back to the primary jumpbox if no Windows server is modeled.
+
+For a fresh install, the script downloads Microsoft's current WAC v2 EXE through `https://aka.ms/WACDownload`, verifies its Authenticode signature, and runs it silently. On fresh installs and brownfield reruns, the repair path reapplies Windows Authentication, configures WinRM over HTTP, sets domain-only WinRM trusted hosts, ensures `RSAT-AD-PowerShell` is installed, and restarts the WAC service. Existing WAC services are not reinstalled or automatically upgraded. AMRL does not configure inbound web access or automatically populate Shared Connections; operators can use WAC's Active Directory search and UI to add connections. Reachability depends on the selected host's network and guest-firewall rules; AMRL does not expose the listener to the Internet.
+
+| WAC setting | Target value | How AMRL handles it |
+|---|---|---|
+| Installation status | `StandardInstalled` | Checked after installation. |
+| Login mode | `WindowsAuthentication` | Set by `Set-WACLoginMode` and checked. |
+| WinRM over HTTPS | `false` | Written to WAC `appsettings.json`; WAC uses WinRM over HTTP (TCP 5985) for managed servers in the current phase. |
+| WinRM trusted hosts | Domain-only | Configured by `Set-WACWinRmTrustedHosts`; not independently read back by the script. |
+| WAC gateway HTTPS listener | `443` | The browser-to-gateway listener is HTTPS and is checked for a reported valid port and local TCP reachability; the script does not require the port to equal 443. This is separate from WinRM transport to managed servers. |
+| Service port range | `6601-6610` | Observed in the manual WAC installation; not currently set or verified by the script. |
+| Software updates | `Automatic` | Observed in the manual WAC installation; not currently set or verified by the script. |
+| Telemetry privacy | `Required` | Observed in the manual WAC installation; not currently set or verified by the script. |
+| Runtime / operation mode | `Service` / `Production` | Observed in the manual WAC installation; not currently checked by the script. |
+
+The installer-generated self-signed certificate is checked for presence, but its identity and trust chain are not validated. For browser access, use `https://<wac-hostname>:443` after confirming the listener configuration and arrange certificate trust as required. The endpoint check extracts `EndpointFqdn` and rejects an empty value; it does not compare the value with the expected host FQDN.
+
+### WAC Remote Management
+
+WAC's browser connection to the gateway uses HTTPS; the current gateway-to-server WinRM transport uses HTTP on TCP 5985. The server and client NSGs allow TCP 5985 and 5986 from `10.0.0.0/8`. The Server Administration and Client Administration GPOs configure the WinRM service and allow both ports from that range on the **Domain** firewall profile. WinRM over HTTPS (5986) is not configured because the lab does not yet provision server-authentication certificates; it is deferred to the PKI/security phase.
+
+Verify the target's network profile and effective policy as well as TCP reachability. A successful `Test-NetConnection` proves only that TCP connects, not that WinRM authentication or WAC delegation succeeds. In the reported v2.10 tests, cross-region WinRM and WAC management worked with explicit **Manage As** credentials after correcting the managed server's Windows Firewall rule. **Use my Windows account** still failed with `0x8009030e`; Kerberos delegation is the suspected cause and remains unresolved. Use explicit credentials as the current workaround. RBCD is a candidate for a future design, not an implemented capability.
+
+Disabling WAC in a later deployment does not uninstall it from the host.
+
 For domain-joined workloads, use an authorized domain account for routine administration. Administration GPOs assign the modeled Windows administrators group. Where Windows LAPS applies, use [LAPS recovery](#windows-laps-break-glass-access) rather than assuming the original local password remains current.
 
 ## Linux

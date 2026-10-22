@@ -27,7 +27,7 @@ For a new subscription or tenant, follow [New Subscription Setup](new-subscripti
 |---|---|
 | `network` | Creates or reuses regional networking and peerings. |
 | `compute` | Creates missing DCs, jumpboxes, and workload VMs. Target VNets and role subnets must already exist. |
-| `identity` | Configures AD, GPOs, workload domain membership, and enabled file/desktop services. Can create missing workloads; control-plane DCs must exist. |
+| `identity` | Configures AD, GPOs, workload domain membership, enabled file/desktop services, and WAC when enabled. Can create missing workloads; control-plane DCs must exist. |
 | `all` | Runs the complete workflow. |
 
 Use `stage=all` when both networking and VM creation are needed. For separate runs, use `network -> compute -> identity`, keeping declared inventory current between deployments. Stage flags select resources, but shared placement, validation, and module contracts are still evaluated.
@@ -50,6 +50,14 @@ The engine completes before the gate, so its nested deployment retains diagnosti
 ### Optional File Services
 
 Set `enableIdentity=true` and `enableFileServices=true` and run `identity` or `all`. Shares use the primary DC unless `useDedicatedFileServer=true`, which selects the first `srvwin` VM in the final model. Request or inventory that server before enabling dedicated mode; [target reassignment is not data migration](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
+
+### Optional Windows Admin Center
+
+Set `enableIdentity=true` and `enableWindowsAdminCenter=true` to install Windows Admin Center during `stage=identity` or `stage=all`. WAC runs after AD/GPO provisioning and the Windows domain-join collection, so the selected host has had an opportunity to receive working domain DNS. By default it targets the primary jumpbox. Set `useDedicatedWacHost=true` to prefer the first `srvwin` in the final placement model; if none is modeled, installation falls back to the primary jumpbox and reports the advisory `missingDedicatedWacHost`.
+
+WAC enabled without identity is a blocking `invalidWindowsAdminCenterIdentityConfiguration` finding. If WAC is enabled but the selected stage is not `identity` or `all`, WAC is skipped and `windowsAdminCenterSkippedForStage` is advisory.
+
+For a fresh install, the script downloads Microsoft's current WAC v2 EXE through `https://aka.ms/WACDownload`, retries transient DNS/download failures, and verifies the Authenticode signature before launching it silently. The host needs outbound HTTPS and DNS for the alias and its download destination. Run Command is configured to fail the deployment if the guest script fails. On fresh installs and brownfield reruns, AMRL reapplies Windows Authentication, selects WinRM over HTTP (`WinRmOverHttps=false`), configures domain-only trusted hosts, ensures `RSAT-AD-PowerShell` for Active Directory discovery, and restarts the WAC service before validation. Existing installations are not reinstalled or automatically upgraded. Managed-server WinRM uses TCP 5985; the gateway's browser UI remains HTTPS. WinRM over HTTPS on 5986 is deferred until PKI provides server certificates. The target WAC profile and which values are set versus only observed are documented in [Access and Administration](access-and-administration.md#windows-admin-center). Disabling WAC skips future install commands but does not uninstall it from a retained VM. AMRL does not add inbound web rules or automatically populate Shared Connections; operators can search AD and add connections through WAC.
 
 ## Greenfield Deployment
 

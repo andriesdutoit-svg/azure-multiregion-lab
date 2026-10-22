@@ -4,10 +4,6 @@
 
   "parameters": {
 
-    "prefix": {
-      "value": "AMRL"
-    },
-
     "stage": {
       "value": "all"
     },
@@ -16,22 +12,14 @@
       "value": "reportOnly"
     },
 
-    "networkMode": {
-      "value": "fullMesh"
+    "prefix": {
+      "value": "AMRL"
     },
 
     "tags": {
       "value": {
         "environment": "lab"
       }
-    },
-
-    "enableBastion": {
-      "value": false
-    },
-
-    "bastionSku": {
-      "value": "Standard"
     },
 
     "regionIndexMap": {
@@ -65,6 +53,38 @@
       }
     },
 
+    "regionCount": {
+      "value": 3
+    },
+
+    "maxVmsPerRegion": {
+      "value": 2
+    },
+
+    "existingRegions": {
+      "value": []
+    },
+
+    "existingVmPlacements": {
+      "value": []
+    },
+
+    "networkMode": {
+      "value": "fullMesh"
+    },
+
+    "enableBastion": {
+      "value": false
+    },
+
+    "bastionSku": {
+      "value": "Standard"
+    },
+
+    "automationManagedIdentityResourceId": {
+      "value": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<automation-managed-identity-name>"
+    },
+
     "subnetIndexMap": {
       "value": {
         "firewall": 0,
@@ -77,12 +97,11 @@
       }
     },
 
-    "regionCount": {
-      "value": 3
-    },
-
-    "maxVmsPerRegion": {
-      "value": 2
+    "jumpboxAllowedSources": {
+      "value": [
+        "<your-public-ip>",
+        "<your-public-cidr-range>"
+      ]
     },
 
     "vmCounts": {
@@ -93,93 +112,6 @@
         "windowsClient": 1,
         "linuxServer": 1,
         "linuxClient": 1
-      }
-    },
-
-    "jumpboxAllowedSources": {
-      "value": [
-        "<your-public-ip>",
-        "<your-public-cidr-range>"
-      ]
-    },
-
-    "enableIdentity": {
-      "value": false
-    },
-
-    "enableFileServices": {
-      "value": false
-    },
-
-    "useDedicatedFileServer": {
-      "value": false
-    },
-
-    "existingRegions": {
-      "value": []
-    },
-
-    "existingVmPlacements": {
-      "value": []
-    },
-
-    "domainName": {
-      "value": "amrl.lab"
-    },
-
-    "usersPerDepartment": {
-      "value": 10
-    },
-
-    "sysAdminDepartment": {
-      "value": {
-        "Information Technology": "ICT"
-      }
-    },
-
-    "additionalDepartments": {
-      "value": {
-        "Finance": "FIN",
-        "Human Resources": "HR",
-        "Sales": "SAL",
-        "Engineering": "ENG",
-        "Operations": "OPS",
-        "Marketing": "MAR",
-        "Legal": "LEG",
-        "Procurement": "PRO",
-        "Research": "RES",
-        "Support": "SUP"
-      }
-    },
-
-    "departmentCount": {
-      "value": 10
-    },
-
-    "windowsServerImage": {
-      "value": {
-        "publisher": "MicrosoftWindowsServer",
-        "offer": "WindowsServer",
-        "sku": "2022-datacenter-g2",
-        "version": "latest"
-      }
-    },
-
-    "windowsClientImage": {
-      "value": {
-        "publisher": "MicrosoftWindowsDesktop",
-        "offer": "windows-10",
-        "sku": "win10-22h2-ent-g2",
-        "version": "latest"
-      }
-    },
-
-    "ubuntuImage": {
-      "value": {
-        "publisher": "Canonical",
-        "offer": "0001-com-ubuntu-server-jammy",
-        "sku": "22_04-lts-gen2",
-        "version": "latest"
       }
     },
 
@@ -223,29 +155,38 @@
       }
     },
 
+    "windowsServerImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsServer",
+        "offer": "WindowsServer",
+        "sku": "2022-datacenter-g2",
+        "version": "latest"
+      }
+    },
+
+    "windowsClientImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsDesktop",
+        "offer": "windows-10",
+        "sku": "win10-22h2-ent-g2",
+        "version": "latest"
+      }
+    },
+
+    "ubuntuImage": {
+      "value": {
+        "publisher": "Canonical",
+        "offer": "0001-com-ubuntu-server-jammy",
+        "sku": "22_04-lts-gen2",
+        "version": "latest"
+      }
+    },
+
     "vmAutoDeleteOptions": {
       "value": {
         "nic": true,
         "publicIp": true,
         "osDisk": true
-      }
-    },
-
-    "sshPublicKey": {
-      "reference": {
-        "keyVault": {
-          "id": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
-        },
-        "secretName": "<sshPublicKey>"
-      }
-    },
-
-    "sshPrivateKey": {
-      "reference": {
-        "keyVault": {
-          "id": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
-        },
-        "secretName": "<sshPrivateKey>"
       }
     },
 
@@ -288,8 +229,75 @@
       }
     },
 
-    "automationManagedIdentityResourceId": {
-      "value": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<automation-managed-identity-name>"
+    "sshPublicKey": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
+        },
+        "secretName": "<sshPublicKey>"
+      }
+    },
+
+    "sshPrivateKey": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
+        },
+        "secretName": "<sshPrivateKey>"
+      }
+    },
+
+    "enableIdentity": {
+      "value": false
+    },
+
+    "enableWindowsAdminCenter": {
+      "value": false
+    },
+
+    "useDedicatedWacHost": {
+      "value": false
+    },
+
+    "domainName": {
+      "value": "amrl.lab"
+    },
+
+    "sysAdminDepartment": {
+      "value": {
+        "Information Technology": "ICT"
+      }
+    },
+
+    "additionalDepartments": {
+      "value": {
+        "Finance": "FIN",
+        "Human Resources": "HR",
+        "Sales": "SAL",
+        "Engineering": "ENG",
+        "Operations": "OPS",
+        "Marketing": "MAR",
+        "Legal": "LEG",
+        "Procurement": "PRO",
+        "Research": "RES",
+        "Support": "SUP"
+      }
+    },
+
+    "departmentCount": {
+      "value": 10
+    },
+
+    "usersPerDepartment": {
+      "value": 10
+    },
+
+    "enableFileServices": {
+      "value": false
+    },
+
+    "useDedicatedFileServer": {
+      "value": false
     }
 
   }

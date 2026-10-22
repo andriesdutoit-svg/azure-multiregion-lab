@@ -44,6 +44,7 @@ var internalNetworkRange = '10.0.0.0/8'
 // - adRules: DNS, Kerberos, and LDAP from the internal range.
 // - adAdvancedRules: NTP, password changes, SMB, Global Catalog, LDAPS, and RPC services.
 // - rdpRules/sshRules: allow jumpbox subnet sources before denying other internal sources.
+// - winRmRules: allow inbound TCP 5985/5986 from the internal range for server/client NSGs for WAC use.
 // NSG priority derives from array position. Keep rule and concatenation order unchanged:
 // approved jumpbox access rules precede the matching internal deny rules.
 
@@ -175,6 +176,27 @@ var sshRules = [
   }
 ]
 
+var winRmRules = [
+  {
+    name: 'Allow-WinRM-HTTP'
+    port: '5985'
+    access: 'Allow'
+    protocol: 'Tcp'
+    source: [
+      internalNetworkRange
+    ]
+  }
+  {
+    name: 'Allow-WinRM-HTTPS'
+    port: '5986'
+    access: 'Allow'
+    protocol: 'Tcp'
+    source: [
+      internalNetworkRange
+    ]
+  }
+]
+
 // 2.2 Role policies
 // DCs combine basic/advanced AD services and RDP rules. Servers combine SSH, RDP, and
 // basic AD rules; clients combine SSH and RDP rules. Jumpboxes receive the approved-source RDP rule.
@@ -198,11 +220,13 @@ var nsgRules = {
   server: concat(
     sshRules,
     rdpRules,
-    adRules
+    adRules,
+    winRmRules
   )
   client: concat(
     sshRules,
-    rdpRules
+    rdpRules,
+    winRmRules
   )
 }
 
