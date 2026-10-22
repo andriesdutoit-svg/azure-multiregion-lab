@@ -69,12 +69,35 @@ function Repair-WacConfiguration {
         -Mode WindowsAuthentication `
         -ErrorAction Stop
 
-    Set-WACWinRmOverHttps `
-        -Enabled `
-        -ErrorAction Stop
+    $appSettingsPath = Join-Path `
+    $env:ProgramFiles `
+    'WindowsAdminCenter\Service\appsettings.json'
+
+    $appSettings = Get-Content `
+        -LiteralPath $appSettingsPath `
+        -Raw |
+        ConvertFrom-Json
+
+    $appSettings.WindowsAdminCenter.FeatureParameters.Base.WinRmOverHttps = $false
+
+    $appSettings |
+        ConvertTo-Json -Depth 100 |
+        Set-Content `
+            -LiteralPath $appSettingsPath `
+            -Encoding UTF8
 
     Set-WACWinRmTrustedHosts `
         -ErrorAction Stop
+
+    $adTools = Get-WindowsFeature RSAT-AD-PowerShell
+
+    if (-not $adTools.Installed) {
+        Write-Log 'Installing RSAT-AD-PowerShell.'
+
+        Install-WindowsFeature `
+            RSAT-AD-PowerShell `
+            -IncludeManagementTools
+    }
 
     Restart-WACService
 }
@@ -93,8 +116,22 @@ function Test-WacConfiguration {
     }
 
     $httpsPorts = Get-WACHttpsPorts
+
+    $listener = Test-NetConnection `
+        -ComputerName localhost `
+        -Port $httpsPorts.WacPort `
+        -WarningAction SilentlyContinue
+
+    if (-not $listener.TcpTestSucceeded) {
+        throw "Windows Admin Center is not listening on TCP port $($httpsPorts.WacPort)."
+    }
+
     $loginMode = [string](Get-WACLoginMode)
-    $endpointFqdn = [string](Get-WACEndpointFqdn)
+
+    $endpointConfiguration = Get-WACEndpointFqdn
+    $endpointFqdn = $endpointConfiguration['EndpointFqdn']
+    Write-Log "Detected EndpointFqdn: $endpointFqdn"
+
     $winRmOverHttps = [bool](Get-WACWinRmOverHttps)
     $certificate = Get-WACSelfSignedCertificate
 
@@ -107,14 +144,17 @@ function Test-WacConfiguration {
     if ([string]::IsNullOrWhiteSpace($endpointFqdn)) {
         throw 'Windows Admin Center did not report an endpoint FQDN.'
     }
-    if (-not $winRmOverHttps) {
-        throw 'Windows Admin Center WinRM-over-HTTPS is not enabled.'
-    }
     if ($null -eq $certificate) {
         throw 'Windows Admin Center did not report its configured TLS certificate.'
     }
 
-    Write-Log "Configuration verified: status=$installationStatus; port=$($httpsPorts.WacPort); login=$loginMode; endpoint=$endpointFqdn; WinRM-over-HTTPS=$winRmOverHttps."
+    $adTools = Get-WindowsFeature RSAT-AD-PowerShell
+
+    if (-not $adTools.Installed) {
+        throw 'RSAT-AD-PowerShell is required for Windows Admin Center Active Directory discovery.'
+    }
+
+    Write-Log "Configuration verified: status=$installationStatus; port=$($httpsPorts.WacPort); login=$loginMode; endpoint=$endpointFqdn; ADToolsInstalled=$($adTools.Installed); WinRMOverHttps=$winRmOverHttps."
 }
 
 function Invoke-WithRetry {

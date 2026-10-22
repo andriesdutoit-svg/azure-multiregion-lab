@@ -30,7 +30,7 @@ Network outputs supply subnet IDs to compute. Compute creates missing VMs; ident
 | Primary and replica DCs | Host AD and domain DNS when identity automation is enabled. |
 | Jumpboxes | Provide the administration hop to private workload VMs; Bastion is an optional additional access path. |
 | Windows/Linux servers and clients | Exercise domain membership, administration policy, applications, and optional desktop access. |
-| Windows Admin Center | Optional gateway installation during identity-stage after AD/GPO and Windows domain joins, on the primary jumpbox or first modeled Windows server. AMRL does not configure inbound web access or managed-server connections. |
+| Windows Admin Center | Optional gateway installation and configuration repair during identity-stage after AD/GPO and Windows domain joins, on the primary jumpbox or first modeled Windows server. The gateway UI uses HTTPS; current managed-server WinRM uses HTTP. AMRL does not configure inbound web access or automatically populate Shared Connections. |
 | Directory and file services | Provide the departmental user/group model, GPOs, and optional group-based share permissions. |
 
 Region and VM counts, role-specific images/sizes/disks, and optional services are data-driven. New-VM creation uses missing identities only; identity automation can also target retained VMs. Detailed placement rules belong in [Placement and Reconciliation](placement-and-reconciliation.md), and guest configuration in [Identity and Domain Join](identity-and-domain-join.md).

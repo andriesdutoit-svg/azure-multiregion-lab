@@ -27,7 +27,7 @@ resource nsg 'Microsoft.Network/networkSecurityGroups@2022-09-01' = {
           priority: 1000 + index
           access: rule.access
           direction: 'Inbound'
-          protocol: '*'
+          protocol: rule.?protocol ?? '*'
           sourcePortRange: '*'
           destinationPortRange: rule.port
           sourceAddressPrefixes: rule.source

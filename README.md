@@ -2,6 +2,8 @@
 
 AMRL deploys a multi-region Azure lab of Windows and Linux machines, connected networks, and optional Active Directory services using Bicep. Parameter files control the lab's size, placement, topology, and enabled services, supporting both new environments and expansion of existing AMRL labs.
 
+**Current completed milestone:** v2.10 Windows Admin Center and remote management. See [Project History](docs/project-history.md) for delivered scope and deferred work.
+
 ## What You Deploy
 
 - Regional VNets, role subnets, and NSGs, with full-mesh or hub-spoke connectivity and optional Azure Firewall routing.

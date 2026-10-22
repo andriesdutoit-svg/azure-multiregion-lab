@@ -36,6 +36,7 @@ Identify the failing layer before rerunning a deployment. Configuration findings
 | Domain join or name lookup fails | [DNS and domain connectivity](#dns-and-domain-connectivity), DC readiness, then the target Run Command instance view. |
 | Department shares are unavailable | Selected file-server host, domain membership, SMB share presence, and modeled group/NTFS permissions. See [File Services](identity-and-domain-join.md#departmental-file-services). |
 | WAC install fails or is missing | Confirm identity-stage execution, then inspect `install-wac` Run Command `instanceView` for `executionState`, `exitCode`, and output. Check host DNS/HTTPS to `download.microsoft.com`, installer signature, and WAC service/configuration checks. |
+| WAC discovers a server but cannot manage it | Separate TCP reachability, guest firewall, WinRM authentication, and WAC credential delegation. See [WAC and WinRM checks](#wac-and-winrm-checks). |
 
 ## Post-Deployment Review
 
@@ -49,6 +50,24 @@ az deployment sub show `
 ```
 
 Then verify the user-visible result: administration access, expected Windows/Linux domain membership, domain DNS, and enabled shares/desktops. Inspect guest `executionState`, `exitCode`, `error`, and `output`; a successful ARM resource operation alone is not proof of guest readiness.
+
+## WAC And WinRM Checks
+
+The current WAC gateway uses WinRM over HTTP (TCP 5985) to manage Windows servers. The gateway's own browser UI uses HTTPS; this is a separate connection. Before changing NSGs, check the complete path and the target's effective guest policy:
+
+```powershell
+Test-NetConnection <server-fqdn> -Port 5985
+Test-WSMan <server-fqdn> -Authentication Kerberos
+Get-NetConnectionProfile
+Get-NetFirewallRule -PolicyStore ActiveStore -Name '*WINRM*'
+gpresult /scope computer /r
+```
+
+`Test-NetConnection` confirms only TCP connectivity. If it fails, verify the source and destination NSGs/routes, WinRM listener, and Windows Firewall. The Administration GPOs allow TCP 5985 and 5986 from `10.0.0.0/8` only on the Domain profile; confirm the target is `DomainAuthenticated` and that the GPO applied. An explicit local firewall allow rule resolved the reported cross-region TCP 5985 failure even though the NSG already allowed the traffic.
+
+If TCP and `Test-WSMan` work and WAC succeeds with **Manage As** but fails with **Use my Windows account** (`0x8009030e`), investigate Kerberos delegation between the user's browser session, WAC gateway, and target. This symptom points to a delegation issue rather than an NSG port block. RBCD is a candidate future configuration and is not currently provisioned by AMRL. Use explicit Manage As credentials as the current workaround. Do not enable unconstrained delegation as a troubleshooting shortcut.
+
+WinRM over HTTPS on TCP 5986 is not currently configured: the GPO/NSG allowance alone does not provide a listener or server certificate. HTTPS hardening is deferred until the PKI phase.
 
 ## Template Validation
 
