@@ -348,7 +348,7 @@ var hasEmptySysAdminDepartmentCode = enableIdentity && (empty(items(sysAdminDepa
 
 // Missing primary-region DC pinning raises a GPO-target advisory; this check does not probe the guest.
 var hasNoGpoTargetDc = enableIdentity && missingPinnedDc
-var hasInvalidGpoNames = enableIdentity && (empty(gpoNames.?serverAdministration) || empty(gpoNames.?clientAdministration) || empty(gpoNames.?windowsLaps))
+var hasInvalidGpoNames = enableIdentity && (empty(gpoNames.?serverAdministration) || empty(gpoNames.?clientAdministration) || empty(gpoNames.?windowsLaps) || empty(gpoNames.?domainControllerWinRM))
 
 // 3. Ordered finding catalogs
 // Preserve array order, flag names, severities, messages, and remediation text. The first
@@ -749,8 +749,8 @@ var advisoryValidationFindings = [
     active: hasInvalidGpoNames
     severity: 'advisory'
     category: 'GroupPolicy'
-    message: 'GPO names must define non-empty serverAdministration, clientAdministration, and windowsLaps values so the import script can match the exported backups.'
-    remediation: 'Set all three gpoNames values to the corresponding display names in the exported GPO backups.'
+    message: 'GPO names must define non-empty serverAdministration, clientAdministration, windowsLaps, and domainControllerWinRM values.'
+    remediation: 'Set the three imported GPO names to their exported backup display names and provide a name for the generated domain-controller WinRM GPO.'
   }
   {
     flag: 'hasUnsafeJumpboxAllowedSources'

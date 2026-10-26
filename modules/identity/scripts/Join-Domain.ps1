@@ -69,6 +69,53 @@ if ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {
 
 Write-Host '[Info] Domain join inputs were parsed.'
 
+function Ensure-WinRMHttpSpns {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedDomain
+    )
+
+    $computerSystem = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+    if (-not $computerSystem.PartOfDomain) {
+        throw 'Cannot reconcile WinRM SPNs because this computer is not domain joined.'
+    }
+    if ($computerSystem.Domain -ine $ExpectedDomain.TrimEnd('.')) {
+        throw "This computer is joined to '$($computerSystem.Domain)', not expected domain '$ExpectedDomain'."
+    }
+
+    $setSpnPath = Join-Path $env:SystemRoot 'System32\setspn.exe'
+    if (-not (Test-Path -LiteralPath $setSpnPath)) {
+        throw "setspn.exe was not found at '$setSpnPath'."
+    }
+
+    $netbiosName = $ExpectedDomain.Split('.')[0].ToUpperInvariant()
+    $computerAccount = "$netbiosName\$($computerSystem.Name)`$"
+    $expectedSpns = @(
+        "HTTP/$($computerSystem.Name)"
+        "HTTP/$($computerSystem.Name).$($ExpectedDomain.TrimEnd('.'))"
+    )
+
+    $registeredOutput = & $setSpnPath -L $computerAccount 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to list SPNs for '$computerAccount': $($registeredOutput -join ' ')"
+    }
+    $registeredSpns = @($registeredOutput | ForEach-Object { $_.ToString().Trim() })
+
+    foreach ($spn in $expectedSpns) {
+        if ($registeredSpns -icontains $spn) {
+            Write-Host "[Verified] WinRM HTTP SPN is registered: $spn"
+            continue
+        }
+
+        $registrationOutput = & $setSpnPath -S $spn $computerAccount 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to register WinRM HTTP SPN '$spn' on '$computerAccount': $($registrationOutput -join ' ')"
+        }
+
+        Write-Host "[Updated] Registered WinRM HTTP SPN: $spn"
+    }
+}
+
 # Return on existing domain membership before preparing credentials or issuing a new join.
 # This preserves retained guest state; it does not prove membership in the requested domain.
 
@@ -78,7 +125,12 @@ Write-Host "[Info] Current computer name: $($computerSystem.Name)."
 Write-Host "[Info] Current domain-membership flag: $($computerSystem.PartOfDomain)."
 
 if ($computerSystem.PartOfDomain) {
+    if ($computerSystem.Domain -ine $DomainName.TrimEnd('.')) {
+        throw "Computer is already joined to '$($computerSystem.Domain)', not requested domain '$DomainName'."
+    }
+
     Write-Host '[Info] Computer already reports domain membership; no join command will run.'
+    Ensure-WinRMHttpSpns -ExpectedDomain $DomainName
     return
 }
 
@@ -158,6 +210,7 @@ if (-not $computerSystem.PartOfDomain) {
 }
 
 Write-Host "[Verified] Computer reports domain membership after the join."
+Ensure-WinRMHttpSpns -ExpectedDomain $DomainName
 
 # ============================================================================
 # PHASE 5: DEFER ADMINISTRATOR MEMBERSHIP TO GPO AND RESTART

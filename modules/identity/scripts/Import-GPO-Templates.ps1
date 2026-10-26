@@ -7,7 +7,8 @@
 #              every run so the exported SID and NetBIOS name match this domain.
 #
 # Idempotency limitation: because import is skipped once the GPO exists,
-# editing GpoTemplates.zip does NOT refresh all settings in an already-created GPO.
+# editing GpoTemplates.zip does NOT refresh unrelated settings in an existing GPO.
+# The WinRM firewall rules below are selectively reconciled in place.
 # Template replacement/retirement needs a separately planned action, not an automatic rerun.
 # Requires AD/GroupPolicy access, populated target OUs/groups, and writable template/SYSVOL paths.
 # The workflow also reconciles the LAPS decryptor and GPO links before removing extracted files.
@@ -17,10 +18,13 @@
 param(
     [string]$DomainName,
     [string]$DirectoryModel,
-    [string]$GpoTemplatesZip,
 
     [string]$ReconciliationToken
 )
+
+$GpoTemplatesZip = @'
+__AMRL_GPO_ZIP_BASE64__
+'@
 
 $script:logCounts = @{
     Created = 0
@@ -131,6 +135,8 @@ Expand-Archive `
     -Force `
     -ErrorAction Stop
 
+Write-Host '[DEBUG] Archive extracted'
+
 # Expand-Archive writes into C:\Temp\GpoTemplates, so the zip must contain a GpoTemplates root folder.
 if (-not (Test-Path -LiteralPath $templateRoot)) {
     throw "Expanded archive does not contain the expected 'C:\Temp\GpoTemplates' folder."
@@ -141,8 +147,9 @@ $model = $DirectoryModel | ConvertFrom-Json
 if (-not $model.gpoNames -or
     [string]::IsNullOrWhiteSpace($model.gpoNames.serverAdministration) -or
     [string]::IsNullOrWhiteSpace($model.gpoNames.clientAdministration) -or
-    [string]::IsNullOrWhiteSpace($model.gpoNames.windowsLaps)) {
-    throw "directoryModel.gpoNames must define serverAdministration, clientAdministration, and windowsLaps."
+    [string]::IsNullOrWhiteSpace($model.gpoNames.windowsLaps) -or
+    [string]::IsNullOrWhiteSpace($model.gpoNames.domainControllerWinRM)) {
+    throw "directoryModel.gpoNames must define serverAdministration, clientAdministration, windowsLaps, and domainControllerWinRM."
 }
 
 $domainDn = (($DomainName -split '\.') | ForEach-Object {
@@ -163,6 +170,12 @@ $clientAdministrationGpoName =
 
 $windowsLapsGpoName =
     $model.gpoNames.windowsLaps
+
+$domainControllerWinRmGpoName =
+    $model.gpoNames.domainControllerWinRM
+
+$domainControllersOuDn =
+    "OU=Domain Controllers,$domainDn"
 
 Write-AmrlLog "Template Root = $templateRoot"
 
@@ -227,6 +240,89 @@ function Ensure-GpoLink {
         Write-AmrlLog "[Exists] Link $GpoName"
 
     }
+}
+
+function Ensure-GpoWinRMFirewallRule {
+    param(
+        [string]$GpoName,
+        [string]$DisplayName,
+        [string]$RuleName,
+        [string[]]$LocalPorts,
+        [switch]$CreateIfMissing
+    )
+
+    $policyStore = "$DomainName\$GpoName"
+    $rules = @(
+        Get-NetFirewallRule `
+            -PolicyStore $policyStore `
+            -DisplayName $DisplayName `
+            -ErrorAction SilentlyContinue
+    )
+
+    if ($rules.Count -gt 1) {
+        throw "GPO '$GpoName' contains multiple firewall rules named '$DisplayName'."
+    }
+
+    if ($rules.Count -eq 0) {
+        if (-not $CreateIfMissing) {
+            throw "GPO '$GpoName' is missing the expected firewall rule '$DisplayName'."
+        }
+
+        New-NetFirewallRule `
+            -PolicyStore $policyStore `
+            -Name $RuleName `
+            -DisplayName $DisplayName `
+            -Description 'Allows AMRL internal IPv4 networks to manage Windows computers over WinRM HTTP.' `
+            -Enabled True `
+            -Profile Any `
+            -Direction Inbound `
+            -Action Allow `
+            -Protocol TCP `
+            -LocalPort $LocalPorts `
+            -RemoteAddress '10.0.0.0/8' `
+            -ErrorAction Stop |
+            Out-Null
+    }
+    else {
+        Set-NetFirewallRule `
+            -PolicyStore $policyStore `
+            -Name $rules[0].Name `
+            -Enabled True `
+            -Profile Any `
+            -Direction Inbound `
+            -Action Allow `
+            -Protocol TCP `
+            -LocalPort $LocalPorts `
+            -RemoteAddress '10.0.0.0/8' `
+            -ErrorAction Stop |
+            Out-Null
+    }
+
+    $verifiedRule = @(
+        Get-NetFirewallRule `
+            -PolicyStore $policyStore `
+            -DisplayName $DisplayName `
+            -ErrorAction Stop
+    )
+    if ($verifiedRule.Count -ne 1 -or
+        -not $verifiedRule[0].Enabled -or
+        [string]$verifiedRule[0].Profile -ne 'Any' -or
+        $verifiedRule[0].Direction -ne 'Inbound' -or
+        $verifiedRule[0].Action -ne 'Allow') {
+        throw "GPO '$GpoName' did not retain the required all-profile inbound rule '$DisplayName'."
+    }
+
+    $portFilter = $verifiedRule[0] | Get-NetFirewallPortFilter
+    $addressFilter = $verifiedRule[0] | Get-NetFirewallAddressFilter
+    $configuredPorts = @($portFilter.LocalPort | ForEach-Object { [string]$_ -split ',' } | ForEach-Object { $_.Trim() })
+    $configuredAddresses = @($addressFilter.RemoteAddress | ForEach-Object { [string]$_ })
+    if ([string]$portFilter.Protocol -notin @('TCP', '6') -or
+        @($LocalPorts | Where-Object { $_ -notin $configuredPorts }).Count -gt 0 -or
+        @($configuredAddresses | Where-Object { $_ -in @('10.0.0.0/8', '10.0.0.0/255.0.0.0') }).Count -eq 0) {
+        throw "GPO '$GpoName' firewall rule '$DisplayName' does not match the required TCP ports and internal source range."
+    }
+
+    Write-AmrlLog "[Reconciled] $GpoName WinRM firewall rule applies on all profiles."
 }
 
 # Imports a GPO from the backup set, skipping GPOs that already exist.
@@ -473,8 +569,8 @@ function Update-LapsGpoDecryptor {
     Write-AmrlLog "[Reconciled] LAPS authorized decryptor: $expectedDecryptor"
 }
 
-# 4. Provision missing policies and apply selected live-domain repairs
-# Keep each policy creation before its reference update; existing policy bodies are not reimported.
+# 4. Provision policies and reconcile selected live-domain settings
+# Keep each policy creation before its reference update; unrelated existing policy bodies are retained.
 Ensure-GpoFromTemplate `
     -GpoName $serverAdministrationGpoName `
     -TemplatePath $gpoTemplateRepositoryPath
@@ -489,6 +585,18 @@ Ensure-GpoFromTemplate `
 Update-GpoGroupReference `
     -GpoName $clientAdministrationGpoName
 
+Ensure-GpoWinRMFirewallRule `
+    -GpoName $serverAdministrationGpoName `
+    -DisplayName 'Allow WinRM HTTP/HTTPS' `
+    -RuleName 'AMRL-Server-WinRM-HTTP-HTTPS' `
+    -LocalPorts @('5985', '5986')
+
+Ensure-GpoWinRMFirewallRule `
+    -GpoName $clientAdministrationGpoName `
+    -DisplayName 'Allow WinRM HTTP/HTTPS' `
+    -RuleName 'AMRL-Client-WinRM-HTTP-HTTPS' `
+    -LocalPorts @('5985', '5986')
+
 Ensure-GpoFromTemplate `
     -GpoName $windowsLapsGpoName `
     -TemplatePath $gpoTemplateRepositoryPath
@@ -496,6 +604,18 @@ Ensure-GpoFromTemplate `
 Update-LapsGpoDecryptor `
     -GpoName $windowsLapsGpoName `
     -DirectoryModel $model
+
+if ($null -eq (Get-GPO -Name $domainControllerWinRmGpoName -ErrorAction SilentlyContinue)) {
+    New-GPO -Name $domainControllerWinRmGpoName -ErrorAction Stop | Out-Null
+    Write-AmrlLog "[Created] $domainControllerWinRmGpoName"
+}
+
+Ensure-GpoWinRMFirewallRule `
+    -GpoName $domainControllerWinRmGpoName `
+    -DisplayName 'AMRL DC WinRM HTTP from internal networks' `
+    -RuleName 'AMRL-DC-WinRM-HTTP-Internal' `
+    -LocalPorts @('5985') `
+    -CreateIfMissing
 
 # 5. Link the modeled policies to server/client OUs
 Ensure-GpoLink `
@@ -513,6 +633,10 @@ Ensure-GpoLink `
 Ensure-GpoLink `
     -GpoName $windowsLapsGpoName `
     -TargetDn $clientsOuDn
+
+Ensure-GpoLink `
+    -GpoName $domainControllerWinRmGpoName `
+    -TargetDn $domainControllersOuDn
 
 # 6. Cleanup after provisioning and links complete
 # Earlier terminating failures can leave artifacts for diagnosis; this is not a finally block.

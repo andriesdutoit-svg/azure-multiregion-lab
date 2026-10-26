@@ -106,34 +106,39 @@ Examples:
 
 ## Windows Domain Join
 
-Windows workload VMs are targeted from `finalVmPlacements` after Group Policy provisioning completes. The PowerShell script checks `Win32_ComputerSystem.PartOfDomain` and returns immediately when the machine is already joined to a domain. For a new join, it joins the configured domain and OU, verifies membership, and restarts the machine. Local Administrators membership is managed by Group Policy, not by this script.
+Windows workload VMs are targeted from `finalVmPlacements` after Group Policy provisioning completes. The PowerShell script checks `Win32_ComputerSystem.PartOfDomain`; retained members skip the join. For a new join, it joins the configured domain and OU, verifies membership, and restarts the machine. Local Administrators membership is managed by Group Policy, not by this script.
+
+After confirming the requested domain, the join script reconciles `HTTP/<computer>` and `HTTP/<computer>.<domain>` SPNs on that VM's own computer account using `setspn -S`. It does this for both already-joined and newly joined VMs. A separate `workload-winrm.bicep` Run Command runs after the join stage (and any required restart), refreshes computer policy, verifies the all-profile Administration GPO rule for TCP 5985 from `10.0.0.0/8`, and removes the legacy per-VM firewall rule only after that GPO rule is active.
+
+During identity stage, `dc-winrm.bicep` performs the corresponding per-DC SPN reconciliation, refreshes computer policy, verifies the dedicated Domain Controllers GPO rule, and removes the legacy local rule after verification. The DC GPO allows inbound TCP 5985 from `10.0.0.0/8` on all profiles and is linked to the built-in Domain Controllers OU. WAC waits for both workload and DC firewall-policy reconciliation.
 
 ## Group Policy Provisioning
 
-After directory population, `modules/identity/ad-gpo.bicep` runs `Import-GPO-Templates.ps1` on the primary DC to create the administration GPOs from exported GPMC backups.
+After directory population, `modules/identity/ad-gpo.bicep` runs `Import-GPO-Templates.ps1` on the primary DC to create the three packaged GPOs from exported GPMC backups and provision the dedicated DC WinRM GPO.
 
-The three required GPO names come from the directory model, so the script does not hardcode them:
+GPO names come from the directory model, so the script does not hardcode them:
 
 ```text
 gpoNames.serverAdministration   ->  linked to OU=Servers,OU=Computers
 gpoNames.clientAdministration   ->  linked to OU=Clients,OU=Computers
 gpoNames.windowsLaps           ->  linked to OU=Servers,OU=Computers and OU=Clients,OU=Computers
+gpoNames.domainControllerWinRM ->  linked to OU=Domain Controllers
 ```
 
 Windows LAPS is linked separately to the Servers and Clients OUs. The Windows administrators group-reference rewrite applies only to the two administration GPOs.
 
-The Server Administration and Client Administration backups configure the WinRM service to start automatically, enable remote management through WinRM, and add a Windows Firewall rule allowing TCP 5985 and 5986 from `10.0.0.0/8` on the Domain profile. Their local Administrators preference adds `AMRL\GGS_Windows_Admins` without clearing other members. The current WAC configuration uses WinRM over HTTP (5985); the 5986 firewall allowance does not create an HTTPS listener or certificate. Verify that domain policy has applied and that the VM reports `DomainAuthenticated` before relying on the Domain-profile firewall rule.
+The Server Administration and Client Administration GPOs configure the WinRM service and allow TCP 5985 and 5986 from `10.0.0.0/8` on all firewall profiles. The importer reconciles these firewall rules in the GPO itself, including for GPOs that already exist. Their local Administrators preference adds `AMRL\GGS_Windows_Admins` without clearing other members. The generated Domain Controller WinRM GPO allows TCP 5985 from the same internal range on all profiles. The current WAC configuration uses WinRM over HTTP (5985); the 5986 firewall allowance does not create an HTTPS listener or certificate. Other GPO settings still need to process successfully on each member.
 
-Missing GPOs are seeded from packaged backups; existing policies are retained. Reruns repair the modeled administrator references, LAPS decryptor, and links. Use a new deployment name to reapply automation, and verify client processing separately.
+Missing packaged GPOs are seeded from backups; unrelated existing settings are retained. Reruns reconcile the selected WinRM firewall rules, modeled administrator references, LAPS decryptor, and links. Use a new deployment name to reapply automation, and verify client processing separately.
 
 <details>
 <summary>GPO implementation and rerun boundaries</summary>
 
-The backups ship as `modules/identity/templates/gpo/GpoTemplates.zip`, embedded in the template with `loadFileAsBase64` and passed to the Run Command as a string parameter. The script writes the zip to `C:\Temp\GpoTemplates.zip` on the DC, expands it to `C:\Temp\GpoTemplates`, and removes any previous extraction first. The archive must contain a top-level `GpoTemplates` folder.
+The backups ship as `modules/identity/templates/gpo/GpoTemplates.zip`. `ad-gpo.bicep` base64-encodes the archive and replaces a placeholder in the generated PowerShell script, rather than passing the large archive as a Run Command parameter. The script writes the decoded zip to `C:\Temp\GpoTemplates.zip` on the DC, expands it to `C:\Temp\GpoTemplates`, and removes any previous extraction first. The archive must contain a top-level `GpoTemplates` folder.
 
-The template validation engine reports flags for a malformed `domainName`, a missing or blank system-administration department code, a missing primary-DC target, and missing or blank names for any of the three required GPOs. These flags are diagnostic outputs and do not by themselves block deployment. On the DC, the script checks that the zip is present and decodable, that it expands to the expected folder, and that each requested GPO has a matching `Backup.xml` display name. It also checks for the target OUs and an existing `Groups.xml` with exactly one member entry before rewriting the Windows administrators reference in the two administration GPOs. Run Command failures fail the deployment.
+The template validation engine reports flags for a malformed `domainName`, a missing or blank system-administration department code, a missing primary-DC target, and missing or blank GPO names. These flags are diagnostic outputs and do not by themselves block deployment. On the DC, the script checks that the zip is present and decodable, that it expands to the expected folder, and that each packaged GPO has a matching `Backup.xml` display name. The generated DC WinRM GPO does not require a packaged backup. The script also checks for the target OUs and an existing `Groups.xml` with exactly one member entry before rewriting the Windows administrators reference in the two administration GPOs. Run Command failures fail the deployment.
 
-For all three GPOs, a missing GPO is imported from the backup whose `Backup.xml` `DisplayName` matches the configured name. Existing GPO policy settings are not re-imported. The script ensures each link exists, enables a disabled link, and removes enforcement from an enforced link. Because those link repairs use `if`/`elseif`, a link that is both disabled and enforced may need a second identity-stage run to reach both desired properties.
+For the three packaged GPOs, a missing GPO is imported from the backup whose `Backup.xml` `DisplayName` matches the configured name. Existing GPO policy settings are not re-imported wholesale; the two Administration GPO firewall rules are selectively reconciled in place to all profiles. The generated DC GPO is created if absent and its firewall rule is reconciled on every run. The script ensures each link exists, enables a disabled link, and removes enforcement from an enforced link. Because those link repairs use `if`/`elseif`, a link that is both disabled and enforced may need a second identity-stage run to reach both desired properties.
 
 For Server Administration and Client Administration only, the `Groups.xml` preference is also rewritten on every run so the Windows administrators member matches this domain. Its SID and `NETBIOS\Group` name are derived from `groupNaming.globalSecurityPrefix`, `platformAdminGroups.windowsAdmins`, and the live domain NetBIOS name because the exported template carries values from the domain it was captured in.
 
@@ -145,7 +150,7 @@ For Windows LAPS, the `ADPasswordEncryptionPrincipal` registry policy setting is
 
 The zipped template is a creation-time seed, not a desired-state definition. Be aware of these boundaries:
 
-- **Template edits do not reach existing GPOs.** Import is skipped once the GPO exists, so updating `GpoTemplates.zip` leaves its policy settings unchanged except for the named runtime repairs. Plan policy replacement or an explicit update separately; changing names also requires matching exported backups.
+- **GPO template version reconciliation is not implemented.** Import is skipped once the GPO exists, so updating `GpoTemplates.zip` leaves its policy settings unchanged except for the named runtime repairs. Version-aware brownfield updates remain planned for v2.11; changing names also requires matching exported backups.
 - **GPO names are coupled to the backups.** `Import-GPO` looks the backup up by display name, so renaming `gpoNames` without re-exporting the backups breaks the import. Template validation reports blank names; at run time, the script fails fast when no backup carries a requested name.
 - **The group reference is rewritten in SYSVOL without a version increment.** Step 2 edits `Groups.xml` directly, so clients may not reprocess the preference until the GPO version changes. Only the Windows administrators member is reconciled; other preference content is left as exported.
 - **Re-running requires a new Run Command definition.** As with the other identity scripts, use a new deployment name so the Run Command is reapplied.

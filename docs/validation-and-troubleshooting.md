@@ -63,7 +63,16 @@ Get-NetFirewallRule -PolicyStore ActiveStore -Name '*WINRM*'
 gpresult /scope computer /r
 ```
 
-`Test-NetConnection` confirms only TCP connectivity. If it fails, verify the source and destination NSGs/routes, WinRM listener, and Windows Firewall. The Administration GPOs allow TCP 5985 and 5986 from `10.0.0.0/8` only on the Domain profile; confirm the target is `DomainAuthenticated` and that the GPO applied. An explicit local firewall allow rule resolved the reported cross-region TCP 5985 failure even though the NSG already allowed the traffic.
+`Test-NetConnection` confirms only TCP connectivity. If it fails, verify the source and destination NSGs/routes, WinRM listener, and Windows Firewall. The Server and Client Administration GPOs allow TCP 5985 and 5986 from `10.0.0.0/8` on all profiles; the Domain Controller WinRM GPO allows TCP 5985 from the same range on all profiles. Identity-stage Run Commands refresh and verify the applicable GPO before removing legacy per-VM firewall rules. Check the active GPO rule in `ActiveStore`, its source scope, and the VM's profile.
+
+If authenticated Kerberos WinRM reports that the target is unknown to Kerberos, query the target computer account for both HTTP SPNs and verify identity stage has completed:
+
+```powershell
+setspn -Q HTTP/<computer>
+setspn -Q HTTP/<computer>.<domain>
+```
+
+The Windows domain-join script and DC reconciliation module use `setspn -S` to add missing SPNs to the target computer account. Do not add duplicates to another account. `Test-WSMan` alone checks WSMan response, while `Invoke-Command` with Kerberos verifies that an authenticated remote session can actually be created.
 
 If TCP and `Test-WSMan` work and WAC succeeds with **Manage As** but fails with **Use my Windows account** (`0x8009030e`), investigate Kerberos delegation between the user's browser session, WAC gateway, and target. This symptom points to a delegation issue rather than an NSG port block. RBCD is a candidate future configuration and is not currently provisioned by AMRL. Use explicit Manage As credentials as the current workaround. Do not enable unconstrained delegation as a troubleshooting shortcut.
 
@@ -145,9 +154,9 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 - `hasMalformedDomainName`: `enableIdentity` is `true` but `domainName` is blank, single-label, or contains a space, backslash, forward slash, or `@`. Group Policy provisioning builds the domain DN and SYSVOL path to `Groups.xml` from this value. The flag reports the issue before the Run Command, though validation flags are diagnostic and do not by themselves block deployment.
 - `hasEmptySysAdminDepartmentCode`: `sysAdminDepartment` is empty or its department code is blank. Group Policy provisioning resolves the Windows admins group created by directory population from this code.
 - `hasNoGpoTargetDc`: `enableIdentity` is `true` but `dc01` is not pinned to the primary region. Group Policy is provisioned on the primary domain controller, so there is no target for the import.
-- `hasInvalidGpoNames`: `enableIdentity` is `true` but one or more of `serverAdministration`, `clientAdministration`, or `windowsLaps` is empty. The import script uses these names to find the corresponding exported backups.
+- `hasInvalidGpoNames`: `enableIdentity` is `true` but one or more of `serverAdministration`, `clientAdministration`, `windowsLaps`, or `domainControllerWinRM` is empty. The first three names identify exported backups; the DC WinRM name identifies the generated policy.
 
-The template findings cover configuration it can evaluate; they do not replace guest-side checks. Failures inside the Group Policy Run Command itself are reported by the deployment because `ad-gpo.bicep` sets `treatFailureAsDeploymentFailure`. The script fails fast with an explicit message when the base64 ZIP parameter is empty or not decodable, when the expanded archive lacks the `GpoTemplates` root folder or a named GPO backup, when `directoryModel.gpoNames` is incomplete, when a target OU is missing, or when `Groups.xml` does not hold exactly one member entry to reconcile.
+The template findings cover configuration it can evaluate; they do not replace guest-side checks. Failures inside the Group Policy Run Command itself are reported by the deployment because `ad-gpo.bicep` sets `treatFailureAsDeploymentFailure`. The script fails fast with an explicit message when the base64 ZIP parameter is empty or not decodable, when the expanded archive lacks the `GpoTemplates` root folder or a packaged GPO backup, when `directoryModel.gpoNames` is incomplete, when a target OU is missing, when a WinRM firewall rule cannot be reconciled in its GPO, or when `Groups.xml` does not hold exactly one member entry to reconcile.
 
 `validationFlags` reports each finding independently. `validationMessage` contains only the first active finding in catalog order, with blocking findings listed before advisory findings. In `reportOnly` mode, findings do not block deployment. In `enforce` mode, active blocking findings fail the validation gate before stage modules execute; advisory findings remain non-blocking. This gate does not roll back resources from earlier successful deployments. Some invalid configurations can still fail earlier during template evaluation, such as `vmCounts.dc=0` when the root template requires a primary DC. Also inspect VM Run Command results separately.
 

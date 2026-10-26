@@ -103,6 +103,7 @@ var directoryModel = {
     serverAdministration: gpoNames.serverAdministration
     clientAdministration: gpoNames.clientAdministration
     windowsLaps: gpoNames.windowsLaps
+    domainControllerWinRM: gpoNames.domainControllerWinRM
   }
 
 
@@ -246,7 +247,45 @@ module domainJoinWindows '../identity/domain-join.bicep' = [
   }
 ]
 
-// 3.5 Windows Admin Center
+// 3.5 Workload WinRM firewall policy
+// Join may restart new members, so refresh and verify their linked GPO afterward.
+module workloadWinRM '../identity/workload-winrm.bicep' = [
+  for vm in filter(finalVmPlacements, vm => vm.type == 'srvwin' || vm.type == 'cliwin'): if (deployIdentity) {
+    name: '${prefix}-workload-winrm-${vm.name}'
+    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
+
+    dependsOn: [
+      domainJoinWindows
+    ]
+
+    params: {
+      vmName: vm.name
+      reconciliationToken: reconciliationToken
+    }
+  }
+]
+
+// 3.6 Domain-controller WinRM access
+// The Domain Controllers GPO owns the guest firewall policy; each DC Run Command
+// refreshes/verifies that policy and reconciles its own WinRM HTTP SPNs.
+module dcWinRM '../identity/dc-winrm.bicep' = [
+  for dc in filter(finalVmPlacements, vm => vm.type == 'dc'): if (deployIdentity) {
+    name: '${prefix}-dc-winrm-${dc.name}'
+    scope: resourceGroup('${prefix}-rg-${dc.regionKey}')
+
+    dependsOn: [
+      adGpo
+    ]
+
+    params: {
+      vmName: dc.name
+      domainName: domainName
+      reconciliationToken: reconciliationToken
+    }
+  }
+]
+
+// 3.7 Windows Admin Center
 // Wait for directory provisioning and Windows joins so the selected host has working domain DNS.
 module windowsAdminCenter '../identity/wac.bicep' = if (deployIdentity && enableWindowsAdminCenter) {
   name: '${prefix}-wac-${wacHostVm.name}'
@@ -256,6 +295,8 @@ module windowsAdminCenter '../identity/wac.bicep' = if (deployIdentity && enable
   dependsOn: [
     adGpo
     domainJoinWindows
+    workloadWinRM
+    dcWinRM
   ]
 
   params: {
@@ -264,7 +305,7 @@ module windowsAdminCenter '../identity/wac.bicep' = if (deployIdentity && enable
   }
 }
 
-// 3.6 Linux domain membership and supported guest repair
+// 3.8 Linux domain membership and supported guest repair
 // Both GPO and Linux desktop prerequisites complete before these commands; the script
 // owns realm detection and selected configuration repair on retained endpoints.
 
@@ -291,7 +332,7 @@ module domainJoinLinux '../identity/domain-join-linux.bicep' = [
   }
 ]
 
-// 3.7 Linux client desktop prerequisites
+// 3.8 Linux client desktop prerequisites
 // DomainJoinLinux references this collection even though it is declared later in the file.
 module linuxDesktop '../compute/linux-desktop.bicep' = [
   for vm in filter(finalVmPlacements, vm => vm.type == 'clilin'): if (deployIdentity) {

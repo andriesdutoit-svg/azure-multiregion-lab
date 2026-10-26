@@ -1,7 +1,7 @@
 targetScope = 'resourceGroup'
 
-// Provisions Group Policy from packaged backups on the primary DC.
-// The guest script seeds missing policies rather than blindly overwriting existing ones.
+// Provisions Group Policy from packaged backups and reconciles selected firewall policy on the primary DC.
+// Existing GPO bodies are retained except for the explicitly managed WinRM firewall rules.
 // Directory population must run first so referenced OUs and groups exist. The packaged ZIP and
 // serialized directory model are passed to the import script as one consistent provisioning contract.
 
@@ -15,7 +15,11 @@ param reconciliationToken string
 // 2. Packaged policy backups and import script
 var gpoTemplatesZip = loadFileAsBase64('./templates/gpo/GpoTemplates.zip')
 
-var importGpoTemplateScript = loadTextContent('./scripts/Import-GPO-Templates.ps1')
+var importGpoTemplateScript = replace(
+  loadTextContent('./scripts/Import-GPO-Templates.ps1'),
+  '__AMRL_GPO_ZIP_BASE64__',
+  gpoTemplatesZip
+)
 
 // 3. Existing primary DC and Run Command
 // Failure is deployment-blocking because downstream domain joins depend on GPO provisioning.
@@ -48,10 +52,6 @@ resource configureGpo 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01'
       {
         name: 'ReconciliationToken'
         value: reconciliationToken
-      }
-      {
-        name: 'GpoTemplatesZip'
-        value: gpoTemplatesZip
       }
     ]
   }

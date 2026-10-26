@@ -153,6 +153,7 @@ var gpoNames = {
   serverAdministration: 'Server Administration'
   clientAdministration: 'Client Administration'
   windowsLaps: 'Windows LAPS'
+  domainControllerWinRM: 'Domain Controller WinRM'
 }
 
 var deployNetwork = stage == 'network' || stage == 'all'
