@@ -1,9 +1,12 @@
 targetScope = 'resourceGroup'
 
-// Joins a Windows VM (server or client) to the AD domain via Azure VM Run Command.
-// The guest script checks PartOfDomain before joining; this module does not recreate the VM.
-// The caller waits for GPO provisioning. vmType and the serialized directory model select OU placement;
+// Owns Windows domain membership and HTTP SPNs via Azure VM Run Command.
+// The join script checks PartOfDomain before joining; this module does not recreate the VM.
+// The caller waits for GPO definition provisioning, not guest policy application.
+// vmType and the serialized directory model select OU placement;
 // a new deployment token supports reruns but does not force an already joined machine to rejoin.
+// New members restart to complete the join; retained members still receive SPN repair.
+// Windows processes GPOs normally. This module does not gate deployment on effective guest policy.
 
 // 1. Target and directory placement
 param vmName string
@@ -32,6 +35,8 @@ resource domainJoin 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' =
   location: resourceGroup().location
 
   properties: {
+    asyncExecution: false
+    treatFailureAsDeploymentFailure: true
     source: {
       script: joinDomainScript
     }

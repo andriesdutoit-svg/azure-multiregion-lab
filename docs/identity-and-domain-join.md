@@ -4,7 +4,7 @@
 
 ## Identity Flow
 
-When `enableIdentity=true`, the identity stage runs this sequence:
+The lab always includes Active Directory. Selecting `stage=identity` or `stage=all` runs this sequence; `network` and `compute` postpone AD automation without changing the lab's intended configuration:
 
 ```text
 Primary DC forest bootstrap
@@ -33,14 +33,15 @@ The primary DC and replica DCs must already exist before a standalone `identity`
 
 ```mermaid
 flowchart LR
-  A[enableIdentity=true] --> B{stage value}
-        B -->|identity| C[Use existing DCs and create missing workloads if needed]
+        A[AD lab] --> B{stage value}
+        B -->|network or compute| L[Defer identity automation]
+        B -->|identity| C[Use existing DCs and create missing workloads]
   B -->|all| D[Run full deployment with identity]
   C --> E[dc01 forest bootstrap]
   D --> E
   E --> F[Promote replica DCs]
   F --> G[Populate OU, groups, and users]
-  G --> K[Import and link administration GPOs]
+        G --> K[Create or reconcile and link GPOs]
   K --> H[Domain join Windows and Linux]
         H --> I[Provision departmental shares when enabled]
         I --> J[Reruns repair supported existing state]
@@ -88,6 +89,8 @@ The linked Windows LAPS GPO supplies the policy side of this setup: it backs pas
 
 When `enableFileServices=true`, directory population creates each department's `Share_RW` and `Share_RO` domain-local groups and nests the manager and user groups into them. Share provisioning is handled separately on the selected file server.
 
+Directory population and share provisioning embed the same `Get-SelectedDepartments.ps1` helper in their Run Command payloads. All mandatory system-administration departments are retained in input order; additional departments fill the remaining slots in their JSON-property order. Requests smaller than the mandatory set are rejected, keeping directory groups and shares aligned without duplicate selection implementations.
+
 After Windows domain join completes, `Populate-Shares.ps1` runs on the selected file server. It creates `C:\Shares`, creates one SMB share per selected department, and applies the domain-local groups as NTFS Modify and Read-and-Execute permissions. The script retains existing directories and SMB shares and reapplies the expected ACL rules on reconciliation.
 
 With `useDedicatedFileServer=false`, the selected host is the primary DC. With `useDedicatedFileServer=true`, it is the first `srvwin` VM in the final placement model. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion) before changing this setting in an existing environment.
@@ -100,7 +103,7 @@ Examples:
 
 - Forest bootstrap exits when an AD domain already exists.
 - Replica promotion exits when the target server is already a DC.
-- Windows domain join exits when `PartOfDomain` is true.
+- Windows domain join skips rejoining when `PartOfDomain` is true but still reconciles the workload HTTP SPNs.
 - Linux domain join skips `realm join` when the VM is already joined.
 - Directory population restores missing OUs, groups, users, and memberships.
 
@@ -108,46 +111,20 @@ Examples:
 
 Windows workload VMs are targeted from `finalVmPlacements` after Group Policy provisioning completes. The PowerShell script checks `Win32_ComputerSystem.PartOfDomain`; retained members skip the join. For a new join, it joins the configured domain and OU, verifies membership, and restarts the machine. Local Administrators membership is managed by Group Policy, not by this script.
 
-After confirming the requested domain, the join script reconciles `HTTP/<computer>` and `HTTP/<computer>.<domain>` SPNs on that VM's own computer account using `setspn -S`. It does this for both already-joined and newly joined VMs. A separate `workload-winrm.bicep` Run Command runs after the join stage (and any required restart), refreshes computer policy, verifies the all-profile Administration GPO rule for TCP 5985 from `10.0.0.0/8`, and removes the legacy per-VM firewall rule only after that GPO rule is active.
+The join script ensures the VM has short-name and FQDN HTTP SPNs for Kerberos remote management, including on already-joined members. Windows applies computer policy normally after the join and any required restart; deployment does not wait for policy processing.
 
-During identity stage, `dc-winrm.bicep` performs the corresponding per-DC SPN reconciliation, refreshes computer policy, verifies the dedicated Domain Controllers GPO rule, and removes the legacy local rule after verification. The DC GPO allows inbound TCP 5985 from `10.0.0.0/8` on all profiles and is linked to the built-in Domain Controllers OU. WAC waits for both workload and DC firewall-policy reconciliation.
+Directory population configures DC HTTP SPNs after forest and replica promotion. The identity stage then creates or reconciles the modeled GPOs and joins workload VMs. WAC installation follows GPO configuration and Windows domain join; deployment success does not guarantee that each VM has processed its policies.
 
 ## Group Policy Provisioning
 
-After directory population, `modules/identity/ad-gpo.bicep` runs `Configure-GPOs.ps1` on the primary DC to create or reconcile all four GPOs directly; no GPMC backup ZIP is used.
+Group Policy covers the main Windows administration needs:
 
-GPO names come from the directory model, so the script does not hardcode them:
+- Server and Client Administration policies configure WinRM and allow TCP 5985/5986 from `10.0.0.0/8` on all firewall profiles.
+- The Administration policies add the modeled Windows administrators group to local Administrators without replacing unrelated members.
+- Windows LAPS backs local administrator passwords up to AD for Servers and Clients.
+- A separate Domain Controller policy allows TCP 5985 from `10.0.0.0/8` on all profiles.
 
-```text
-gpoNames.serverAdministration   ->  linked to OU=Servers,OU=Computers
-gpoNames.clientAdministration   ->  linked to OU=Clients,OU=Computers
-gpoNames.windowsLaps           ->  linked to OU=Servers,OU=Computers and OU=Clients,OU=Computers
-gpoNames.domainControllerWinRM ->  linked to OU=Domain Controllers
-```
-
-Windows LAPS is linked separately to the Servers and Clients OUs. The Windows administrators group-reference rewrite applies only to the two administration GPOs.
-
-The Server Administration and Client Administration GPOs configure WinRM service startup and listener policy and allow TCP 5985 and 5986 from `10.0.0.0/8` on all firewall profiles. Their Local Users and Groups preference adds `AMRL\GGS_Windows_Admins` to built-in Administrators without clearing other members. The generated Domain Controller WinRM GPO allows TCP 5985 from the same internal range on all profiles. Windows LAPS policy is configured directly in its GPO. The current WAC configuration uses WinRM over HTTP (5985); the 5986 firewall allowance does not create an HTTPS listener or certificate.
-
-Missing GPOs are created with `New-GPO`; reruns reapply the settings managed by this configurator and repair the modeled links. Unrelated settings on existing GPOs are not wholesale-cleared. Verify client processing separately.
-
-<details>
-<summary>GPO implementation and rerun boundaries</summary>
-
-`Configure-GPOs.ps1` creates the Server Administration, Client Administration, Windows LAPS, and Domain Controller WinRM GPOs when absent. It configures WinRM service startup/listener policy, the all-profile internal firewall rules, the add-only local Administrators preference, and the five Windows LAPS values from the attached policy reports. It repairs the modeled links and re-applies those settings on reruns; it does not import or overwrite whole GPO backups.
-
-`treatFailureAsDeploymentFailure` is enabled on the Run Command, so a guest-script failure fails the deployment instead of reporting success.
-
-### Idempotency and Policy Scope
-
-The configurator owns the policy settings described above. Be aware of these boundaries:
-
-- **GPO names are not coupled to backups.** They are used directly when creating the GPOs and linking them to the modeled OUs.
-- **The local Administrators preference is additive.** It reconciles the Windows administrators entry and preserves other members of the built-in group.
-- **Unmodeled GPO settings are preserved.** This configurator is not a blanket reset of administrator-added settings.
-- **Re-running requires a new Run Command definition.** As with the other identity scripts, use a new deployment name so the Run Command is reapplied.
-
-</details>
+Settings managed by AMRL are reapplied during identity deployments; unmodeled GPO settings are preserved. Windows processes the policies normally, so verify effective settings and access separately after deployment. The 5986 allowance does not configure a WinRM HTTPS listener or certificate.
 
 ## Linux Domain Join
 

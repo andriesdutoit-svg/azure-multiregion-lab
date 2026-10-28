@@ -63,7 +63,7 @@ Get-NetFirewallRule -PolicyStore ActiveStore -Name '*WINRM*'
 gpresult /scope computer /r
 ```
 
-`Test-NetConnection` confirms only TCP connectivity. If it fails, verify the source and destination NSGs/routes, WinRM listener, and Windows Firewall. The Server and Client Administration GPOs allow TCP 5985 and 5986 from `10.0.0.0/8` on all profiles; the Domain Controller WinRM GPO allows TCP 5985 from the same range on all profiles. Identity-stage Run Commands refresh and verify the applicable GPO before removing legacy per-VM firewall rules. Check the active GPO rule in `ActiveStore`, its source scope, and the VM's profile.
+`Test-NetConnection` confirms only TCP connectivity. If it fails, verify the source and destination NSGs/routes, WinRM listener, and Windows Firewall. The Server and Client Administration GPOs allow TCP 5985 and 5986 from `10.0.0.0/8` on all profiles; the Domain Controller WinRM GPO allows TCP 5985 from the same range on all profiles. Deployment configures the GPOs but does not force policy refresh or verify effective guest rules. Allow normal computer-policy processing, then check the active GPO rule in `ActiveStore`, its source scope, and the VM's profile.
 
 If authenticated Kerberos WinRM reports that the target is unknown to Kerberos, query the target computer account for both HTTP SPNs and verify identity stage has completed:
 
@@ -72,7 +72,7 @@ setspn -Q HTTP/<computer>
 setspn -Q HTTP/<computer>.<domain>
 ```
 
-The Windows domain-join script and DC reconciliation module use `setspn -S` to add missing SPNs to the target computer account. Do not add duplicates to another account. `Test-WSMan` alone checks WSMan response, while `Invoke-Command` with Kerberos verifies that an authenticated remote session can actually be created.
+The Windows domain-join script reconciles workload HTTP SPNs; directory population reconciles HTTP SPNs for the modeled DC accounts. Both use `setspn -S` to add missing SPNs with duplicate checking. Do not add duplicates to another account. `Test-WSMan` alone checks WSMan response, while `Invoke-Command` with Kerberos verifies that an authenticated remote session can actually be created.
 
 If TCP and `Test-WSMan` work and WAC succeeds with **Manage As** but fails with **Use my Windows account** (`0x8009030e`), investigate Kerberos delegation between the user's browser session, WAC gateway, and target. This symptom points to a delegation issue rather than an NSG port block. RBCD is a candidate future configuration and is not currently provisioned by AMRL. Use explicit Manage As credentials as the current workaround. Do not enable unconstrained delegation as a troubleshooting shortcut.
 
@@ -146,15 +146,13 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 - `hasUncoveredNewVmNetworks`: A compute or identity deployment would create VMs in regions not declared as having existing networking. Run `stage=network` or `stage=all`, or correct `existingRegions` if that networking already exists.
 - `missingDedicatedFileServer`: `useDedicatedFileServer` is `true` but no `srvwin` VM exists. Target selection falls back to the primary DC so template evaluation can continue, but the configuration is invalid and should be corrected.
 - `invalidDedicatedFileServerConfiguration`: `useDedicatedFileServer` is `true` while `enableFileServices` is `false`.
-- `invalidFileServicesIdentityConfiguration`: `enableFileServices` or `useDedicatedFileServer` is `true` while `enableIdentity` is `false`.
 - `invalidDedicatedWacHostConfiguration`: blocking; `useDedicatedWacHost` is `true` while `enableWindowsAdminCenter` is `false`.
 - `missingDedicatedWacHost`: advisory; WAC and dedicated-host mode are enabled, but the final placement model has no `srvwin`. WAC falls back to the primary jumpbox; add or retain a Windows server, or disable dedicated-host preference.
-- `invalidWindowsAdminCenterIdentityConfiguration`: blocking; `enableWindowsAdminCenter` is `true` while `enableIdentity` is `false`, so the identity-owned WAC module cannot run.
 - `windowsAdminCenterSkippedForStage`: advisory; WAC and identity are enabled, but the selected stage is not `identity` or `all`, so WAC will not be installed in this deployment. Run `stage=identity` or `stage=all` when ready.
-- `hasMalformedDomainName`: `enableIdentity` is `true` but `domainName` is blank, single-label, or contains a space, backslash, forward slash, or `@`. Group Policy provisioning builds the domain DN and SYSVOL path to `Groups.xml` from this value. The flag reports the issue before the Run Command, though validation flags are diagnostic and do not by themselves block deployment.
+- `hasMalformedDomainName`: `domainName` is blank, single-label, or contains a space, backslash, forward slash, or `@`. Group Policy provisioning builds the domain DN and SYSVOL path to `Groups.xml` from this value. AD configuration checks remain active for every stage; findings do not by themselves block deployment.
 - `hasEmptySysAdminDepartmentCode`: `sysAdminDepartment` is empty or its department code is blank. Group Policy provisioning resolves the Windows admins group created by directory population from this code.
-- `hasNoGpoTargetDc`: `enableIdentity` is `true` but `dc01` is not pinned to the primary region. Group Policy is provisioned on the primary domain controller, so there is no target for the import.
-- `hasInvalidGpoNames`: `enableIdentity` is `true` but one or more of `serverAdministration`, `clientAdministration`, `windowsLaps`, or `domainControllerWinRM` is empty. These names are used to create and link the four GPOs.
+- `hasNoGpoTargetDc`: `dc01` is not pinned to the primary region. Correct placement before running Group Policy provisioning on the primary domain controller.
+- `hasInvalidGpoNames`: one or more of `serverAdministration`, `clientAdministration`, `windowsLaps`, or `domainControllerWinRM` is empty. These names are used to create and link the four GPOs.
 
 The template findings cover configuration it can evaluate; they do not replace guest-side checks. Failures inside the Group Policy Run Command itself are reported by the deployment because `ad-gpo.bicep` sets `treatFailureAsDeploymentFailure`. `Configure-GPOs.ps1` fails fast when `directoryModel.gpoNames` is incomplete, the admin group cannot be resolved, a target OU is missing, or a managed policy setting cannot be written to its GPO.
 

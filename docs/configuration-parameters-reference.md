@@ -126,7 +126,7 @@ For direct jumpbox access, ensure `jumpboxAllowedSources` includes your approved
 
 ## Credentials and Secrets
 
-All credentials are stored in Azure Key Vault and referenced by name, not embedded in parameter files. See [Key Vault Setup](access-and-administration.md#key-vault-setup) for recreating the vault and secrets.
+All credentials are stored in Azure Key Vault and referenced by name, not embedded in parameter files. See [Key Vault Setup](new-subscription-setup.md#key-vault-setup) for recreating the vault and secrets.
 
 | Parameter | Type | Key Vault Secret | Purpose |
 |---|---|---|---|
@@ -139,7 +139,7 @@ All credentials are stored in Azure Key Vault and referenced by name, not embedd
 | `sshPublicKey` | reference | `sshPublicKey` | Public key for Linux VM creation |
 | `sshPrivateKey` | reference | `sshPrivateKey` | Private key deployed to jumpboxes |
 
-Use a matching SSH key pair. See [SSH Key Setup](access-and-administration.md#ssh-key-setup) for upload instructions.
+Use a matching SSH key pair. See [SSH Key Setup](new-subscription-setup.md#ssh-key-setup) for upload instructions.
 
 **Example Parameter File Reference**:
 
@@ -154,16 +154,15 @@ Use a matching SSH key pair. See [SSH Key Setup](access-and-administration.md#ss
 }
 ```
 
-## Identity Configuration (Optional)
+## Identity Configuration
 
-**Enable/Disable Identity**:
+This is always an AD lab. Select `stage=identity` or `stage=all` to run AD automation. To postpone identity setup, run `network` followed by `compute`, then run `identity` when ready. Remove the former `enableIdentity` parameter from existing parameter files; `all` now always includes identity automation.
 
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
-| `enableIdentity` | boolean | Enable Active Directory forest creation and domain join | `true` |
 | `domainName` | string | AD domain name (e.g., FQDN) | `"amrl.lab"` |
 
-**Department Configuration** (only when `enableIdentity=true`):
+**Department Configuration** (provisioned during `identity` or `all`):
 
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
@@ -176,33 +175,30 @@ Use a matching SSH key pair. See [SSH Key Setup](access-and-administration.md#ss
 
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
-| `enableWindowsAdminCenter` | boolean | Install Windows Admin Center on the selected management host after AD/GPO setup during `identity` or `all`. Requires `enableIdentity=true`; the host needs outbound HTTPS and DNS for installer download. | `false` |
+| `enableWindowsAdminCenter` | boolean | Install Windows Admin Center on the selected management host after AD/GPO setup during `identity` or `all`. The host needs outbound HTTPS and DNS for installer download. | `false` |
 | `useDedicatedWacHost` | boolean | Prefer the first `srvwin` in the final placement model instead of the primary jumpbox. Requires `enableWindowsAdminCenter=true`; if no `srvwin` exists, the primary jumpbox is used and `missingDedicatedWacHost` is reported as advisory. | `false` |
 
 `useDedicatedWacHost=true` while `enableWindowsAdminCenter=false` activates the blocking `invalidDedicatedWacHostConfiguration` finding.
 
-`enableWindowsAdminCenter=true` with `enableIdentity=false` activates the blocking `invalidWindowsAdminCenterIdentityConfiguration` finding. If WAC is enabled for a stage that does not run identity, `windowsAdminCenterSkippedForStage` is advisory. Fresh installs use Microsoft's current WAC v2 download alias and verify its Authenticode signature. AMRL sets Windows Authentication and selects WinRM over HTTP for managed servers (`WinRmOverHttps=false`); WinRM over HTTPS is deferred until PKI is available. See [Windows Admin Center access](access-and-administration.md#windows-admin-center) for the full WAC configuration and validation boundaries.
+If WAC is enabled for a stage that does not run identity, `windowsAdminCenterSkippedForStage` is advisory. AMRL uses Windows Authentication; the browser connects to the gateway over HTTPS and the gateway manages Windows VMs over WinRM HTTP. WinRM over HTTPS is deferred until PKI is available. See [Windows Admin Center access](access-and-administration.md#windows-admin-center) for connection instructions.
 
 ## File Server Configuration (Optional)
 
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
-| `enableFileServices` | boolean | Create departmental share groups and memberships, then provision the `C:\Shares` directory, departmental SMB shares, and NTFS permissions during the identity stage. Requires `enableIdentity=true`. | `true` |
-| `useDedicatedFileServer` | boolean | When file services are enabled, target the first `srvwin` VM in the final placement model instead of the primary DC. Requires `enableFileServices=true`, `enableIdentity=true`, and at least one `srvwin` VM. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion). | `true` |
+| `enableFileServices` | boolean | Create departmental share groups and memberships, then provision the `C:\Shares` directory, departmental SMB shares, and NTFS permissions during the identity stage. | `true` |
+| `useDedicatedFileServer` | boolean | When file services are enabled, target the first `srvwin` VM in the final placement model instead of the primary DC. Requires `enableFileServices=true` and at least one `srvwin` VM. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion). | `true` |
 
 Supported combinations:
 
-| `enableIdentity` | `enableFileServices` | `useDedicatedFileServer` | Result |
-|---|---|---|---|
-| `false` | `false` | `false` | Identity and file services are disabled. |
-| `true` | `false` | `false` | AD is populated without share groups, SMB shares, or file-system permissions. |
-| `true` | `true` | `false` | File services are provisioned on the primary DC. |
-| `true` | `true` | `true` | File services are provisioned on the first `srvwin` VM. |
+| `enableFileServices` | `useDedicatedFileServer` | Result during `identity` or `all` |
+|---|---|---|
+| `false` | `false` | AD is populated without share groups, SMB shares, or file-system permissions. |
+| `true` | `false` | File services are provisioned on the primary DC. |
+| `true` | `true` | File services are provisioned on the first `srvwin` VM. |
 
 The following combinations produce validation flags:
 
-- `enableIdentity=false` with `enableFileServices=true`.
-- `enableIdentity=false` with `useDedicatedFileServer=true`.
 - `enableFileServices=false` with `useDedicatedFileServer=true`.
 
 If dedicated mode has no `srvwin` placement, target selection falls back to the primary DC so template evaluation can continue, but `missingDedicatedFileServer` is reported and the configuration should be corrected. Changing the target does not move existing share data or remove shares from the former host.

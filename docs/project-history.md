@@ -28,10 +28,11 @@
 - **v2.8.1**: Engineering hardening for deployment logging, retained-jumpbox SSH-key targeting, and network-coverage validation.
 - **v2.9 (completed)**: Optional hub-region Azure Bastion, independently gated peering/Bastion cleanup without a separate execution flag, and reconciliation-identity validation. Completion covers the delivered scope, not exhaustive live-transition verification.
 - **v2.10 (completed)**: Windows Admin Center gateway integration and repair in the identity stage, Active Directory discovery support, and cross-region WinRM-over-HTTP management with explicit credentials. Completion covers this delivered scope; Windows-account delegation, PKI-backed WinRM HTTPS, automated Shared Connection onboarding, and Azure Arc onboarding remain deferred.
+- **v2.11 (completed)**: Programmatic creation and reconciliation of modeled Group Policy settings, replacing the GPO backup-import workflow. Live policy application and effective guest settings were validated on fresh and retained Windows VMs.
 
 ## Roadmap
 
-- **v2.11-v2.12:** Live validation and hardening of programmatically reconciled GPO policy, service accounts and file-server reconciliation, then monitoring and observability. The service-account and file-migration architecture will be scoped during v2.11 development. Azure Arc onboarding remains future work and is not part of completed v2.10 scope.
+- **v2.12:** Service-account provisioning and reconciliation, file-server migration/reconciliation, and monitoring and observability. Azure Arc onboarding remains future work and is not part of completed v2.10 scope.
 - **v3.0-v3.3:** Security enhancements and policy baselines, public key infrastructure, hybrid identity, then multi-forest support.
 - **v4.x:** Automatic discovery, explicit DC IP allocation and safe DNS reconciliation, full topology reconciliation, reverse transitions, and zero-VM deployment support.
 - **Stretch goals:** Advanced networking, security, and lab lifecycle automation.

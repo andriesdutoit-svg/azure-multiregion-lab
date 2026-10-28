@@ -117,8 +117,6 @@ param sshPublicKey string
 param sshPrivateKey string
 
 // Identity and directory management
-@description('Enable Active Directory forest, replica, population, and domain-join automation.')
-param enableIdentity bool
 @description('Deploy Windows Admin Center on the selected management host.')
 param enableWindowsAdminCenter bool
 @description('Prefer the first modeled Windows server for Windows Admin Center; fall back to the primary jumpbox if none exists.')
@@ -158,7 +156,7 @@ var gpoNames = {
 
 var deployNetwork = stage == 'network' || stage == 'all'
 var deployCompute = stage == 'compute' || stage == 'all'
-var deployIdentity = enableIdentity && (stage == 'identity' || stage == 'all')
+var deployIdentity = stage == 'identity' || stage == 'all'
 // Compute owns VM creation. Identity runs also activate missing workload VMs needed
 // for domain join, but do not create missing control-plane DCs or jumpboxes.
 var deployControl = deployCompute
@@ -309,6 +307,7 @@ var controlPlaneCapacityCumulative = [
 // This intermediate model reserves spoke capacity before workload placement. Non-control-plane
 // entries emit empty markers that match no region and therefore consume no capacity.
 // Pinned VMs and control-plane overflow use the hub; this step does not enforce a hub limit.
+// Preserve one entry per missingVmList item: final control-plane placement reuses the same index.
 var controlPlanePlacements = [
   for (vm, i) in missingVmList: !(vm.type == 'dc' || vm.type == 'jmp') ? {
     type: ''
@@ -370,7 +369,7 @@ var workloadRegionCapacityCumulative = [
 ]
 
 // 3.6 New VM placements
-// Apply the same control-plane assignments used above, then map workloads into the
+// Reuse the control-plane assignments above, then map workloads into the
 // remaining spoke slots. Only missing VM identities are included in this collection.
 
 var vmPlacements = [
@@ -382,34 +381,20 @@ var vmPlacements = [
     regionKey: isSingleRegion
       ? regionKeys[0]
 
-      // The single-region override precedes pinning, workload, and control-plane allocation.
-
-      // Pin newly placed dc01 and jmp01; retained VMs keep their declared regions.
-      : (vm.type == 'dc' && vm.index == 0)
-        ? primaryRegion
-
-      : (vm.type == 'jmp' && vm.index == 0)
-        ? primaryRegion
+      // Reuse the exact assignments that reserved capacity above. Both arrays follow
+      // missingVmList order, so index i identifies this VM's control-plane entry.
+      : (vm.type == 'dc' || vm.type == 'jmp')
+        ? controlPlanePlacements[i].regionKey
 
       // In multi-region deployments, workloads use only spoke capacity slots.
       // Modulo rotates through those slots; when no slots remain, a spoke fallback
       // keeps the model evaluable so validation can report insufficient capacity.
-      : !(vm.type == 'dc' || vm.type == 'jmp')
-        ? totalWorkloadRegionCapacity > 0
+      : totalWorkloadRegionCapacity > 0
           ? first(filter(
               workloadRegionCapacityCumulative,
               slot => slot.remainingCapacity > 0 && ((indexOf(workloadVmList, vm) % totalWorkloadRegionCapacity) < slot.cumulativeCapacity)
             )).?region ?? regionKeys[1]
           : regionKeys[1]
-
-      // New DC/JMP VMs fill spoke capacity first-fit (one spoke to its max before the next),
-      // then fall back to the hub with no capacity limit once spoke capacity is exhausted.
-        : totalAvailableControlPlaneCapacity > 0 && indexOf(controlPlanePlacementVmList, vm) < totalAvailableControlPlaneCapacity
-        ? first(filter(
-            controlPlaneCapacityCumulative,
-            slot => slot.capacity > 0 && indexOf(controlPlanePlacementVmList, vm) < slot.cumulativeCapacity
-          )).?region ?? hubRegion
-        : hubRegion
   }
 ]
 
@@ -652,7 +637,6 @@ module validationEngine 'modules/logic/validation.bicep' = {
     subnetIndexMap: subnetIndexMap
     jumpboxAllowedSources: jumpboxAllowedSources
 
-    enableIdentity: enableIdentity
     domainName: domainName
     gpoNames: gpoNames
     sysAdminDepartment: sysAdminDepartment

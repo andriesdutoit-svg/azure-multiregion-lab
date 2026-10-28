@@ -9,13 +9,13 @@
 - A Key Vault containing the referenced credentials and SSH keys.
 - VM sizes, images, regional quota, and regional availability verified for the subscription.
 - A parameter file with valid region, network, compute, and identity settings.
-- At least one domain controller requested with `vmCounts.dc >= 1`, even if `enableIdentity`, `enableFileServices`, and `useDedicatedFileServer` are all `false`.
+- At least one domain controller requested with `vmCounts.dc >= 1`. This is always an AD lab; use `stage` to select when identity automation runs.
 
 For a new subscription or tenant, follow [New Subscription Setup](new-subscription-setup.md) instead of starting with the commands below. It includes prerequisites, shared values, and the complete sequence through deployment.
 
 ## Deployment Workflow
 
-1. Choose regions, topology, VM counts, and optional identity/file services in the [parameter file](configuration-parameters-reference.md).
+1. Choose regions, topology, VM counts, and optional file services/WAC in the [parameter file](configuration-parameters-reference.md).
 2. Check [regional availability and quota](#preflight-checks), then [build, validate, and preview](ci-cd-validation.md#local-validation).
 3. Use the greenfield or brownfield path below and select the appropriate stage.
 4. Review [deployment outputs and guest results](validation-and-troubleshooting.md#post-deployment-review).
@@ -35,7 +35,7 @@ Use `stage=all` when both networking and VM creation are needed. For separate ru
 ```mermaid
 flowchart LR
   N[stage=network] --> C[stage=compute]
-  C --> I[stage=identity optional]
+  C --> I[stage=identity when ready]
 ```
 
 Use a new deployment name when rerunning identity automation so Azure reapplies the VM Run Commands. Verify required connectivity, sign-in, and services after deployment; stage completion alone does not prove readiness.
@@ -49,15 +49,15 @@ The engine completes before the gate, so its nested deployment retains diagnosti
 
 ### Optional File Services
 
-Set `enableIdentity=true` and `enableFileServices=true` and run `identity` or `all`. Shares use the primary DC unless `useDedicatedFileServer=true`, which selects the first `srvwin` VM in the final model. Request or inventory that server before enabling dedicated mode; [target reassignment is not data migration](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
+Set `enableFileServices=true` and run `identity` or `all`. Shares use the primary DC unless `useDedicatedFileServer=true`, which selects the first `srvwin` VM in the final model. Request or inventory that server before enabling dedicated mode; [target reassignment is not data migration](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
 
 ### Optional Windows Admin Center
 
-Set `enableIdentity=true` and `enableWindowsAdminCenter=true` to install Windows Admin Center during `stage=identity` or `stage=all`. WAC runs after AD/GPO provisioning and the Windows domain-join collection, so the selected host has had an opportunity to receive working domain DNS. By default it targets the primary jumpbox. Set `useDedicatedWacHost=true` to prefer the first `srvwin` in the final placement model; if none is modeled, installation falls back to the primary jumpbox and reports the advisory `missingDedicatedWacHost`.
+Set `enableWindowsAdminCenter=true` to install Windows Admin Center during `stage=identity` or `stage=all`. WAC runs after AD/GPO provisioning and the Windows domain-join collection, so the selected host has had an opportunity to receive working domain DNS. By default it targets the primary jumpbox. Set `useDedicatedWacHost=true` to prefer the first `srvwin` in the final placement model; if none is modeled, installation falls back to the primary jumpbox and reports the advisory `missingDedicatedWacHost`.
 
-WAC enabled without identity is a blocking `invalidWindowsAdminCenterIdentityConfiguration` finding. If WAC is enabled but the selected stage is not `identity` or `all`, WAC is skipped and `windowsAdminCenterSkippedForStage` is advisory.
+If WAC is enabled but the selected stage is not `identity` or `all`, WAC is skipped and `windowsAdminCenterSkippedForStage` is advisory. AD automation always runs when `identity` or `all` is selected.
 
-For a fresh install, the script downloads Microsoft's current WAC v2 EXE through `https://aka.ms/WACDownload`, retries transient DNS/download failures, and verifies the Authenticode signature before launching it silently. The host needs outbound HTTPS and DNS for the alias and its download destination. Run Command is configured to fail the deployment if the guest script fails. On fresh installs and brownfield reruns, AMRL reapplies Windows Authentication, selects WinRM over HTTP (`WinRmOverHttps=false`), configures domain-only trusted hosts, ensures `RSAT-AD-PowerShell` for Active Directory discovery, and restarts the WAC service before validation. Existing installations are not reinstalled or automatically upgraded. Managed-server WinRM uses TCP 5985; the gateway's browser UI remains HTTPS. WinRM over HTTPS on 5986 is deferred until PKI provides server certificates. The target WAC profile and which values are set versus only observed are documented in [Access and Administration](access-and-administration.md#windows-admin-center). Disabling WAC skips future install commands but does not uninstall it from a retained VM. AMRL does not add inbound web rules or automatically populate Shared Connections; operators can search AD and add connections through WAC.
+The host needs DNS and outbound HTTPS for installation. WAC uses Windows Authentication; its browser interface uses HTTPS, while managed-server WinRM uses HTTP/TCP 5985. WinRM over HTTPS is deferred until PKI provides server certificates. AMRL does not expose the gateway to the Internet or automatically populate connections. See [Access and Administration](access-and-administration.md#windows-admin-center) for host selection and connection steps.
 
 ## Greenfield Deployment
 

@@ -266,6 +266,13 @@ module networkReconciliation '../networking/network-reconciliation.bicep' = if (
   name: '${prefix}-network-reconciliation'
   scope: resourceGroup('${prefix}-rg-${hubRegion}')
 
+  // Bastion cleanup writes a whole-VNet snapshot; wait for desired subnet and topology writes.
+  dependsOn: [
+    peerings
+    firewall
+    bastion
+  ]
+
   params: {
     prefix: prefix
     hubRegion: hubRegion

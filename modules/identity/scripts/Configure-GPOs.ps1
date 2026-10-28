@@ -1,3 +1,22 @@
+<#
+.SYNOPSIS
+Creates or reconciles the four AMRL GPOs without importing policy backups.
+.DESCRIPTION
+Runs on the primary DC after directory population has created the target OUs and
+Windows administrators group. Existing GPOs keep their identities; the helpers
+reapply AMRL-owned settings rather than skipping all work when a GPO exists.
+
+WAC needs several independent prerequisites: domain/SPN identity for Kerberos,
+a WinRM service/listener on the target, and effective Windows Firewall policy.
+This script owns the GPO definitions for the latter settings, plus local-admin
+membership and LAPS policy. It does not configure WAC's browser HTTPS endpoint.
+.NOTES
+Writing/linking policy does not prove client processing. Windows applies computer
+policy normally; deployment does not force a refresh or gate on guest application.
+Validate functional management readiness separately after provisioning.
+Unmodeled settings are retained; this is not a whole-GPO reset or domain teardown.
+#>
+
 param(
     [string]$DomainName,
     [string]$DirectoryModel,
@@ -117,6 +136,8 @@ function Ensure-GpoLink {
     }
 }
 
+# Policy files written directly to SYSVOL also need their client-side extension
+# registered in AD; the GUID pairs identify the Windows policy processors to invoke.
 function Ensure-GpoMachineExtensionPair {
     param(
         [Parameter(Mandatory)][Microsoft.GroupPolicy.Gpo]$Gpo,
@@ -161,6 +182,8 @@ function Set-GpoRegistryValue {
     Write-AmrlLog "[Updated] $($Gpo.DisplayName): $Key\$ValueName."
 }
 
+# System Services policy is stored in the security template, not an ordinary registry value.
+# The native WinRM service entry uses startup mode 2 (Automatic); retain other service entries.
 function Ensure-WinRmServiceStartup {
     param([Parameter(Mandatory)][Microsoft.GroupPolicy.Gpo]$Gpo)
 
@@ -220,6 +243,8 @@ function Ensure-WinRmServiceStartup {
     Write-AmrlLog "[Updated] $($Gpo.DisplayName): WinRM service startup is Automatic."
 }
 
+# An Update preference adds the modeled admin group without replacing Administrators membership.
+# SIDs select the built-in group independently of localization and resolve the current domain group.
 function Ensure-GpoLocalAdminPreference {
     param([Parameter(Mandatory)][Microsoft.GroupPolicy.Gpo]$Gpo)
 
@@ -249,7 +274,8 @@ function Ensure-GpoLocalAdminPreference {
     $adminGroupName = [string]$windowsAdminsGroup.SamAccountName
     $adminGroupSid = [string]$windowsAdminsGroup.SID.Value
     $qualifiedName = "$netbiosDomainName\$adminGroupName"
-    $groupNode = $root.SelectSingleNode("Group[@groupSid='$groupSid']")
+    # GPP stores the target SID on Properties, not Group; reuse that entry on reruns.
+    $groupNode = $root.SelectSingleNode("Group[Properties/@groupSid='$groupSid']")
     $changed = $false
 
     if ($null -eq $groupNode) {
@@ -350,6 +376,9 @@ function Ensure-GpoLocalAdminPreference {
         -ToolExtensionId '79F92669-4224-476C-9C5C-6EFB4D87DF4A'
 }
 
+# Edit the domain GPO store here, not this DC's local firewall. Windows applies it to guests
+# through normal policy processing. Profile Any handles Public/Private detection at startup;
+# the internal source range remains a separate restriction and is not changed to Any.
 function Ensure-GpoWinRMFirewallRule {
     param(
         [Parameter(Mandatory)][string]$GpoName,
@@ -397,6 +426,8 @@ function Ensure-GpoWinRMFirewallRule {
             Out-Null
     }
 
+    # Read back the stored domain GPO rule to catch a failed configuration write.
+    # This is not a target VM's ActiveStore check and does not wait for policy application.
     $verifiedRule = @(Get-NetFirewallRule -PolicyStore $policyStore -DisplayName $DisplayName -ErrorAction Stop)
     if ($verifiedRule.Count -ne 1 -or
         -not $verifiedRule[0].Enabled -or
@@ -419,20 +450,27 @@ function Ensure-GpoWinRMFirewallRule {
     Write-AmrlLog "[Updated] ${GpoName}: $DisplayName applies on all profiles."
 }
 
+# 1. Preserve existing policy identities, then reapply the settings owned by this script.
 $serverAdministrationGpo = Ensure-GpoExists -GpoName $serverAdministrationGpoName
 $clientAdministrationGpo = Ensure-GpoExists -GpoName $clientAdministrationGpoName
 $windowsLapsGpo = Ensure-GpoExists -GpoName $windowsLapsGpoName
 $domainControllerWinRmGpo = Ensure-GpoExists -GpoName $domainControllerWinRmGpoName
 
+# 2. Members need both service startup and listener policy; a firewall allowance alone
+# cannot provide a WSMan endpoint. IPv6 listening also covers WAC reaching its own host
+# by FQDN when Windows resolves that name to a local IPv6 address. Listener filters select
+# local listening addresses, not permitted remote clients; firewall scope is configured below.
 $winRmRegistryKey = 'HKLM\Software\Policies\Microsoft\Windows\WinRM\Service'
 foreach ($gpo in @($serverAdministrationGpo, $clientAdministrationGpo)) {
     Ensure-WinRmServiceStartup -Gpo $gpo
     Set-GpoRegistryValue -Gpo $gpo -Key $winRmRegistryKey -ValueName 'AllowAutoConfig' -Type DWord -Value '1'
     Set-GpoRegistryValue -Gpo $gpo -Key $winRmRegistryKey -ValueName 'IPv4Filter' -Type String -Value '*'
-    Set-GpoRegistryValue -Gpo $gpo -Key $winRmRegistryKey -ValueName 'IPv6Filter' -Type String -Value ''
+    Set-GpoRegistryValue -Gpo $gpo -Key $winRmRegistryKey -ValueName 'IPv6Filter' -Type String -Value '*'
     Ensure-GpoLocalAdminPreference -Gpo $gpo
 }
 
+# 3. WAC currently uses HTTP/5985 to manage targets. Allowing 5986 here does not provision
+# an HTTPS listener or certificate. The gateway's browser-facing HTTPS/443 is separate.
 Ensure-GpoWinRMFirewallRule `
     -GpoName $serverAdministrationGpoName `
     -DisplayName 'Allow WinRM HTTP/HTTPS' `
@@ -445,6 +483,8 @@ Ensure-GpoWinRMFirewallRule `
     -RuleName 'AMRL-Client-WinRM-HTTP-HTTPS' `
     -LocalPorts @('5985', '5986')
 
+# 4. LAPS policy backs passwords up to AD; directory population owns schema/OU permissions.
+# The decryptor setting matters when password encryption is enabled; it does not enable it.
 $lapsPolicyKey = 'HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\LAPS'
 Set-GpoRegistryValue -Gpo $windowsLapsGpo -Key $lapsPolicyKey -ValueName 'BackupDirectory' -Type DWord -Value '2'
 Set-GpoRegistryValue -Gpo $windowsLapsGpo -Key $lapsPolicyKey -ValueName 'PasswordComplexity' -Type DWord -Value '4'
@@ -457,12 +497,15 @@ Set-GpoRegistryValue `
     -Type String `
     -Value "$netbiosDomainName\$($windowsAdminsGroup.SamAccountName)"
 
+# 5. DCs get a narrow, separate rule, not the workload local-Administrators preference.
+# This policy manages their firewall only; it does not create DC WinRM service/listener policy.
 Ensure-GpoWinRMFirewallRule `
     -GpoName $domainControllerWinRmGpoName `
     -DisplayName 'AMRL DC WinRM HTTP from internal networks' `
     -RuleName 'AMRL-DC-WinRM-HTTP-Internal' `
     -LocalPorts @('5985')
 
+# 6. Link policies only to their intended computer OUs; endpoint processing is a later step.
 Ensure-GpoLink -GpoName $serverAdministrationGpoName -TargetDn $serversOuDn
 Ensure-GpoLink -GpoName $clientAdministrationGpoName -TargetDn $clientsOuDn
 Ensure-GpoLink -GpoName $windowsLapsGpoName -TargetDn $serversOuDn

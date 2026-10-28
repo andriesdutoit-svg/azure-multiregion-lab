@@ -2,7 +2,7 @@
 
 ## Overview
 
-AMRL is a subscription-scope Bicep deployment for a multi-region Azure lab. It creates resource groups, selectable VNet topologies, subnet and NSG segmentation, virtual machines, and optional Active Directory automation.
+AMRL is a subscription-scope Bicep deployment for a multi-region Active Directory lab. It creates resource groups, selectable VNet topologies, subnet and NSG segmentation, virtual machines, and directory services in the identity stage.
 
 The first selected region is the hub and control-plane anchor. Newly placed `dc01` and `jmp01` are assigned there; additional regions provide spoke capacity. `networkMode` selects connectivity and routing independently of VM placement. Retained VMs keep their declared locations.
 
@@ -27,7 +27,7 @@ Network outputs supply subnet IDs to compute. Compute creates missing VMs; ident
 
 | Component | Role in the lab |
 |---|---|
-| Primary and replica DCs | Host AD and domain DNS when identity automation is enabled. |
+| Primary and replica DCs | Host AD and domain DNS; provision them during the identity stage after network and compute prerequisites are ready. |
 | Jumpboxes | Provide the administration hop to private workload VMs; Bastion is an optional additional access path. |
 | Windows/Linux servers and clients | Exercise domain membership, administration policy, applications, and optional desktop access. |
 | Windows Admin Center | Optional gateway installation and configuration repair during identity-stage after AD/GPO and Windows domain joins, on the primary jumpbox or first modeled Windows server. The gateway UI uses HTTPS; current managed-server WinRM uses HTTP. AMRL does not configure inbound web access or automatically populate Shared Connections. |

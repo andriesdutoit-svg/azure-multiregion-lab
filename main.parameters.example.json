@@ -247,9 +247,6 @@
       }
     },
 
-    "enableIdentity": {
-      "value": false
-    },
 
     "enableWindowsAdminCenter": {
       "value": false

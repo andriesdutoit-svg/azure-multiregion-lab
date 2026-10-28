@@ -9,6 +9,8 @@ Missing directories/shares are created, root access is adjusted, and department 
 Requires Windows SMB/ACL administration and resolvable AD groups; the caller waits for
 population and Windows domain join. Existing share paths are not checked or migrated,
 unrequested shares are not retired, and unrelated ACLs are not comprehensively reconciled.
+The Bicep caller embeds Get-SelectedDepartments.ps1 at the helper marker; no external
+helper file is required on the guest when the composed Run Command executes.
 #>
 
 # 1. Inputs and directory-model validation
@@ -42,46 +44,8 @@ Write-Host "[Info] Requested department count: $DepartmentCount."
 # All system-administration departments are mandatory; additional departments fill remaining
 # slots in JSON property order. A request smaller than the mandatory set is rejected.
 
-function Get-SelectedDepartments {
-    param(
-        [string]$SysAdminDepartmentJson,
-        [string]$AdditionalDepartmentsJson,
-        [int]$InputDepartmentCount
-    )
-
-    $sysAdminDepartments = @(
-        (
-            $SysAdminDepartmentJson |
-            ConvertFrom-Json
-        ).PSObject.Properties
-    )
-
-    $additionalDepartments = @(
-        (
-            $AdditionalDepartmentsJson |
-            ConvertFrom-Json
-        ).PSObject.Properties
-    )
-
-    if ($InputDepartmentCount -lt $sysAdminDepartments.Count) {
-        throw (
-            "DepartmentCount ($InputDepartmentCount) is less than " +
-            "the number of mandatory departments ($($sysAdminDepartments.Count))."
-        )
-    }
-
-    $remainingDepartmentSlots =
-        $InputDepartmentCount - $sysAdminDepartments.Count
-
-    $selectedAdditionalDepartments =
-        $additionalDepartments |
-        Select-Object -First $remainingDepartmentSlots
-
-    return @(
-        $sysAdminDepartments +
-        $selectedAdditionalDepartments
-    )
-}
+# Bicep replaces this marker with the shared helper after the caller parameter block.
+# __AMRL_DEPARTMENT_SELECTION__
 
 # 3. Share and ACL provisioning helper
 # Preserve the sequence: root directory/ACLs, departmental directory/share, then department ACLs.

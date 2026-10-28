@@ -5,10 +5,10 @@ Derived from Set-DummyAD and adapted for idempotent Run Command execution.
 Consumes the serialized directory model, ordered department definitions, CSV name
 content, user targets, and file-service setting. Requires AD administration on the
 primary DC plus the AD/LAPS tooling used below; identity-stage orders population
-after forest and replica provisioning and before GPO import.
+after forest and replica provisioning and before GPO configuration.
 
-Creates missing objects and repairs selected department, manager, membership, and
-LAPS settings. Some group membership is authoritative and can remove stale members;
+Creates missing objects and repairs modeled DC HTTP SPNs, selected department,
+manager, membership, and LAPS settings. Some group membership is authoritative and can remove stale members;
 this is not general deletion or migration of all objects absent from input.
 New accounts receive independent random passwords, not logged passwords. Retained
 accounts are repaired rather than recreated or assigned newly generated passwords.
@@ -16,6 +16,8 @@ accounts are repaired rather than recreated or assigned newly generated password
 The helper order and final driver sequence are intentional: structure/groups must
 exist before permissions, manager reconciliation, user repair, and missing-user creation.
 Console/transcript summaries describe actions, not a complete directory health check.
+The Bicep caller embeds Get-SelectedDepartments.ps1 at the helper marker; this source
+file is a payload template, not a standalone script with guest-side helper dependencies.
 #>
 
 # 1. Validated caller inputs
@@ -27,6 +29,10 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [string]$DirectoryModel,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$DomainControllerNamesJson,
 
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
@@ -485,51 +491,9 @@ $securePassword = ConvertTo-SecureString `
 }
 
 # 5. Department selection, source records, and OU/group construction helpers
-# Get-SelectedDepartments: Filter department lists to match InputDepartmentCount.
-# Always includes all sysAdminDepartments (mandatory); fills remaining slots with additionalDepartments.
-# Example: sysAdminDepartments=[IT], additionalDepartments=[Finance,HR], InputDepartmentCount=2
-#   → Returns [IT, Finance] (IT mandatory + 1 additional)
-# Validates that InputDepartmentCount >= length(sysAdminDepartments); throws if underconstrained.
-function Get-SelectedDepartments {
-    param(
-        [string]$SysAdminDepartmentJson,
-        [string]$AdditionalDepartmentsJson,
-        [int]$InputDepartmentCount
-    )
-
-    $sysAdminDepartments = @(
-        (
-            $SysAdminDepartmentJson |
-            ConvertFrom-Json
-        ).PSObject.Properties
-    )
-
-    $additionalDepartments = @(
-        (
-            $AdditionalDepartmentsJson |
-            ConvertFrom-Json
-        ).PSObject.Properties
-    )
-
-    if ($InputDepartmentCount -lt $sysAdminDepartments.Count) {
-        throw (
-            "DepartmentCount ($InputDepartmentCount) is less than " +
-            "the number of mandatory departments ($($sysAdminDepartments.Count))."
-        )
-    }
-
-    $remainingDepartmentSlots =
-        $InputDepartmentCount - $sysAdminDepartments.Count
-
-    $selectedAdditionalDepartments =
-        $additionalDepartments |
-        Select-Object -First $remainingDepartmentSlots
-
-    return @(
-        $sysAdminDepartments +
-        $selectedAdditionalDepartments
-    )
-}
+# Department ordering and mandatory-selection rules live in the shared helper used by file services.
+# Bicep replaces this marker with the shared helper after the caller parameter block.
+# __AMRL_DEPARTMENT_SELECTION__
 
 function Initialize-NamesCsvRecords {
     param(
@@ -1740,7 +1704,6 @@ function Ensure-LapsConfiguration {
 # 4. Reconcile department managers and calculate standard-user targets
 # 5. Repair existing users without regenerating their passwords
 # 6. Populate missing users, remove temporary CSV data, and summarize actions
-# No helper or call is moved by these headings; initialization and definitions above remain in place.
 
 Write-AmrlLog "[INFO] Waiting for Active Directory availability"
 
@@ -1777,6 +1740,56 @@ if ($null -eq $currentDomain) {
         "within the expected time."
     )
 }
+
+# Kerberos needs HTTP service identities for WAC/WinRM connections by short name or FQDN.
+# Promotion creates the DC accounts first; population then repairs these account attributes
+# on both fresh and retained DCs. This does not open a port or configure a WinRM listener.
+function Ensure-DomainControllerHttpSpns {
+    param([string[]]$ComputerNames)
+
+    if ($currentDomain.DNSRoot -ine $DomainName.TrimEnd('.')) {
+        throw "The current domain '$($currentDomain.DNSRoot)' does not match '$DomainName'."
+    }
+
+    $setSpnPath = Join-Path $env:SystemRoot 'System32\setspn.exe'
+    if (-not (Test-Path -LiteralPath $setSpnPath)) {
+        throw "setspn.exe was not found at '$setSpnPath'."
+    }
+
+    foreach ($computerName in $ComputerNames) {
+        $computer = Get-ADComputer -Identity $computerName -Properties userAccountControl -ErrorAction Stop
+        # SERVER_TRUST_ACCOUNT (0x2000) distinguishes DC accounts from ordinary members.
+        if (($computer.userAccountControl -band 8192) -eq 0) {
+            throw "Computer '$computerName' is not a domain controller."
+        }
+
+        # Use the live NetBIOS domain, which need not equal the first label of its DNS name.
+        $computerAccount = "$($currentDomain.NetBIOSName)\$computerName`$"
+        $registeredOutput = & $setSpnPath -L $computerAccount 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to list SPNs for '$computerAccount': $($registeredOutput -join ' ')"
+        }
+        $registeredSpns = @($registeredOutput | ForEach-Object { $_.ToString().Trim() })
+
+        foreach ($spn in @("HTTP/$computerName", "HTTP/$computerName.$($currentDomain.DNSRoot)")) {
+            if ($registeredSpns -icontains $spn) {
+                Write-AmrlLog "[Verified] DC HTTP SPN is registered: $spn"
+                continue
+            }
+
+            # -S checks for duplicate ownership; do not steal an SPN from another account.
+            $registrationOutput = & $setSpnPath -S $spn $computerAccount 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "Unable to register DC HTTP SPN '$spn': $($registrationOutput -join ' ')"
+            }
+            Write-AmrlLog "[Updated] Registered DC HTTP SPN: $spn"
+        }
+    }
+}
+
+# The stage supplies modeled DCs only; this is not discovery or repair of unrelated AD hosts.
+$domainControllerNames = $DomainControllerNamesJson | ConvertFrom-Json
+Ensure-DomainControllerHttpSpns -ComputerNames $domainControllerNames
 
 $model = $DirectoryModel | ConvertFrom-Json
 

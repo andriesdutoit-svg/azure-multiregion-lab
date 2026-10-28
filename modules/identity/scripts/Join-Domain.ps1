@@ -3,13 +3,16 @@
 Joins a Windows workload VM to the declared AD domain and OU.
 .DESCRIPTION
 Consumes the serialized directory model and VM role to construct the computer OU.
-Validates inputs, returns when any domain membership is already reported, prepares
-domain credentials, waits for DNS, joins, verifies membership, and requests a reboot.
-The caller orders this after directory population and GPO provisioning.
+Validates inputs and the reported domain, and reconciles HTTP SPNs for retained
+members without rejoining. New members prepare domain credentials, wait for DNS,
+join, verify membership, reconcile SPNs, and request a reboot. The caller orders
+this after directory population and GPO definition provisioning.
 .NOTES
 Administrator group membership is owned by Group Policy, not repaired by this script.
-The early return does not verify the existing domain or move an already joined computer
-to a newly requested OU. Passwords must not be logged. The rerun token is caller metadata.
+Existing members must match the requested domain but are not moved to a newly
+requested OU. Windows applies computer policy normally; neither this script nor
+its module forces gpupdate or verifies effective guest policy before deployment
+continues. Passwords must not be logged. The rerun token is caller metadata.
 #>
 
 param(
@@ -69,6 +72,9 @@ if ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {
 
 Write-Host '[Info] Domain join inputs were parsed.'
 
+# These HTTP SPNs identify the member to Kerberos clients such as WAC. Domain membership
+# alone did not guarantee their presence. Reconcile them on reruns as well as fresh joins;
+# this is separate from the GPO-owned WinRM listener and firewall configuration.
 function Ensure-WinRMHttpSpns {
     param(
         [Parameter(Mandatory = $true)]
@@ -88,8 +94,17 @@ function Ensure-WinRMHttpSpns {
         throw "setspn.exe was not found at '$setSpnPath'."
     }
 
-    $netbiosName = $ExpectedDomain.Split('.')[0].ToUpperInvariant()
-    $computerAccount = "$netbiosName\$($computerSystem.Name)`$"
+    # Resolve the domain-qualified computer SID back to its canonical account name.
+    # The NetBIOS domain need not match the first DNS label; this needs no AD PowerShell module.
+    try {
+        $dnsAccount = New-Object -TypeName System.Security.Principal.NTAccount `
+            -ArgumentList "$($computerSystem.Domain)\$($computerSystem.Name)`$"
+        $computerSid = $dnsAccount.Translate([System.Security.Principal.SecurityIdentifier])
+        $computerAccount = $computerSid.Translate([System.Security.Principal.NTAccount]).Value
+    }
+    catch {
+        throw "Unable to resolve the domain computer account for '$($computerSystem.Name)': $($_.Exception.Message)"
+    }
     $expectedSpns = @(
         "HTTP/$($computerSystem.Name)"
         "HTTP/$($computerSystem.Name).$($ExpectedDomain.TrimEnd('.'))"
@@ -116,8 +131,8 @@ function Ensure-WinRMHttpSpns {
     }
 }
 
-# Return on existing domain membership before preparing credentials or issuing a new join.
-# This preserves retained guest state; it does not prove membership in the requested domain.
+# Existing members avoid credential preparation and another join, but must match the requested
+# domain and still receive SPN repair. Windows handles subsequent computer-policy processing.
 
 $computerSystem = Get-CimInstance Win32_ComputerSystem
 
