@@ -103,6 +103,7 @@ var directoryModel = {
     serverAdministration: gpoNames.serverAdministration
     clientAdministration: gpoNames.clientAdministration
     windowsLaps: gpoNames.windowsLaps
+    domainControllerWinRM: gpoNames.domainControllerWinRM
   }
 
 
@@ -159,7 +160,9 @@ module replicaDcs '../identity/ad-replicadc.bicep' = [
 ]
 
 // 3.2 Directory population and Group Policy
-// Group Policy runs after group/OU provisioning; domain joins depend on its completion.
+// Group Policy configuration runs after group/OU and DC-SPN reconciliation.
+// Domain joins wait for the GPO definitions; Windows processes those policies normally.
+// Deployment success does not establish effective guest policy or authenticated WAC access.
 module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
   name: '${prefix}-ad-populate'
 
@@ -174,6 +177,7 @@ module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
     dcVmName: primaryDc!.name
     domainName: domainName
     directoryModel: string(directoryModel)
+    domainControllerNames: map(filter(finalVmPlacements, vm => vm.type == 'dc'), dc => dc.name)
     sysAdminDepartment: sysAdminDepartment
     additionalDepartments: additionalDepartments
     departmentCount: departmentCount
@@ -185,7 +189,6 @@ module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
 
 module adGpo '../identity/ad-gpo.bicep' = if (deployIdentity) {
   name: '${prefix}-ad-gpo'
-
   scope: resourceGroup('${prefix}-rg-${primaryDc!.regionKey}')
 
   dependsOn: [
@@ -223,7 +226,7 @@ module fileServices '../identity/file-services.bicep' = if (deployIdentity && en
 }
 
 // 3.4 Windows domain membership
-// GPO provisioning precedes joins. The script skips joining an already domain-joined machine.
+// GPO provisioning precedes joins. Retained members skip the join but still receive SPN repair.
 
 module domainJoinWindows '../identity/domain-join.bicep' = [
   for vm in filter(finalVmPlacements, vm => vm.type == 'srvwin' || vm.type == 'cliwin'): if (deployIdentity) {
@@ -247,7 +250,8 @@ module domainJoinWindows '../identity/domain-join.bicep' = [
 ]
 
 // 3.5 Windows Admin Center
-// Wait for directory provisioning and Windows joins so the selected host has working domain DNS.
+// Wait for GPO configuration and Windows joins, not for target-management readiness.
+// The VM agent installs WAC independently of the targets' current WinRM firewall state.
 module windowsAdminCenter '../identity/wac.bicep' = if (deployIdentity && enableWindowsAdminCenter) {
   name: '${prefix}-wac-${wacHostVm.name}'
 

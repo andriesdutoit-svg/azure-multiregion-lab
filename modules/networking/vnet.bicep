@@ -371,10 +371,12 @@ module subnetHub 'subnet.bicep' = if (isHub && deployAzureFirewallSubnet) {
 }
 
 // Bastion subnet reconciliation also runs for an existing hub when enabled.
+// Serialize with the optional firewall subnet because both mutate the same parent VNet.
 module subnetBastion 'subnet.bicep' = if (isHub && enableBastion) {
   name: 'AzureBastionSubnet'
   dependsOn: [
     subnetJumpbox
+    subnetHub
   ]
   params: {
     vnetName: vnetName

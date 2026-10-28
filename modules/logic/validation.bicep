@@ -52,11 +52,10 @@ param subnetIndexMap object
 param jumpboxAllowedSources array
 
 // Identity, Group Policy, and directory population
-param enableIdentity bool
 // Optional WAC installation and target preference
 param enableWindowsAdminCenter bool = false
 param useDedicatedWacHost bool = false
-// Domain and GPO names feed guest DN/SYSVOL construction and packaged backup matching.
+// Domain and GPO names feed guest DN/SYSVOL construction and programmatic GPO creation.
 param domainName string = ''
 param gpoNames object = {}
 param sysAdminDepartment object
@@ -261,16 +260,14 @@ var spokeRegionsCovered = empty(spokesNotCovered)
 
 var hasMixedCreationMode = deployNetwork && length(existingRegions) > 0 && length(existingRegions) < regionCount
 
-// File-service settings must align with identity activation and target availability.
+// Optional services must have consistent feature settings and available targets.
 var missingDedicatedFileServer = useDedicatedFileServer && !fileServerVmAvailable
 
 var invalidDedicatedFileServerConfiguration = !enableFileServices && useDedicatedFileServer
-var invalidFileServicesIdentityConfiguration = !enableIdentity && (enableFileServices || useDedicatedFileServer)
 var hasWindowsServerVm = !empty(filter(vmPlacements, vm => vm.type == 'srvwin'))
 var invalidDedicatedWacHostConfiguration = useDedicatedWacHost && !enableWindowsAdminCenter
 var missingDedicatedWacHost = enableWindowsAdminCenter && useDedicatedWacHost && !hasWindowsServerVm
-var invalidWindowsAdminCenterIdentityConfiguration = enableWindowsAdminCenter && !enableIdentity
-var windowsAdminCenterSkippedForStage = enableWindowsAdminCenter && enableIdentity && !deployIdentity
+var windowsAdminCenterSkippedForStage = enableWindowsAdminCenter && !deployIdentity
 
 // 2.7 Spoke workload capacity
 // Report remaining capacity after modeled control-plane occupancy. The hub contributes zero
@@ -337,18 +334,18 @@ var emptyDomainLabelFlags = [
 // Flag blank, single-label, or UNC-unsafe names before the GPO script builds DNs and SYSVOL paths.
 var malformedDomainName = empty(domainName) || length(domainLabels) < 2 || contains(emptyDomainLabelFlags, true) || contains(domainName, ' ') || contains(domainName, '\\') || contains(domainName, '@') || contains(domainName, '/')
 
-var hasMalformedDomainName = enableIdentity && malformedDomainName
+var hasMalformedDomainName = malformedDomainName
 
 var emptySysAdminDepartmentCodeFlags = [
   for d in items(sysAdminDepartment): empty(d.value)
 ]
 
 // The GPO group reference resolves GGS_<windowsAdmins>, which population sources from this code.
-var hasEmptySysAdminDepartmentCode = enableIdentity && (empty(items(sysAdminDepartment)) || contains(emptySysAdminDepartmentCodeFlags, true))
+var hasEmptySysAdminDepartmentCode = empty(items(sysAdminDepartment)) || contains(emptySysAdminDepartmentCodeFlags, true)
 
 // Missing primary-region DC pinning raises a GPO-target advisory; this check does not probe the guest.
-var hasNoGpoTargetDc = enableIdentity && missingPinnedDc
-var hasInvalidGpoNames = enableIdentity && (empty(gpoNames.?serverAdministration) || empty(gpoNames.?clientAdministration) || empty(gpoNames.?windowsLaps))
+var hasNoGpoTargetDc = missingPinnedDc
+var hasInvalidGpoNames = empty(gpoNames.?serverAdministration) || empty(gpoNames.?clientAdministration) || empty(gpoNames.?windowsLaps) || empty(gpoNames.?domainControllerWinRM)
 
 // 3. Ordered finding catalogs
 // Preserve array order, flag names, severities, messages, and remediation text. The first
@@ -579,28 +576,12 @@ var blockingValidationFindings = [
     remediation: 'Enable file services or set useDedicatedFileServer to false.'
   }
   {
-    flag: 'invalidFileServicesIdentityConfiguration'
-    active: invalidFileServicesIdentityConfiguration
-    severity: 'block'
-    category: 'FileServices'
-    message: 'enableIdentity must be true when enableFileServices or useDedicatedFileServer is true. File services depend on Active Directory users and groups.'
-    remediation: 'Enable identity or disable file services and dedicated file-server mode.'
-  }
-  {
     flag: 'invalidDedicatedWacHostConfiguration'
     active: invalidDedicatedWacHostConfiguration
     severity: 'block'
     category: 'WindowsAdminCenter'
     message: 'useDedicatedWacHost cannot be true when enableWindowsAdminCenter is false.'
     remediation: 'Enable Windows Admin Center or set useDedicatedWacHost to false.'
-  }
-  {
-    flag: 'invalidWindowsAdminCenterIdentityConfiguration'
-    active: invalidWindowsAdminCenterIdentityConfiguration
-    severity: 'block'
-    category: 'WindowsAdminCenter'
-    message: 'enableWindowsAdminCenter requires enableIdentity=true because WAC installation runs in the identity stage.'
-    remediation: 'Enable identity or disable Windows Admin Center.'
   }
 ]
 
@@ -741,7 +722,7 @@ var advisoryValidationFindings = [
     active: hasNoGpoTargetDc
     severity: 'advisory'
     category: 'GroupPolicy'
-    message: 'Group Policy provisioning runs on the primary domain controller, which is not placed in the primary region. Correct dc01 placement or set enableIdentity to false.'
+    message: 'Group Policy provisioning runs on the primary domain controller, which is not placed in the primary region. Correct dc01 placement before running the identity stage.'
     remediation: 'Pin dc01 to the primary region in existingVmPlacements, or enable identity only when a primary-DC target is available.'
   }
   {
@@ -749,8 +730,8 @@ var advisoryValidationFindings = [
     active: hasInvalidGpoNames
     severity: 'advisory'
     category: 'GroupPolicy'
-    message: 'GPO names must define non-empty serverAdministration, clientAdministration, and windowsLaps values so the import script can match the exported backups.'
-    remediation: 'Set all three gpoNames values to the corresponding display names in the exported GPO backups.'
+    message: 'GPO names must define non-empty serverAdministration, clientAdministration, windowsLaps, and domainControllerWinRM values.'
+    remediation: 'Provide non-empty display names for the Server Administration, Client Administration, Windows LAPS, and Domain Controller WinRM GPOs.'
   }
   {
     flag: 'hasUnsafeJumpboxAllowedSources'

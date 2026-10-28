@@ -18,8 +18,13 @@ param reconciliationToken string
 
 // 2. Script content
 // Share creation and permission reconciliation are owned by the guest script.
+// Embed the same department selector as AD population to keep share and group targets aligned.
 
-var populateSharesScript = loadTextContent('./scripts/Populate-Shares.ps1')
+var populateSharesScript = replace(
+  loadTextContent('./scripts/Populate-Shares.ps1'),
+  '# __AMRL_DEPARTMENT_SELECTION__',
+  loadTextContent('./scripts/Get-SelectedDepartments.ps1')
+)
 
 // 3. Existing file server and Run Command
 // The caller ensures directory population and, for a dedicated server, domain join run first.

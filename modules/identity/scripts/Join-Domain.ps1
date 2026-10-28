@@ -3,13 +3,16 @@
 Joins a Windows workload VM to the declared AD domain and OU.
 .DESCRIPTION
 Consumes the serialized directory model and VM role to construct the computer OU.
-Validates inputs, returns when any domain membership is already reported, prepares
-domain credentials, waits for DNS, joins, verifies membership, and requests a reboot.
-The caller orders this after directory population and GPO provisioning.
+Validates inputs and the reported domain, and reconciles HTTP SPNs for retained
+members without rejoining. New members prepare domain credentials, wait for DNS,
+join, verify membership, reconcile SPNs, and request a reboot. The caller orders
+this after directory population and GPO definition provisioning.
 .NOTES
 Administrator group membership is owned by Group Policy, not repaired by this script.
-The early return does not verify the existing domain or move an already joined computer
-to a newly requested OU. Passwords must not be logged. The rerun token is caller metadata.
+Existing members must match the requested domain but are not moved to a newly
+requested OU. Windows applies computer policy normally; neither this script nor
+its module forces gpupdate or verifies effective guest policy before deployment
+continues. Passwords must not be logged. The rerun token is caller metadata.
 #>
 
 param(
@@ -69,8 +72,67 @@ if ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {
 
 Write-Host '[Info] Domain join inputs were parsed.'
 
-# Return on existing domain membership before preparing credentials or issuing a new join.
-# This preserves retained guest state; it does not prove membership in the requested domain.
+# These HTTP SPNs identify the member to Kerberos clients such as WAC. Domain membership
+# alone did not guarantee their presence. Reconcile them on reruns as well as fresh joins;
+# this is separate from the GPO-owned WinRM listener and firewall configuration.
+function Ensure-WinRMHttpSpns {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedDomain
+    )
+
+    $computerSystem = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+    if (-not $computerSystem.PartOfDomain) {
+        throw 'Cannot reconcile WinRM SPNs because this computer is not domain joined.'
+    }
+    if ($computerSystem.Domain -ine $ExpectedDomain.TrimEnd('.')) {
+        throw "This computer is joined to '$($computerSystem.Domain)', not expected domain '$ExpectedDomain'."
+    }
+
+    $setSpnPath = Join-Path $env:SystemRoot 'System32\setspn.exe'
+    if (-not (Test-Path -LiteralPath $setSpnPath)) {
+        throw "setspn.exe was not found at '$setSpnPath'."
+    }
+
+    # Resolve the domain-qualified computer SID back to its canonical account name.
+    # The NetBIOS domain need not match the first DNS label; this needs no AD PowerShell module.
+    try {
+        $dnsAccount = New-Object -TypeName System.Security.Principal.NTAccount `
+            -ArgumentList "$($computerSystem.Domain)\$($computerSystem.Name)`$"
+        $computerSid = $dnsAccount.Translate([System.Security.Principal.SecurityIdentifier])
+        $computerAccount = $computerSid.Translate([System.Security.Principal.NTAccount]).Value
+    }
+    catch {
+        throw "Unable to resolve the domain computer account for '$($computerSystem.Name)': $($_.Exception.Message)"
+    }
+    $expectedSpns = @(
+        "HTTP/$($computerSystem.Name)"
+        "HTTP/$($computerSystem.Name).$($ExpectedDomain.TrimEnd('.'))"
+    )
+
+    $registeredOutput = & $setSpnPath -L $computerAccount 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to list SPNs for '$computerAccount': $($registeredOutput -join ' ')"
+    }
+    $registeredSpns = @($registeredOutput | ForEach-Object { $_.ToString().Trim() })
+
+    foreach ($spn in $expectedSpns) {
+        if ($registeredSpns -icontains $spn) {
+            Write-Host "[Verified] WinRM HTTP SPN is registered: $spn"
+            continue
+        }
+
+        $registrationOutput = & $setSpnPath -S $spn $computerAccount 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to register WinRM HTTP SPN '$spn' on '$computerAccount': $($registrationOutput -join ' ')"
+        }
+
+        Write-Host "[Updated] Registered WinRM HTTP SPN: $spn"
+    }
+}
+
+# Existing members avoid credential preparation and another join, but must match the requested
+# domain and still receive SPN repair. Windows handles subsequent computer-policy processing.
 
 $computerSystem = Get-CimInstance Win32_ComputerSystem
 
@@ -78,7 +140,12 @@ Write-Host "[Info] Current computer name: $($computerSystem.Name)."
 Write-Host "[Info] Current domain-membership flag: $($computerSystem.PartOfDomain)."
 
 if ($computerSystem.PartOfDomain) {
+    if ($computerSystem.Domain -ine $DomainName.TrimEnd('.')) {
+        throw "Computer is already joined to '$($computerSystem.Domain)', not requested domain '$DomainName'."
+    }
+
     Write-Host '[Info] Computer already reports domain membership; no join command will run.'
+    Ensure-WinRMHttpSpns -ExpectedDomain $DomainName
     return
 }
 
@@ -158,6 +225,7 @@ if (-not $computerSystem.PartOfDomain) {
 }
 
 Write-Host "[Verified] Computer reports domain membership after the join."
+Ensure-WinRMHttpSpns -ExpectedDomain $DomainName
 
 # ============================================================================
 # PHASE 5: DEFER ADMINISTRATOR MEMBERSHIP TO GPO AND RESTART

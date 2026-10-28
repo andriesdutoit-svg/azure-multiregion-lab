@@ -43,31 +43,11 @@ mstsc /v:$windowsVmFqdn
 
 ### Windows Admin Center
 
-When `enableWindowsAdminCenter=true` and identity is enabled, AMRL installs the Windows Admin Center gateway during `stage=identity` or `stage=all`, after AD/GPO setup and Windows domain joins. The default host is the primary jumpbox; `useDedicatedWacHost=true` selects the first `srvwin` in the final placement model, falling back to the primary jumpbox if no Windows server is modeled.
+When `enableWindowsAdminCenter=true`, AMRL installs the gateway during `stage=identity` or `stage=all`, after AD and Windows domain join. The default host is the primary jumpbox; `useDedicatedWacHost=true` selects the first `srvwin`, falling back to the jumpbox if none is modeled. The gateway needs working DNS and outbound HTTPS.
 
-For a fresh install, the script downloads Microsoft's current WAC v2 EXE through `https://aka.ms/WACDownload`, verifies its Authenticode signature, and runs it silently. On fresh installs and brownfield reruns, the repair path reapplies Windows Authentication, configures WinRM over HTTP, sets domain-only WinRM trusted hosts, ensures `RSAT-AD-PowerShell` is installed, and restarts the WAC service. Existing WAC services are not reinstalled or automatically upgraded. AMRL does not configure inbound web access or automatically populate Shared Connections; operators can use WAC's Active Directory search and UI to add connections. Reachability depends on the selected host's network and guest-firewall rules; AMRL does not expose the listener to the Internet.
+Open `https://<wac-hostname>` from a network that can reach the gateway, and trust its certificate if prompted. In WAC, choose **All connections > Add** and search Active Directory to find domain-joined VMs, or add one by its FQDN (for example, `<prefix>-srvwin01.<domainName>`). For the connection, choose **Manage As** and enter an authorized domain account in `user@domain` format, such as `admin@example.com`. **Use my Windows account** is not supported because AMRL does not configure credential delegation.
 
-| WAC setting | Target value | How AMRL handles it |
-|---|---|---|
-| Installation status | `StandardInstalled` | Checked after installation. |
-| Login mode | `WindowsAuthentication` | Set by `Set-WACLoginMode` and checked. |
-| WinRM over HTTPS | `false` | Written to WAC `appsettings.json`; WAC uses WinRM over HTTP (TCP 5985) for managed servers in the current phase. |
-| WinRM trusted hosts | Domain-only | Configured by `Set-WACWinRmTrustedHosts`; not independently read back by the script. |
-| WAC gateway HTTPS listener | `443` | The browser-to-gateway listener is HTTPS and is checked for a reported valid port and local TCP reachability; the script does not require the port to equal 443. This is separate from WinRM transport to managed servers. |
-| Service port range | `6601-6610` | Observed in the manual WAC installation; not currently set or verified by the script. |
-| Software updates | `Automatic` | Observed in the manual WAC installation; not currently set or verified by the script. |
-| Telemetry privacy | `Required` | Observed in the manual WAC installation; not currently set or verified by the script. |
-| Runtime / operation mode | `Service` / `Production` | Observed in the manual WAC installation; not currently checked by the script. |
-
-The installer-generated self-signed certificate is checked for presence, but its identity and trust chain are not validated. For browser access, use `https://<wac-hostname>:443` after confirming the listener configuration and arrange certificate trust as required. The endpoint check extracts `EndpointFqdn` and rejects an empty value; it does not compare the value with the expected host FQDN.
-
-### WAC Remote Management
-
-WAC's browser connection to the gateway uses HTTPS; the current gateway-to-server WinRM transport uses HTTP on TCP 5985. The server and client NSGs allow TCP 5985 and 5986 from `10.0.0.0/8`. The Server Administration and Client Administration GPOs configure the WinRM service and allow both ports from that range on the **Domain** firewall profile. WinRM over HTTPS (5986) is not configured because the lab does not yet provision server-authentication certificates; it is deferred to the PKI/security phase.
-
-Verify the target's network profile and effective policy as well as TCP reachability. A successful `Test-NetConnection` proves only that TCP connects, not that WinRM authentication or WAC delegation succeeds. In the reported v2.10 tests, cross-region WinRM and WAC management worked with explicit **Manage As** credentials after correcting the managed server's Windows Firewall rule. **Use my Windows account** still failed with `0x8009030e`; Kerberos delegation is the suspected cause and remains unresolved. Use explicit credentials as the current workaround. RBCD is a candidate for a future design, not an implemented capability.
-
-Disabling WAC in a later deployment does not uninstall it from the host.
+The browser-to-gateway connection uses HTTPS; the gateway connects to Windows VMs with WinRM over HTTP/TCP 5985. WinRM HTTPS/TCP 5986 is not configured; its NSG/GPO allowance alone does not provide a listener or certificate. AMRL does not expose the WAC UI to the Internet. See [WAC and WinRM checks](validation-and-troubleshooting.md#wac-and-winrm-checks) if a target cannot be reached.
 
 For domain-joined workloads, use an authorized domain account for routine administration. Administration GPOs assign the modeled Windows administrators group. Where Windows LAPS applies, use [LAPS recovery](#windows-laps-break-glass-access) rather than assuming the original local password remains current.
 
@@ -148,32 +128,8 @@ Bastion provides an additional path to jumpboxes. During `network` or `all`, dis
 
 Retained jumpboxes keep their existing Public IP configuration: missing IPs are not added and existing IPs are not removed automatically. Verify replacement access before disabling Bastion, particularly for retained jumpboxes created without Public IPs.
 
-## Key Vault Setup
+## Credentials and Keys
 
-Foundation credential provisioning is documented in [New Subscription Setup](new-subscription-setup.md#key-vault-setup). The links below retain direct access to setup and maintenance tasks without repeating the deployment walkthrough.
-
-### Create Or Reuse Key Vault
-
-Follow [Create Or Reuse Key Vault](new-subscription-setup.md#create-or-reuse-key-vault), preserving existing vaults and secrets.
-
-### User Secret Access
-
-Use [User Secret Access](new-subscription-setup.md#user-secret-access) to grant the administrator secret-management permission.
-
-### GitHub Actions Secret Access
-
-For optional CI automation, configure [GitHub Actions Secret Access](new-subscription-setup.md#github-actions-secret-access) after OIDC setup.
-
-### Foundation Deletion Lock
-
-See [Foundation Deletion Lock](new-subscription-setup.md#foundation-deletion-lock) for protection and intentional maintenance.
-
-### SSH Key Setup
-
-Follow [SSH Key Setup](new-subscription-setup.md#ssh-key-setup) for a dedicated lab key pair and secure upload. Updating the vault alone does not rotate retained Linux authorized keys.
-
-### Admin Password Setup
-
-Use [Admin Password Setup](new-subscription-setup.md#admin-password-setup) for masked entry and upload. Deployment passwords initialize local VM accounts, not generated AD users; exposed retained guest credentials must be rotated separately.
+Credential, Key Vault, and SSH-key provisioning are covered in [New Subscription Setup](new-subscription-setup.md). Updating a Key Vault secret does not by itself rotate credentials already installed on retained VMs.
 
 [Back to README](../README.md)

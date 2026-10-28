@@ -46,6 +46,8 @@ flowchart TD
 
 The placement engine counts existing VMs per spoke, calculates available slots, and converts those slots into cumulative boundaries. A new VM's ordinal is mapped to the first boundary that contains it.
 
+Control-plane assignments are calculated once. Both workload-capacity reservations and the final DC/jumpbox placements use that same result, indexed in missing-VM order; pinning and overflow are not independently recalculated for deployment.
+
 This is deterministic desired-state calculation. It is not a live Azure capacity query and cannot detect resources that are missing from the parameter inventory.
 
 ## Final Placement Model
@@ -80,6 +82,8 @@ Before every brownfield deployment, including unchanged reruns, ensure the param
 
 VM placement is independent of `networkMode`. The hub remains the control-plane region for `dc01` and `jmp01`, while workload placement, capacity accounting, DNS candidates, and identity targeting use the same final placement model in every topology mode. For network-transition behavior and reconciliation boundaries, see [Brownfield Topology Simplification](deployment.md#brownfield-topology-simplification).
 
+Network cleanup runs after desired peering, firewall, and Bastion provisioning, which also orders it after subnet updates. This prevents Bastion subnet cleanup from writing a stale VNet snapshot over concurrent desired-state changes. Optional hub firewall and Bastion subnet updates are serialized as well.
+
 ## File Server Reassignment on Brownfield Expansion
 
 The `useDedicatedFileServer` parameter controls the file server target:
@@ -87,7 +91,7 @@ The `useDedicatedFileServer` parameter controls the file server target:
 - `false` — file services always run on the primary DC.
 - `true` — file services run on the first `srvwin` VM in `finalVmPlacements`. If none exists, target selection falls back to the primary DC so template evaluation can continue, while `validationFlags.missingDedicatedFileServer` and `validationMessage` report the invalid configuration. Add a Windows server or disable dedicated mode before relying on the result. See [Deployment Results and Troubleshooting](validation-and-troubleshooting.md) for reviewing validation outputs.
 
-File services are provisioned only when `enableFileServices=true` during an `identity` or `all` stage. Dedicated mode also requires `enableIdentity=true`; the validation module reports unsupported combinations.
+File services are provisioned only when `enableFileServices=true` during an `identity` or `all` stage. Dedicated mode requires file services to be enabled and a Windows server target; the validation module reports unsupported combinations.
 
 The file server target is recomputed on every deployment. Enabling dedicated mode when adding a Windows server selects that server instead of the DC. If dedicated mode was already enabled without a server, adding one replaces the invalid configuration's DC fallback. With dedicated mode disabled, adding a server does not change the DC target.
 

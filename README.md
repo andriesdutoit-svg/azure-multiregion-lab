@@ -1,14 +1,12 @@
 # Azure Multi-Region Lab (AMRL)
 
-AMRL deploys a multi-region Azure lab of Windows and Linux machines, connected networks, and optional Active Directory services using Bicep. Parameter files control the lab's size, placement, topology, and enabled services, supporting both new environments and expansion of existing AMRL labs.
-
-**Current completed milestone:** v2.10 Windows Admin Center and remote management. See [Project History](docs/project-history.md) for delivered scope and deferred work.
+AMRL deploys a multi-region Active Directory lab of Windows and Linux machines and connected networks using Bicep. Parameter files control the lab's size, placement, topology, and enabled services, supporting both new environments and expansion of existing AMRL labs.
 
 ## What You Deploy
 
 - Regional VNets, role subnets, and NSGs, with full-mesh or hub-spoke connectivity and optional Azure Firewall routing.
 - Domain-controller and jumpbox VMs in the primary region, with additional DCs, jumpboxes, and Windows/Linux workloads placed according to capacity.
-- Optional AD forest and replica promotion, departmental OUs/groups/users, Group Policy, and workload domain joining.
+- AD forest and replica promotion, departmental OUs/groups/users, Group Policy, and workload domain joining in the identity stage.
 - Jumpbox-based administration, optional Azure Bastion, departmental file shares, and Linux client desktops.
 
 The project demonstrates modular Infrastructure as Code, staged deployment, declared-inventory reconciliation, and configuration validation. See [Architecture](docs/architecture.md) for how these parts fit together.
@@ -33,7 +31,7 @@ Choose one path:
 - A User Assigned Managed Identity for deployment-script automation; grant it the Network Contributor role at subscription scope and pass its resource ID through `automationManagedIdentityResourceId`.
 - Valid VM sizes and images for the target regions.
 - Sufficient regional vCPU quota.
-- At least one domain controller requested with `vmCounts.dc >= 1`, even when identity and file services are disabled.
+- At least one domain controller requested with `vmCounts.dc >= 1`; AD is the lab's control plane, even when identity setup is deferred to a later stage.
 
 Trial and Student subscriptions may restrict regions, VM sizes, images, or quota. Check availability before deployment using the commands in [Validation and Troubleshooting](docs/validation-and-troubleshooting.md).
 
@@ -98,7 +96,7 @@ Stages are dependency layers rather than isolated products: compute requires net
 
 ## Identity and Domain Join
 
-Azure VM Run Commands configure AD, Group Policy, domain membership, and optional departmental shares. Scripts retain existing state and repair selected configuration; GPO backups seed missing policies rather than overwrite existing ones. See [Identity and Domain Join](docs/identity-and-domain-join.md) for the workflow and reconciliation boundaries, and [Access and Administration](docs/access-and-administration.md) for RDP, SSH, and credential setup.
+Azure VM Run Commands configure AD, Group Policy, domain membership, and optional departmental shares. The identity stage creates or reconciles modeled GPO settings and can run after network and compute stages. See [Identity and Domain Join](docs/identity-and-domain-join.md) for the workflow and [Access and Administration](docs/access-and-administration.md) to connect to the lab.
 
 ## Validation
 
