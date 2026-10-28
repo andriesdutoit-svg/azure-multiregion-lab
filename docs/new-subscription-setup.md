@@ -2,17 +2,49 @@
 
 [Back to README](../README.md)
 
-Use this complete path for a new Azure subscription or tenant. It owns foundation and credential setup and includes the final lab deployment; do not repeat the README quick start afterward. Follow the checklist in order, using the optional CI links only when required.
+Use this complete path for a new Azure subscription or tenant. It owns foundation and credential setup and includes the final lab deployment; do not repeat the README quick start afterward. Start with [Automated Setup](#automated-setup), or use the manual reference sections below when you prefer to run each command yourself.
 
 ## Before You Start
 
-Use one PowerShell session from the repository root. Install Azure CLI and Git; SSH-key setup also needs `ssh-keygen`. GitHub Actions setup is optional and additionally needs GitHub CLI (`gh`). Stop on command errors and replace all angle-bracket placeholders before running commands.
+Use Windows PowerShell 5.1 from the repository root. Install Azure CLI and Git; SSH-key setup also needs `ssh-keygen`. GitHub Actions setup is optional and additionally needs GitHub CLI (`gh`). Stop on command errors and replace all angle-bracket placeholders before running manual commands.
 
 Resource creation requires subscription access. Role assignments and foundation locks require additional authorization, such as subscription Owner. Entra app creation requires tenant permission. Ask an administrator if these rights are unavailable.
 
 Never share private keys, passwords, or secret-bearing terminal output. Secret-writing examples suppress output, but credentials already exposed must still be rotated.
 
-## Setup Order
+## Automated Setup
+
+The recommended path uses the Windows PowerShell 5.1 bootstrapper to prepare subscription prerequisites and Bicep parameters. It creates or reuses the foundation resource group, managed identity, and Key Vault; creates missing role assignments; writes missing secrets to Key Vault; prepares `main.parameters.local.json`; and runs local Bicep validation and regional preflight checks. Infrastructure creation remains owned by `main.bicep`.
+
+From the repository root, first preview bootstrap mutations:
+
+```powershell
+.\scripts\Initialize-AMRLSubscription.ps1 -WhatIf
+```
+
+Run the bootstrap interactively after reviewing the preview. It defaults to generating administrator passwords securely; add `-PromptPasswords` to enter them using masked prompts. SSH keys are reused when both files exist, generated only when neither exists, and never automatically rotated.
+
+```powershell
+.\scripts\Initialize-AMRLSubscription.ps1
+```
+
+The script uses `main.parameters.local.json` by default; that file is git-ignored. Pass `-ParameterFile` to use another path. The wizard prompts for a tenant/subscription confirmation, missing location/topology choices, and an approved public IPv4 when required. The subscription deployment metadata location defaults to the foundation location and can be set with `-DeploymentLocation`. Existing parameter choices and non-placeholder source ranges are preserved; mismatched Key Vault or managed identity references stop for manual review.
+
+For GitHub Actions OIDC and repository configuration, add `-IncludeGitHub`. This requires GitHub CLI authentication and tenant permission to manage the app registration. For deployment, the script always runs Bicep build/lint, validation, regional checks, and subscription `what-if`. Review the preview first; deployment is not started unless `-Deploy` is supplied and you type `DEPLOY` at the confirmation prompt:
+
+```powershell
+.\scripts\Initialize-AMRLSubscription.ps1 -IncludeGitHub -Deploy
+```
+
+`-WhatIf` prevents bootstrap writes. Because later actions depend on earlier resources, the script may stop at the first missing prerequisite rather than simulate the entire flow. After deployment, it prints the saved validation summary, blocking/advisory findings, capacity and placement outputs, and VM Run Command states. If enforcement blocks deployment, it attempts to retrieve the nested validation-engine findings before rethrowing the error. Use the documented guest checks to establish operational readiness. Local mocked tests run with:
+
+```powershell
+.\scripts\tests\Test-Initialize-AMRLSubscription.ps1
+```
+
+The manual sections below remain the reference for each resource, permission, and recovery step, and can be followed instead of the bootstrapper.
+
+## Manual Setup Order
 
 | Step | Action | Required State / Result |
 |---|---|---|

@@ -49,6 +49,8 @@ az deployment sub show `
   --output json
 ```
 
+When deploying with `scripts/Initialize-AMRLSubscription.ps1 -Deploy`, the bootstrapper prints the saved validation summary, blocking/advisory findings, capacity, placements, and Run Command states automatically. If enforcement blocks the root deployment, it attempts to retrieve and print the nested validation-engine outputs using the name `<prefix>-validation-engine-<first-20-characters-of-root-deployment-name>` before rethrowing the deployment error. Use the commands in [Start Here](#start-here) if those outputs cannot be retrieved.
+
 Then verify the user-visible result: administration access, expected Windows/Linux domain membership, domain DNS, and enabled shares/desktops. Inspect guest `executionState`, `exitCode`, `error`, and `output`; a successful ARM resource operation alone is not proof of guest readiness.
 
 ## WAC And WinRM Checks
