@@ -56,7 +56,7 @@ param enableIdentity bool
 // Optional WAC installation and target preference
 param enableWindowsAdminCenter bool = false
 param useDedicatedWacHost bool = false
-// Domain and GPO names feed guest DN/SYSVOL construction and packaged backup matching.
+// Domain and GPO names feed guest DN/SYSVOL construction and programmatic GPO creation.
 param domainName string = ''
 param gpoNames object = {}
 param sysAdminDepartment object
@@ -750,7 +750,7 @@ var advisoryValidationFindings = [
     severity: 'advisory'
     category: 'GroupPolicy'
     message: 'GPO names must define non-empty serverAdministration, clientAdministration, windowsLaps, and domainControllerWinRM values.'
-    remediation: 'Set the three imported GPO names to their exported backup display names and provide a name for the generated domain-controller WinRM GPO.'
+    remediation: 'Provide non-empty display names for the Server Administration, Client Administration, Windows LAPS, and Domain Controller WinRM GPOs.'
   }
   {
     flag: 'hasUnsafeJumpboxAllowedSources'

@@ -58,7 +58,7 @@ The `directoryModel` object in `modules/stages/identity-stage.bicep` is passed a
 - `groupOuMapping` — OUs for global security groups (`Groups/GGS`) and domain local security groups (`Groups/DLGS`).
 - `groupNaming` — configurable prefixes: `globalSecurityPrefix` (`GGS`) for user-facing department groups, `domainLocalSecurityPrefix` (`DLGS`) for share permission groups.
 - `platformAdminGroups` — names of the Windows/Linux platform admin groups and the department code they're sourced from.
-- `gpoNames` — display names of the Server Administration, Client Administration, and Windows LAPS GPOs. Each must match the `DisplayName` inside an exported backup in `GpoTemplates.zip`.
+- `gpoNames` — display names for the Server Administration, Client Administration, Windows LAPS, and Domain Controller WinRM GPOs. The configurator creates and reconciles all four directly in Active Directory.
 - `shares` — root share name/path (`C:\Shares`) and the current file server host (`fileServerName`).
 - `coreOuMapping` — references to the core `Users`/`Groups` OUs used by scripts.
 
@@ -82,7 +82,7 @@ Reruns preserve object identities while repairing the selected attributes and me
 
 During directory population, `Ensure-LapsConfiguration` checks for the `ms-LAPS-Password` schema attribute and extends the AD schema with `Update-LapsADSchema` only when it is missing. It grants computer self-update permission separately on the Servers and Clients OUs, then grants the configured Windows administrators group (default `GGS_Windows_Admins`) permission to read LAPS passwords on both OUs.
 
-The linked Windows LAPS GPO supplies the policy side of this setup: it backs passwords up to Active Directory. After import (or when an existing GPO is found), `Import-GPO-Templates.ps1` reconciles its `ADPasswordEncryptionPrincipal` registry policy value to the live NetBIOS domain and the Windows administrators group derived from `directoryModel`. This keeps the GPO decryptor aligned with the AD read-permission group without re-importing the GPO. Other LAPS policy settings remain creation-time values from the backup; changing those still requires replacing the existing GPO or updating it separately.
+The linked Windows LAPS GPO supplies the policy side of this setup: it backs passwords up to Active Directory. `Configure-GPOs.ps1` creates or reconciles its backup directory, password complexity, password length, password age, and authorized decryptor settings directly in the GPO. The decryptor is derived from the live NetBIOS domain and the Windows administrators group in `directoryModel`.
 
 ## Departmental File Services
 
@@ -114,7 +114,7 @@ During identity stage, `dc-winrm.bicep` performs the corresponding per-DC SPN re
 
 ## Group Policy Provisioning
 
-After directory population, `modules/identity/ad-gpo.bicep` runs `Import-GPO-Templates.ps1` on the primary DC to create the three packaged GPOs from exported GPMC backups and provision the dedicated DC WinRM GPO.
+After directory population, `modules/identity/ad-gpo.bicep` runs `Configure-GPOs.ps1` on the primary DC to create or reconcile all four GPOs directly; no GPMC backup ZIP is used.
 
 GPO names come from the directory model, so the script does not hardcode them:
 
@@ -127,32 +127,24 @@ gpoNames.domainControllerWinRM ->  linked to OU=Domain Controllers
 
 Windows LAPS is linked separately to the Servers and Clients OUs. The Windows administrators group-reference rewrite applies only to the two administration GPOs.
 
-The Server Administration and Client Administration GPOs configure the WinRM service and allow TCP 5985 and 5986 from `10.0.0.0/8` on all firewall profiles. The importer reconciles these firewall rules in the GPO itself, including for GPOs that already exist. Their local Administrators preference adds `AMRL\GGS_Windows_Admins` without clearing other members. The generated Domain Controller WinRM GPO allows TCP 5985 from the same internal range on all profiles. The current WAC configuration uses WinRM over HTTP (5985); the 5986 firewall allowance does not create an HTTPS listener or certificate. Other GPO settings still need to process successfully on each member.
+The Server Administration and Client Administration GPOs configure WinRM service startup and listener policy and allow TCP 5985 and 5986 from `10.0.0.0/8` on all firewall profiles. Their Local Users and Groups preference adds `AMRL\GGS_Windows_Admins` to built-in Administrators without clearing other members. The generated Domain Controller WinRM GPO allows TCP 5985 from the same internal range on all profiles. Windows LAPS policy is configured directly in its GPO. The current WAC configuration uses WinRM over HTTP (5985); the 5986 firewall allowance does not create an HTTPS listener or certificate.
 
-Missing packaged GPOs are seeded from backups; unrelated existing settings are retained. Reruns reconcile the selected WinRM firewall rules, modeled administrator references, LAPS decryptor, and links. Use a new deployment name to reapply automation, and verify client processing separately.
+Missing GPOs are created with `New-GPO`; reruns reapply the settings managed by this configurator and repair the modeled links. Unrelated settings on existing GPOs are not wholesale-cleared. Verify client processing separately.
 
 <details>
 <summary>GPO implementation and rerun boundaries</summary>
 
-The backups ship as `modules/identity/templates/gpo/GpoTemplates.zip`. `ad-gpo.bicep` base64-encodes the archive and replaces a placeholder in the generated PowerShell script, rather than passing the large archive as a Run Command parameter. The script writes the decoded zip to `C:\Temp\GpoTemplates.zip` on the DC, expands it to `C:\Temp\GpoTemplates`, and removes any previous extraction first. The archive must contain a top-level `GpoTemplates` folder.
-
-The template validation engine reports flags for a malformed `domainName`, a missing or blank system-administration department code, a missing primary-DC target, and missing or blank GPO names. These flags are diagnostic outputs and do not by themselves block deployment. On the DC, the script checks that the zip is present and decodable, that it expands to the expected folder, and that each packaged GPO has a matching `Backup.xml` display name. The generated DC WinRM GPO does not require a packaged backup. The script also checks for the target OUs and an existing `Groups.xml` with exactly one member entry before rewriting the Windows administrators reference in the two administration GPOs. Run Command failures fail the deployment.
-
-For the three packaged GPOs, a missing GPO is imported from the backup whose `Backup.xml` `DisplayName` matches the configured name. Existing GPO policy settings are not re-imported wholesale; the two Administration GPO firewall rules are selectively reconciled in place to all profiles. The generated DC GPO is created if absent and its firewall rule is reconciled on every run. The script ensures each link exists, enables a disabled link, and removes enforcement from an enforced link. Because those link repairs use `if`/`elseif`, a link that is both disabled and enforced may need a second identity-stage run to reach both desired properties.
-
-For Server Administration and Client Administration only, the `Groups.xml` preference is also rewritten on every run so the Windows administrators member matches this domain. Its SID and `NETBIOS\Group` name are derived from `groupNaming.globalSecurityPrefix`, `platformAdminGroups.windowsAdmins`, and the live domain NetBIOS name because the exported template carries values from the domain it was captured in.
-
-For Windows LAPS, the `ADPasswordEncryptionPrincipal` registry policy setting is compared with the current `NETBIOS\<WindowsAdminsGroup>` value on each run and updated only when it differs. The setting is stored under the Windows LAPS Group Policy registry root; the GPO cmdlet updates the policy rather than editing the deployed GPO backup files directly.
+`Configure-GPOs.ps1` creates the Server Administration, Client Administration, Windows LAPS, and Domain Controller WinRM GPOs when absent. It configures WinRM service startup/listener policy, the all-profile internal firewall rules, the add-only local Administrators preference, and the five Windows LAPS values from the attached policy reports. It repairs the modeled links and re-applies those settings on reruns; it does not import or overwrite whole GPO backups.
 
 `treatFailureAsDeploymentFailure` is enabled on the Run Command, so a guest-script failure fails the deployment instead of reporting success.
 
-### Idempotency and Template Limitations
+### Idempotency and Policy Scope
 
-The zipped template is a creation-time seed, not a desired-state definition. Be aware of these boundaries:
+The configurator owns the policy settings described above. Be aware of these boundaries:
 
-- **GPO template version reconciliation is not implemented.** Import is skipped once the GPO exists, so updating `GpoTemplates.zip` leaves its policy settings unchanged except for the named runtime repairs. Version-aware brownfield updates remain planned for v2.11; changing names also requires matching exported backups.
-- **GPO names are coupled to the backups.** `Import-GPO` looks the backup up by display name, so renaming `gpoNames` without re-exporting the backups breaks the import. Template validation reports blank names; at run time, the script fails fast when no backup carries a requested name.
-- **The group reference is rewritten in SYSVOL without a version increment.** Step 2 edits `Groups.xml` directly, so clients may not reprocess the preference until the GPO version changes. Only the Windows administrators member is reconciled; other preference content is left as exported.
+- **GPO names are not coupled to backups.** They are used directly when creating the GPOs and linking them to the modeled OUs.
+- **The local Administrators preference is additive.** It reconciles the Windows administrators entry and preserves other members of the built-in group.
+- **Unmodeled GPO settings are preserved.** This configurator is not a blanket reset of administrator-added settings.
 - **Re-running requires a new Run Command definition.** As with the other identity scripts, use a new deployment name so the Run Command is reapplied.
 
 </details>

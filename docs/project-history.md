@@ -31,7 +31,7 @@
 
 ## Roadmap
 
-- **v2.11-v2.12:** GPO template version reconciliation, service accounts and file-server reconciliation, then monitoring and observability. The service-account and file-migration architecture will be scoped during v2.11 development. Azure Arc onboarding remains future work and is not part of completed v2.10 scope.
+- **v2.11-v2.12:** Live validation and hardening of programmatically reconciled GPO policy, service accounts and file-server reconciliation, then monitoring and observability. The service-account and file-migration architecture will be scoped during v2.11 development. Azure Arc onboarding remains future work and is not part of completed v2.10 scope.
 - **v3.0-v3.3:** Security enhancements and policy baselines, public key infrastructure, hybrid identity, then multi-forest support.
 - **v4.x:** Automatic discovery, explicit DC IP allocation and safe DNS reconciliation, full topology reconciliation, reverse transitions, and zero-VM deployment support.
 - **Stretch goals:** Advanced networking, security, and lab lifecycle automation.
