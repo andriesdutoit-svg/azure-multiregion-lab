@@ -1453,9 +1453,9 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         Assert-Test ($replacementParameters.parameters.automationManagedIdentityResourceId.value -like "*/resourceGroups/$script:rebuildNewFoundationGroupName/*") 'Replacement group was selected without updating the managed identity reference.'
         Assert-Test ($replacementParameters.parameters.serverAdminPassword.reference.keyVault.id -like "*/resourceGroups/$script:rebuildNewFoundationGroupName/*") 'Replacement group was selected without updating the Key Vault reference.'
         Assert-Test (@($script:rebuildPrompts | Where-Object { $_ -like 'Recover soft-deleted Key Vault*' }).Count -eq 1 -and @($script:rebuildPrompts | Where-Object { $_ -like 'Foundation resource-group name*' }).Count -eq 2) 'The foundation group was not asked initially and again after recovery was declined.'
-        $replacementNamePromptIndex = @($script:rebuildEvents | ForEach-Object -Begin { $index = 0 } -Process { if ($_ -like 'Prompt:Foundation resource-group name*') { $index }; $index++ } | Select-Object -Last 1)
-        $replacementCreateIndex = @($script:rebuildEvents | ForEach-Object -Begin { $index = 0 } -Process { if ($_ -like 'CreateGroup:*') { $index }; $index++ } | Select-Object -First 1)
-        Assert-Test ($replacementNamePromptIndex.Count -eq 1 -and $replacementCreateIndex.Count -eq 1 -and $replacementNamePromptIndex[0] -lt $replacementCreateIndex[0]) 'Replacement foundation name was not chosen before any Azure resource creation.'
+        $replacementNamePromptIndex = $script:rebuildEvents.FindLastIndex([Predicate[string]]{ param($eventText) $eventText -like 'Prompt:Foundation resource-group name*' })
+        $replacementCreateIndex = $script:rebuildEvents.FindIndex([Predicate[string]]{ param($eventText) $eventText -like 'CreateGroup:*' })
+        Assert-Test ($replacementNamePromptIndex -ge 0 -and $replacementCreateIndex -ge 0 -and $replacementNamePromptIndex -lt $replacementCreateIndex) 'Replacement foundation name was not chosen before any Azure resource creation.'
         Assert-Test (@($script:rebuildCalls | Where-Object { $_[0] -eq 'keyvault' -and $_[1] -eq 'recover' }).Count -eq 0) 'Declining old-vault recovery still recovered the old vault.'
 
         [System.IO.File]::WriteAllText($fixturePath, (ConvertTo-AMRLParameterJson -InputObject $saved))
