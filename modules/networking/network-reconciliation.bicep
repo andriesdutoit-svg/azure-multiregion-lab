@@ -56,7 +56,7 @@ resource reconciliationScript 'Microsoft.Resources/deploymentScripts@2023-08-01'
       }
     ]
 
-    scriptContent: loadTextContent('./scripts/network-reconciliation.ps1')
+    scriptContent: loadTextContent('./scripts/Sync-NetworkTopology.ps1')
 
   }
 }

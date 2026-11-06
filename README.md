@@ -15,36 +15,69 @@ See [Project History and Learning Notes](docs/project-history.md) for release hi
 
 ## Getting Started
 
-Choose one path:
+Choose a deployment method, whether your subscription is new or already in use:
 
-| Your Environment | Start Here |
+| Method | Preparation And Deployment |
 |---|---|
-| New Azure subscription or tenant | [New Subscription Setup](docs/new-subscription-setup.md), including the final deployment |
-| Existing foundation, new lab | [Greenfield Quick Start](#quick-start-greenfield) |
-| Existing AMRL lab | [Brownfield Quick Start](#quick-start-brownfield) |
+| **Bootstrapper (recommended)** | [Bootstrapper Guide](docs/bootstrapper.md): create or reuse prerequisites, configure Bicep, review `what-if`, and deploy. |
+| **Manual** | [Manual Preparation](docs/manual-preparation.md): subscription-level setup, then Bicep setup. Continue with [Bicep Deployment](docs/deployment.md). |
+
+The bootstrapper covers both setup areas below. You do not need to create the Key Vault, secrets, or deployment identity beforehand; existing resources can be reused through reviewed parameter-file references. The default foundation resource location is the first `regionIndexMap` entry; this is separate from the VM regions the lab deploys into. Azure's listed regions may still be restricted for new resources in a particular subscription.
+
+With the [prerequisites](#prerequisites) installed, sign Azure CLI into the intended subscription, then run Prepare mode from the repository root in Windows PowerShell 5.1:
+
+```powershell
+.\scripts\Initialize-Lab.ps1 -Prepare
+```
+
+Confirm the Azure context and answer the wizard questions. Prepare mode sets up subscription-level items and checks Bicep values with preflight and `what-if`, but does not deploy lab resources. Review the proposed changes, then deploy using the saved configuration:
+
+```powershell
+.\scripts\Initialize-Lab.ps1 -ParameterFile .\main.parameters.local.json -Deploy
+```
+
+The script reruns preflight and `what-if`, then requires you to type `DEPLOY`. See the setup guide for optional read-only `-Plan`, GitHub configuration, and safety details. After deployment, [review the results](docs/validation-and-troubleshooting.md#post-deployment-review) and [connect to the lab](docs/access-and-administration.md).
+
+The manual path is an alternative, not an additional phase after bootstrapper deployment. For an existing lab, review [Existing Lab Configuration](#existing-lab-configuration) before using either method.
 
 ## Prerequisites
 
-- Azure CLI installed and authenticated to the target subscription.
-- Permission to create subscription and resource-group resources.
-- Azure Key Vault containing the referenced admin credentials and SSH keys.
-- A User Assigned Managed Identity for deployment-script automation; grant it the Network Contributor role at subscription scope and pass its resource ID through `automationManagedIdentityResourceId`.
+Run the bootstrapper from Windows PowerShell 5.1 with Azure CLI, Bicep, and `ssh-keygen` available.
+
+### Subscription-Level Setup
+
+- Azure CLI authenticated to the intended subscription; see [sign-in and subscription selection](docs/bootstrapper.md#requirements).
+- Permission to create prerequisite resources and assign required roles.
+- Required providers, deployment identity/RBAC, and Key Vault credentials/protections. The bootstrapper creates or reuses these; the [manual path](docs/manual-preparation.md#subscription-level-setup) prepares them explicitly.
+- Optional GitHub OIDC identity/access setup requires Entra app-management permission.
+
+### Bicep Setup
+
+- A configured parameter file using the resolved identity and Key Vault references; the wizard can prepare this for a new lab.
 - Valid VM sizes and images for the target regions.
 - Sufficient regional vCPU quota.
 - At least one domain controller requested with `vmCounts.dc >= 1`; AD is the lab's control plane, even when identity setup is deferred to a later stage.
 
 Trial and Student subscriptions may restrict regions, VM sizes, images, or quota. Check availability before deployment using the commands in [Validation and Troubleshooting](docs/validation-and-troubleshooting.md).
 
-## Quick Start: Greenfield
+GitHub Actions is optional. Use `-IncludeGitHub` for bootstrapper-managed OIDC and repository settings. Publishing the Bicep deployment values to Actions also requires Git, authenticated GitHub CLI, and repository write access.
 
-Use this quick start only when the Key Vault, secrets, and deployment managed identity already exist. The new-subscription guide is a complete alternative path, not a prerequisite workflow to repeat afterward.
+## Manual Bicep Deployment
+
+Use this direct Azure CLI path after [Manual Preparation](docs/manual-preparation.md). If you choose the [bootstrapper](docs/bootstrapper.md), it handles preparation and can also deploy; do not repeat this deployment after a completed bootstrapper run.
+
+### Subscription-Level Setup Check
+
+- The Key Vault and referenced administrator-password/SSH-key secrets must exist.
+- The deployment managed identity must exist and have Network Contributor at subscription scope.
+
+### Bicep Setup And Deployment
 
 1. Copy `main.parameters.demo.json` to `main.parameters.local.json` for the new lab; do not overwrite an existing lab's parameter file.
 2. Replace `<YOUR_PUBLIC_IP>` with your public IPv4 address (the demo adds `/32`), `<KEYVAULT_ID>` with your Key Vault resource ID, and `<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>` with your User Assigned Managed Identity resource ID.
-3. Ensure the Key Vault contains the referenced `sshPublicKey`, `sshPrivateKey`, `jumpboxAdminPassword`, `serverAdminPassword`, and `clientAdminPassword` secrets. Keep the Key Vault references in the parameter file; do not paste SSH keys or passwords into it.
-4. Set `existingRegions` and `existingVmPlacements` to empty arrays.
-5. Keep at least one DC and one jumpbox, then choose the required workload counts and topology.
-6. Complete [Local Validation](docs/ci-cd-validation.md#local-validation), including what-if review, then deploy:
+3. Keep Key Vault references in the file; do not paste SSH keys or passwords into it. For a new lab, set `existingRegions` and `existingVmPlacements` to empty arrays; for an existing lab, maintain [reviewed inventory](#existing-lab-configuration).
+4. Keep at least one DC and one jumpbox, then choose workload counts, topology, and the intended deployment stage.
+5. Complete [Local Validation](docs/ci-cd-validation.md#local-validation), including what-if review, then deploy:
 
 ```powershell
 $parameterFile = '.\main.parameters.local.json'
@@ -57,11 +90,13 @@ az deployment sub create `
         --parameters $parameterFile
 ```
 
-Review [deployment and guest results](docs/validation-and-troubleshooting.md#post-deployment-review), then follow [Access and Administration](docs/access-and-administration.md) to connect. For foundation setup and parameter details, see [New Subscription Setup](docs/new-subscription-setup.md) and [Configuration Parameters Reference](docs/configuration-parameters-reference.md).
+Review [deployment and guest results](docs/validation-and-troubleshooting.md#post-deployment-review), then follow [Access and Administration](docs/access-and-administration.md) to connect. See [Configuration Parameters Reference](docs/configuration-parameters-reference.md) for the complete Bicep settings.
 
-## Quick Start: Brownfield
+## Existing Lab Configuration
 
-For an existing AMRL environment:
+These are Bicep setup considerations for either deployment method; the bootstrapper does not discover retained inventory.
+
+If deploying through the bootstrapper, use `-ParameterFile` with the reviewed configuration rather than the wizard. Run `-Plan`, review `what-if`, then use the same file with `-Deploy`. See [Existing Environments](docs/bootstrapper.md#existing-environments).
 
 1. List reused networking regions in `existingRegions`.
 2. List every retained VM in `existingVmPlacements`.
@@ -109,6 +144,7 @@ See [Deployment Results and Troubleshooting](docs/validation-and-troubleshooting
 ```text
 main.bicep                        Placement model and subscription-scope orchestration
 main.parameters.*.json            Deployment parameter examples
+scripts/Initialize-Lab.ps1        Prerequisite preparation and guided Bicep deployment
 modules/stages                   Network, compute, and identity stage contracts
 modules/networking               VNets, subnets, NSGs, peerings, firewall, routes, Bastion
 modules/compute                  Windows and Linux VM resources and guest helpers
@@ -131,9 +167,10 @@ See the [Roadmap](docs/project-history.md#roadmap) for planned capabilities and 
 
 ## Detailed Documentation
 
-- [New Subscription Setup](docs/new-subscription-setup.md)
+- [Bootstrapper Guide](docs/bootstrapper.md)
+- [Manual Preparation](docs/manual-preparation.md)
 - [Architecture](docs/architecture.md)
-- [Deployment Guide](docs/deployment.md)
+- [Bicep Deployment Guide](docs/deployment.md)
 - [Configuration Parameters Reference](docs/configuration-parameters-reference.md)
 - [Placement and Reconciliation](docs/placement-and-reconciliation.md)
 - [Identity and Domain Join](docs/identity-and-domain-join.md)

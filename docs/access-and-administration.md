@@ -45,7 +45,11 @@ mstsc /v:$windowsVmFqdn
 
 When `enableWindowsAdminCenter=true`, AMRL installs the gateway during `stage=identity` or `stage=all`, after AD and Windows domain join. The default host is the primary jumpbox; `useDedicatedWacHost=true` selects the first `srvwin`, falling back to the jumpbox if none is modeled. The gateway needs working DNS and outbound HTTPS.
 
-Open `https://<wac-hostname>` from a network that can reach the gateway, and trust its certificate if prompted. In WAC, choose **All connections > Add** and search Active Directory to find domain-joined VMs, or add one by its FQDN (for example, `<prefix>-srvwin01.<domainName>`). For the connection, choose **Manage As** and enter an authorized domain account in `user@domain` format, such as `admin@example.com`. **Use my Windows account** is not supported because AMRL does not configure credential delegation.
+Open `https://<wac-hostname>` from a network that can reach the gateway, and trust its certificate if prompted. On a workgroup jumpbox gateway, sign in with the jumpbox local administrator (`<jumpbox-name>\<jumpboxAdminUsername>`) and its jumpbox-admin password. This gateway login is separate from credentials for managed VMs; the gateway's own connection can use the existing local credentials.
+
+In WAC, choose **All connections > Add** and add a target by its FQDN (for example, `<prefix>-srvwin01.<domainName>`). A workgroup gateway does not provide domain discovery automatically; on a domain-joined gateway, Active Directory search is also an option. For remote targets, use **Add with credentials** or **Manage As** with an authorized domain account in `user@domain` format. In the initial lab, `serverAdminUsername@<domainName>` with the server-admin password is the domain credential used for joins; use an authorized, least-privileged administration account for routine work. Do not use the jumpbox's local account for domain targets or assume a client's local-admin password is its domain-account password. AMRL does not configure credential delegation for **Use my Windows account** on remote targets.
+
+On workgroup gateways, installation and reruns merge and verify explicit FQDNs for modeled DCs, Windows servers, and Windows clients in WinRM TrustedHosts, including declared retained VMs. Existing specific entries are preserved. A pre-existing `*` allow-all entry is removed and replaced by the explicit target list because WinRM cannot combine `*` with other host patterns. AMRL does not introduce wildcard trust. TrustedHosts relaxes server-identity verification for those names. This does not register WAC connections or store target credentials; add connections and supply credentials in WAC. Domain-joined gateways retain the existing WAC configuration path.
 
 The browser-to-gateway connection uses HTTPS; the gateway connects to Windows VMs with WinRM over HTTP/TCP 5985. WinRM HTTPS/TCP 5986 is not configured; its NSG/GPO allowance alone does not provide a listener or certificate. AMRL does not expose the WAC UI to the Internet. See [WAC and WinRM checks](validation-and-troubleshooting.md#wac-and-winrm-checks) if a target cannot be reached.
 
@@ -130,6 +134,6 @@ Retained jumpboxes keep their existing Public IP configuration: missing IPs are 
 
 ## Credentials and Keys
 
-Credential, Key Vault, and SSH-key provisioning are covered in [New Subscription Setup](new-subscription-setup.md). Updating a Key Vault secret does not by itself rotate credentials already installed on retained VMs.
+Subscription-level credential, Key Vault, and SSH-key provisioning are covered in the [Bootstrapper Guide](bootstrapper.md) and [Manual Preparation](manual-preparation.md#subscription-level-setup). Bicep setup references those credentials through the parameter file. Updating a Key Vault secret does not by itself rotate credentials already installed on retained VMs.
 
 [Back to README](../README.md)

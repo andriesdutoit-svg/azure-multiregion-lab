@@ -1,7 +1,8 @@
 # Installs WAC on first use and reapplies the managed configuration on reruns.
 # Browser-to-gateway traffic uses HTTPS; managed-server WinRM currently uses HTTP.
 param(
-    [string]$ReconciliationToken
+    [string]$ReconciliationToken,
+    [string]$TargetFqdnsJson = '[]'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +19,11 @@ function Write-Log {
     )
 
     Write-Output "[WAC] $Message"
+}
+
+trap {
+    Write-Log "ERROR: $($_.Exception.Message)"
+    exit 1
 }
 
 function Merge-WacUrlAclSddl {
@@ -66,28 +72,33 @@ function Merge-WacUrlAclSddl {
     return $descriptor.GetSddlForm([System.Security.AccessControl.AccessControlSections]::Access)
 }
 
-function Ensure-WacUrlReservation {
+function Set-AmrlWacUrlReservation {
     param(
         [Parameter(Mandatory = $true)]
         [int]$Port
     )
 
     $url = "https://+:$Port/"
-    $computerAccount = '{0}\{1}$' -f $env:USERDOMAIN, $env:COMPUTERNAME
+    $computerSystem = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+    $requiredSids = @('S-1-5-20')
 
-    try {
-        $computerSid = ([System.Security.Principal.NTAccount]::new($computerAccount)).Translate(
-            [System.Security.Principal.SecurityIdentifier]
-        ).Value
-    }
-    catch {
-        throw "Unable to resolve WAC gateway computer account '$computerAccount' to a SID: $($_.Exception.Message)"
-    }
+    if ($computerSystem.PartOfDomain) {
+        $computerAccount = '{0}\{1}$' -f $env:USERDOMAIN, $env:COMPUTERNAME
 
-    $requiredSids = @(
-        'S-1-5-20'
-        $computerSid
-    )
+        try {
+            $computerSid = ([System.Security.Principal.NTAccount]::new($computerAccount)).Translate(
+                [System.Security.Principal.SecurityIdentifier]
+            ).Value
+        }
+        catch {
+            throw "Unable to resolve WAC gateway computer account '$computerAccount' to a SID: $($_.Exception.Message)"
+        }
+
+        $requiredSids += $computerSid
+    }
+    else {
+        Write-Log 'WAC gateway is not domain-joined; using the NetworkService SID for its HTTPS URL reservation.'
+    }
 
     $urlAclOutput = @(& netsh.exe http show urlacl "url=$url" 2>&1)
     if ($LASTEXITCODE -ne 0) {
@@ -116,7 +127,7 @@ function Ensure-WacUrlReservation {
         -RequiredSids $requiredSids
 
     if ($reservationExists -and $desiredSddl -eq $originalSddl) {
-        Write-Log 'WAC HTTPS URL reservation already grants listen permission to NetworkService and the gateway computer account.'
+        Write-Log 'WAC HTTPS URL reservation already grants listen permission to the required identities.'
         return
     }
 
@@ -141,7 +152,7 @@ function Ensure-WacUrlReservation {
         throw "Adding the WAC URL reservation failed with exit code $addExitCode."
     }
 
-    Write-Log 'WAC HTTPS URL reservation grants listen permission to NetworkService and the gateway computer account.'
+    Write-Log 'WAC HTTPS URL reservation grants listen permission to the required identities.'
 }
 
 function Get-WacServices {
@@ -184,6 +195,55 @@ function Start-AndVerifyWacServices {
     }
 }
 
+function Set-AmrlWacTrustedHosts {
+    param(
+        [string]$TargetFqdnsJson = '[]'
+    )
+
+    $computerSystem = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+    if ($computerSystem.PartOfDomain) {
+        Set-WACWinRmTrustedHosts -ErrorAction Stop
+        return
+    }
+
+    $targets = ConvertFrom-Json -InputObject $TargetFqdnsJson -ErrorAction Stop
+    $targets = @($targets)
+    foreach ($target in $targets) {
+        if ($target -isnot [string] -or $target -notmatch '\.' -or
+            [System.Uri]::CheckHostName($target) -ne [System.UriHostNameType]::Dns -or
+            $target -match '[*,\s]') {
+            throw 'Workgroup WAC targets must be explicit FQDNs without wildcards.'
+        }
+    }
+    $targets = @($targets | Sort-Object -Unique)
+    if ($targets.Count -eq 0) {
+        Write-Log 'No Windows target FQDNs supplied; workgroup TrustedHosts is unchanged.'
+        return
+    }
+
+    $trustedHostsPath = 'WSMan:\localhost\Client\TrustedHosts'
+        $currentHosts = @(([string](Get-Item -LiteralPath $trustedHostsPath -ErrorAction Stop).Value -split ',') |
+            ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $removedAllowAllTrust = '*' -in $currentHosts
+        $existingHosts = @($currentHosts | Where-Object { $_ -ne '*' })
+    $missingHosts = @($targets | Where-Object { $_ -notin $existingHosts })
+    if ($missingHosts.Count -gt 0) {
+        $desiredHosts = @($existingHosts + $targets | Sort-Object -Unique)
+        Set-Item -LiteralPath $trustedHostsPath -Value ($desiredHosts -join ',') -Force -ErrorAction Stop
+    }
+
+    $verifiedHosts = @(([string](Get-Item -LiteralPath $trustedHostsPath -ErrorAction Stop).Value -split ',') |
+        ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $unverifiedHosts = @($targets | Where-Object { $_ -notin $verifiedHosts })
+    if ($unverifiedHosts.Count -gt 0) {
+        throw "Workgroup WAC TrustedHosts verification failed for: $($unverifiedHosts -join ', ')."
+    }
+        if ($removedAllowAllTrust) {
+            Write-Log 'Removed the pre-existing allow-all TrustedHosts entry and replaced it with explicit modeled target FQDNs.'
+        }
+    Write-Log "Workgroup WAC TrustedHosts verified for: $($targets -join ', ')."
+}
+
 function Repair-WacConfiguration {
     # Repair only AMRL-owned settings; do not reinstall or automatically upgrade WAC.
     $configurationModule = Join-Path `
@@ -216,8 +276,7 @@ function Repair-WacConfiguration {
             -LiteralPath $appSettingsPath `
             -Encoding UTF8
 
-    Set-WACWinRmTrustedHosts `
-        -ErrorAction Stop
+    Set-AmrlWacTrustedHosts -TargetFqdnsJson $TargetFqdnsJson
 
     $adTools = Get-WindowsFeature RSAT-AD-PowerShell
 
@@ -273,7 +332,7 @@ function Repair-WacConfiguration {
 
     # Register-WACHttpSys can replace the URL ACL, so reconcile the required service
     # and gateway identities after its registration attempt as well as on ordinary reruns.
-    Ensure-WacUrlReservation -Port $wacPort
+    Set-AmrlWacUrlReservation -Port $wacPort
 
     Restart-WACService
 
@@ -372,10 +431,12 @@ function Invoke-WithRetry {
             }
 
             if ($statusCode -ge 400 -and $statusCode -lt 500 -and $statusCode -notin @(408, 429)) {
+                Write-Log "$Operation failed with HTTP $statusCode. $($_.Exception.Message)"
                 throw "$Operation failed with HTTP $statusCode. $($_.Exception.Message)"
             }
 
             if ($attempt -eq $MaximumAttempts) {
+                Write-Log "$Operation failed after $MaximumAttempts attempts. $($_.Exception.Message)"
                 throw "$Operation failed after $MaximumAttempts attempts. $($_.Exception.Message)"
             }
 

@@ -1,17 +1,24 @@
-# Deployment Guide
+# Bicep Deployment Guide
 
 [Back to README](../README.md)
 
+This is the manual Bicep validation and deployment path after [Manual Preparation](manual-preparation.md). It applies to both new and existing AMRL labs. The [Bootstrapper Guide](bootstrapper.md) is the alternative that handles preparation and invokes the same Bicep template for you.
+
 ## Prerequisites
 
-- Azure CLI installed and authenticated.
-- Access to the target subscription.
-- A Key Vault containing the referenced credentials and SSH keys.
+### Subscription-Level Setup
+
+- Azure CLI authenticated with access to the target subscription and deployment permissions.
+- Required resource providers, deployment managed identity/RBAC, and a Key Vault containing the referenced credentials and SSH keys. Complete [subscription-level preparation](manual-preparation.md#subscription-level-setup) if needed; do not recreate prerequisites just because the lab configuration changes.
+
+### Bicep Setup
+
+- Azure CLI with Bicep available.
 - VM sizes, images, regional quota, and regional availability verified for the subscription.
 - A parameter file with valid region, network, compute, and identity settings.
 - At least one domain controller requested with `vmCounts.dc >= 1`. This is always an AD lab; use `stage` to select when identity automation runs.
 
-For a new subscription or tenant, follow [New Subscription Setup](new-subscription-setup.md) instead of starting with the commands below. It includes prerequisites, shared values, and the complete sequence through deployment.
+Use [Bicep Setup](manual-preparation.md#bicep-setup) to prepare the parameter file and local deployment values before starting the workflow below.
 
 ## Deployment Workflow
 
@@ -78,6 +85,8 @@ az deployment sub create `
 
 ## Brownfield Deployment
 
+For the [bootstrapper alternative](bootstrapper.md#existing-environments), use `-ParameterFile` with a reviewed parameter file rather than the interactive wizard. The file must accurately describe retained resources and desired state; neither deployment method discovers the inventory below. Run `-Plan` with the same file and review Azure `what-if` before using `-Deploy`.
+
 For an existing environment:
 
 - List reused networking regions in `existingRegions`.
@@ -138,11 +147,11 @@ Create a User Assigned Managed Identity, grant it the **Network Contributor** ro
 
 ### Managed Identity
 
-Follow [Managed Identity](new-subscription-setup.md#managed-identity) in the foundation setup walkthrough to create or retrieve the identity. Pass its resource ID through `automationManagedIdentityResourceId`.
+Follow [Managed Identity](manual-preparation.md#managed-identity) in subscription-level preparation to create or retrieve the identity. Pass its resource ID through `automationManagedIdentityResourceId` during Bicep setup.
 
 ### Required Role Assignment
 
-The setup walkthrough [assigns Network Contributor](new-subscription-setup.md#required-role-assignment) at subscription scope, covering the regional network resources targeted by cleanup.
+The manual preparation walkthrough [assigns Network Contributor](manual-preparation.md#required-role-assignment) at subscription scope, covering the regional network resources targeted by cleanup.
 
 ### Why This Permission Is Required
 

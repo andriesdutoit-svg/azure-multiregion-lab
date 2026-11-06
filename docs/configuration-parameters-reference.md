@@ -14,10 +14,12 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | `networkMode` | string | Network topology: `hubSpokeFirewall`, `hubSpoke`, or `fullMesh`. See [Network Topology Modes](deployment.md#network-topology-modes). | `"hubSpokeFirewall"` |
 | `enableBastion` | bool | Adds hub-region Bastion alongside public jumpbox access. See [access and retirement behavior](access-and-administration.md#bastion-and-retained-jumpboxes). | `true` |
 | `bastionSku` | string | Azure Bastion SKU: `Basic`, `Standard`, or `Premium`. | `"Standard"` |
-| `automationManagedIdentityResourceId` | string | Required deployment-script identity ID. Applicable brownfield cleanup uses its Network Contributor permissions. See [foundation setup](new-subscription-setup.md#managed-identity) and [reconciliation RBAC](deployment.md#rbac-requirements-for-network-reconciliation). | `"/subscriptions/<subscriptionId>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identityName>"` |
+| `automationManagedIdentityResourceId` | string | Required deployment-script identity ID. Applicable brownfield cleanup uses its Network Contributor permissions. See [subscription-level identity setup](manual-preparation.md#managed-identity) and [reconciliation RBAC](deployment.md#rbac-requirements-for-network-reconciliation). | `"/subscriptions/<subscriptionId>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identityName>"` |
 | `tags` | object | Resource tags for organisation and billing | `{"environment": "lab"}` |
 | `regionCount` | integer | Number of regions to deploy across | `2` |
 | `maxVmsPerRegion` | integer | Maximum VMs allowed per region | `2` |
+
+In JSON parameter files, `parameters.prefix.value` supplies the resource naming prefix to Bicep. The sibling `parameters.prefix.metadata.bootstrap` object stores bootstrapper settings for Azure context, foundation resources, and optional GitHub integration; these are not additional Bicep parameters and do not change the prefix value. See [Using `-ParameterFile`](bootstrapper.md#using-parameterfile) and [Subscription-Level Setup Values](bootstrapper.md#subscription-level-setup-values) for field requirements and behavior.
 
 ## Region and Network Configuration
 
@@ -126,7 +128,7 @@ For direct jumpbox access, ensure `jumpboxAllowedSources` includes your approved
 
 ## Credentials and Secrets
 
-All credentials are stored in Azure Key Vault and referenced by name, not embedded in parameter files. See [Key Vault Setup](new-subscription-setup.md#key-vault-setup) for recreating the vault and secrets.
+All credentials are stored in Azure Key Vault during subscription-level setup and referenced by name during Bicep setup, not embedded in parameter files. See [Key Vault Setup](manual-preparation.md#key-vault-setup) for creating or reusing the vault and secrets.
 
 | Parameter | Type | Key Vault Secret | Purpose |
 |---|---|---|---|
@@ -139,7 +141,7 @@ All credentials are stored in Azure Key Vault and referenced by name, not embedd
 | `sshPublicKey` | reference | `sshPublicKey` | Public key for Linux VM creation |
 | `sshPrivateKey` | reference | `sshPrivateKey` | Private key deployed to jumpboxes |
 
-Use a matching SSH key pair. See [SSH Key Setup](new-subscription-setup.md#ssh-key-setup) for upload instructions.
+Use a matching SSH key pair. See [SSH Key Setup](manual-preparation.md#ssh-key-setup) for subscription-level upload instructions; Bicep parameters reference the stored secrets.
 
 **Example Parameter File Reference**:
 
@@ -170,6 +172,8 @@ This is always an AD lab. Select `stage=identity` or `stage=all` to run AD autom
 | `additionalDepartments` | object | Additional departments available for selection | `{"Finance": "FIN", "Human Resources": "HR"}` |
 | `departmentCount` | integer | Total departments to provision, including `sysAdminDepartment` | `2` |
 | `usersPerDepartment` | integer | Standard user accounts to create per department, excluding the department manager | `5` |
+
+`departmentCount` must be at least the number of entries in `sysAdminDepartment` and no greater than the combined number of entries in `sysAdminDepartment` and `additionalDepartments`. The interactive wizard does not enforce these limits; the Bicep validation engine evaluates them during deployment.
 
 ## Windows Admin Center Configuration (Optional)
 

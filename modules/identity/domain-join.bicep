@@ -1,11 +1,12 @@
 targetScope = 'resourceGroup'
 
-// Owns Windows domain membership and HTTP SPNs via Azure VM Run Command.
+// Owns Windows domain membership via Azure VM Run Command.
 // The join script checks PartOfDomain before joining; this module does not recreate the VM.
 // The caller waits for GPO definition provisioning, not guest policy application.
 // vmType and the serialized directory model select OU placement;
 // a new deployment token supports reruns but does not force an already joined machine to rejoin.
-// New members restart to complete the join; retained members still receive SPN repair.
+// New members restart to complete the join. A separate dependent module repairs HTTP SPNs
+// after the machine has rebooted and established its domain secure channel.
 // Windows processes GPOs normally. This module does not gate deployment on effective guest policy.
 
 // 1. Target and directory placement

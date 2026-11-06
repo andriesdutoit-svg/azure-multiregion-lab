@@ -24,7 +24,7 @@ az deployment sub show `
   --output jsonc
 ```
 
-`blocking` contains deployment-stopping findings; `advisory` contains warnings that do not block enforcement. If neither explains the issue, use the symptom guide below to investigate Azure provisioning or guest failures.
+`blocking` contains findings that stop dependent stages only in `enforce` mode; in `reportOnly`, the same findings are reported without blocking deployment. `advisory` contains warnings that never block enforcement. If neither explains the issue, use the symptom guide below to investigate Azure provisioning or guest failures.
 
 Identify the failing layer before rerunning a deployment. Configuration findings, Azure provisioning errors, and guest/service failures need different checks:
 
@@ -40,6 +40,15 @@ Identify the failing layer before rerunning a deployment. Configuration findings
 
 ## Post-Deployment Review
 
+The bootstrapper separates these outcomes:
+
+| Result | Meaning |
+|---|---|
+| Operational/template preflight | Tools, prerequisites, build/lint, Azure validate, and `what-if`; not a saved engine-findings report. |
+| Configuration findings | Existing Bicep rules, including the validation mode and engine enforcement decision. |
+| Azure deployment status | Whether ARM provisioning completed; not proof of guest readiness. |
+| Guest execution results | Saved Run Command states and exit codes; access and service checks are still required. |
+
 After a successful subscription deployment, query the root deployment to read its saved validation summary, blocking/advisory finding details, capacity, and placement outputs. This command only reads the completed deployment outputs; it does not rerun validation:
 
 ```powershell
@@ -49,13 +58,17 @@ az deployment sub show `
   --output json
 ```
 
-When deploying with `scripts/Initialize-AMRLSubscription.ps1 -Deploy`, the bootstrapper prints the saved validation summary, blocking/advisory findings, capacity, placements, and Run Command states automatically. If enforcement blocks the root deployment, it attempts to retrieve and print the nested validation-engine outputs using the name `<prefix>-validation-engine-<first-20-characters-of-root-deployment-name>` before rethrowing the deployment error. Use the commands in [Start Here](#start-here) if those outputs cannot be retrieved.
+When deploying with `scripts/Initialize-Lab.ps1 -Deploy`, the bootstrapper prints the saved validation summary, blocking/advisory findings, capacity, and placements. It displays `enforcementEnabled`, `hasBlockingValidationFailures`, `shouldBlockDeployment`, and `deploymentBlockMessage` so report-only findings are not confused with an enforced stop. Missing or partial outputs are reported as unavailable/incomplete; empty findings imply no active findings only when the corresponding collections are present.
+
+It then lists managed Run Commands on the modeled VMs and reads their guest `executionState` and `exitCode`. Only a succeeded command with exit code zero is reported as passed; failed, unfinished, missing, and unreadable results are flagged. These are read-only queries and do not rerun guest scripts. Script output is not printed automatically.
+
+If the root deployment fails, the bootstrapper attempts to retrieve its validation outputs or the nested validation-engine outputs using the name `<prefix>-validation-engine-<first-20-characters-of-root-deployment-name>`. It also attempts guest-result collection when root placement outputs are available, then rethrows the original deployment error. Use the commands in [Start Here](#start-here) if those outputs cannot be retrieved.
 
 Then verify the user-visible result: administration access, expected Windows/Linux domain membership, domain DNS, and enabled shares/desktops. Inspect guest `executionState`, `exitCode`, `error`, and `output`; a successful ARM resource operation alone is not proof of guest readiness.
 
 ## WAC And WinRM Checks
 
-The current WAC gateway uses WinRM over HTTP (TCP 5985) to manage Windows servers. The gateway's own browser UI uses HTTPS; this is a separate connection. Before changing NSGs, check the complete path and the target's effective guest policy:
+The current WAC gateway uses WinRM over HTTP (TCP 5985) to manage Windows servers. The gateway's own browser UI uses HTTPS; this is a separate connection. Before changing NSGs, check the complete path and the target's effective guest policy. From a domain-joined gateway, use Kerberos:
 
 ```powershell
 Test-NetConnection <server-fqdn> -Port 5985
@@ -64,6 +77,17 @@ Get-NetConnectionProfile
 Get-NetFirewallRule -PolicyStore ActiveStore -Name '*WINRM*'
 gpresult /scope computer /r
 ```
+
+From a workgroup jumpbox gateway, use explicit domain credentials and Negotiate instead:
+
+```powershell
+Resolve-DnsName <server-fqdn>
+Get-Item WSMan:\localhost\Client\TrustedHosts
+$credential = Get-Credential '<authorized-user>@<domainName>'
+Test-WSMan <server-fqdn> -Authentication Negotiate -Credential $credential
+```
+
+AMRL adds modeled Windows target FQDNs to TrustedHosts on workgroup gateways during WAC installation and repair. If a target is missing, verify its declared placement and rerun the identity stage. Error `0x8009030e` can indicate missing trust as well as a credential problem. A successful authenticated test does not prove access to every WAC tool; connect using **Add with credentials** or **Manage As** next. Avoid wildcard TrustedHosts or enabling Basic authentication as troubleshooting shortcuts.
 
 `Test-NetConnection` confirms only TCP connectivity. If it fails, verify the source and destination NSGs/routes, WinRM listener, and Windows Firewall. The Server and Client Administration GPOs allow TCP 5985 and 5986 from `10.0.0.0/8` on all profiles; the Domain Controller WinRM GPO allows TCP 5985 from the same range on all profiles. Deployment configures the GPOs but does not force policy refresh or verify effective guest rules. Allow normal computer-policy processing, then check the active GPO rule in `ActiveStore`, its source scope, and the VM's profile.
 
@@ -74,7 +98,7 @@ setspn -Q HTTP/<computer>
 setspn -Q HTTP/<computer>.<domain>
 ```
 
-The Windows domain-join script reconciles workload HTTP SPNs; directory population reconciles HTTP SPNs for the modeled DC accounts. Both use `setspn -S` to add missing SPNs with duplicate checking. Do not add duplicates to another account. `Test-WSMan` alone checks WSMan response, while `Invoke-Command` with Kerberos verifies that an authenticated remote session can actually be created.
+Directory population reconciles HTTP SPNs for modeled DC accounts. For Windows workloads, domain join and restart complete first; the dependent `reconcile-winrm-spns` Run Command then waits for the machine's secure channel and reconciles missing HTTP SPNs with `setspn -S`. It retries for a bounded period and fails visibly if LDAP/SPN access is still unavailable. If domain join succeeded but SPN repair failed before a restart on an earlier run, restart the VM and rerun the identity stage; do not delete or rejoin the computer account. Do not add duplicate SPNs to another account. `Test-WSMan` alone checks WSMan response, while `Invoke-Command` with Kerberos verifies that an authenticated remote session can actually be created.
 
 If TCP and `Test-WSMan` work and WAC succeeds with **Manage As** but fails with **Use my Windows account** (`0x8009030e`), investigate Kerberos delegation between the user's browser session, WAC gateway, and target. This symptom points to a delegation issue rather than an NSG port block. RBCD is a candidate future configuration and is not currently provisioned by AMRL. Use explicit Manage As credentials as the current workaround. Do not enable unconstrained delegation as a troubleshooting shortcut.
 
@@ -156,7 +180,7 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 - `hasNoGpoTargetDc`: `dc01` is not pinned to the primary region. Correct placement before running Group Policy provisioning on the primary domain controller.
 - `hasInvalidGpoNames`: one or more of `serverAdministration`, `clientAdministration`, `windowsLaps`, or `domainControllerWinRM` is empty. These names are used to create and link the four GPOs.
 
-The template findings cover configuration it can evaluate; they do not replace guest-side checks. Failures inside the Group Policy Run Command itself are reported by the deployment because `ad-gpo.bicep` sets `treatFailureAsDeploymentFailure`. `Configure-GPOs.ps1` fails fast when `directoryModel.gpoNames` is incomplete, the admin group cannot be resolved, a target OU is missing, or a managed policy setting cannot be written to its GPO.
+The template findings cover configuration it can evaluate; they do not replace guest-side checks. Failures inside the Group Policy Run Command itself are reported by the deployment because `ad-gpo.bicep` sets `treatFailureAsDeploymentFailure`. `Set-GPOs.ps1` fails fast when `directoryModel.gpoNames` is incomplete, the admin group cannot be resolved, a target OU is missing, or a managed policy setting cannot be written to its GPO.
 
 `validationFlags` reports each finding independently. `validationMessage` contains only the first active finding in catalog order, with blocking findings listed before advisory findings. In `reportOnly` mode, findings do not block deployment. In `enforce` mode, active blocking findings fail the validation gate before stage modules execute; advisory findings remain non-blocking. This gate does not roll back resources from earlier successful deployments. Some invalid configurations can still fail earlier during template evaluation, such as `vmCounts.dc=0` when the root template requires a primary DC. Also inspect VM Run Command results separately.
 

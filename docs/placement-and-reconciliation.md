@@ -42,6 +42,18 @@ flowchart TD
   H -->|No| J[Place in fallback spoke]
 ```
 
+### Example
+
+Assume a greenfield deployment with `regionCount=3`, `maxVmsPerRegion=2`, one VM of each role, and no existing inventory. The first three regions by `regionIndexMap` are South Africa North, Indonesia Central, and Poland Central:
+
+| VM | Placement | Reason |
+|---|---|---|
+| `dc01`, `jmp01` | South Africa North (hub) | First DC and jumpbox are pinned to the primary region. |
+| `srvwin01`, `cliwin01` | Indonesia Central (first spoke) | The first two workload identities fill its two available slots. |
+| `srvlin01`, `clilin01` | Poland Central (second spoke) | The next two workload identities fill its two available slots. |
+
+Workload roles are considered in this order: Windows servers, Windows clients, Linux servers, then Linux clients. This example shows deterministic placement only; it does not check whether Azure has capacity for the selected VM sizes.
+
 ## Capacity Model
 
 The placement engine counts existing VMs per spoke, calculates available slots, and converts those slots into cumulative boundaries. A new VM's ordinal is mapped to the first boundary that contains it.

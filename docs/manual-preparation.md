@@ -1,50 +1,16 @@
-# New Subscription Setup
+# Manual Preparation
 
-[Back to README](../README.md)
+[Back to README](../README.md) | [Bootstrapper Guide](bootstrapper.md)
 
-Use this complete path for a new Azure subscription or tenant. It owns foundation and credential setup and includes the final lab deployment; do not repeat the README quick start afterward. Start with [Automated Setup](#automated-setup), or use the manual reference sections below when you prefer to run each command yourself.
+Use this guide for the manual deployment path, regardless of whether the subscription is new or already in use. First prepare subscription-level prerequisites, then configure the Bicep parameter file. Continue with [Bicep Deployment](deployment.md) for validation, `what-if`, and deployment. Work in one Windows PowerShell 5.1 session from the repository root; do not repeat preparation after a successful bootstrapper run unless a specific repair is required.
 
-## Before You Start
+## Requirements
 
-Use Windows PowerShell 5.1 from the repository root. Install Azure CLI and Git; SSH-key setup also needs `ssh-keygen`. GitHub Actions setup is optional and additionally needs GitHub CLI (`gh`). Stop on command errors and replace all angle-bracket placeholders before running manual commands.
-
-Resource creation requires subscription access. Role assignments and foundation locks require additional authorization, such as subscription Owner. Entra app creation requires tenant permission. Ask an administrator if these rights are unavailable.
-
-Never share private keys, passwords, or secret-bearing terminal output. Secret-writing examples suppress output, but credentials already exposed must still be rotated.
-
-## Automated Setup
-
-The recommended path uses the Windows PowerShell 5.1 bootstrapper to prepare subscription prerequisites and Bicep parameters. It creates or reuses the foundation resource group, managed identity, and Key Vault; creates missing role assignments; writes missing secrets to Key Vault; prepares `main.parameters.local.json`; and runs local Bicep validation and regional preflight checks. Infrastructure creation remains owned by `main.bicep`.
-
-From the repository root, first preview bootstrap mutations:
-
-```powershell
-.\scripts\Initialize-AMRLSubscription.ps1 -WhatIf
-```
-
-Run the bootstrap interactively after reviewing the preview. It defaults to generating administrator passwords securely; add `-PromptPasswords` to enter them using masked prompts. SSH keys are reused when both files exist, generated only when neither exists, and never automatically rotated.
-
-```powershell
-.\scripts\Initialize-AMRLSubscription.ps1
-```
-
-The script uses `main.parameters.local.json` by default; that file is git-ignored. Pass `-ParameterFile` to use another path. The wizard prompts for a tenant/subscription confirmation, missing location/topology choices, and an approved public IPv4 when required. The subscription deployment metadata location defaults to the foundation location and can be set with `-DeploymentLocation`. Existing parameter choices and non-placeholder source ranges are preserved; mismatched Key Vault or managed identity references stop for manual review.
-
-For GitHub Actions OIDC and repository configuration, add `-IncludeGitHub`. This requires GitHub CLI authentication and tenant permission to manage the app registration. For deployment, the script always runs Bicep build/lint, validation, regional checks, and subscription `what-if`. Review the preview first; deployment is not started unless `-Deploy` is supplied and you type `DEPLOY` at the confirmation prompt:
-
-```powershell
-.\scripts\Initialize-AMRLSubscription.ps1 -IncludeGitHub -Deploy
-```
-
-`-WhatIf` prevents bootstrap writes. Because later actions depend on earlier resources, the script may stop at the first missing prerequisite rather than simulate the entire flow. After deployment, it prints the saved validation summary, blocking/advisory findings, capacity and placement outputs, and VM Run Command states. If enforcement blocks deployment, it attempts to retrieve the nested validation-engine findings before rethrowing the error. Use the documented guest checks to establish operational readiness. Local mocked tests run with:
-
-```powershell
-.\scripts\tests\Test-Initialize-AMRLSubscription.ps1
-```
-
-The manual sections below remain the reference for each resource, permission, and recovery step, and can be followed instead of the bootstrapper.
+Install Azure CLI with Bicep available and `ssh-keygen`. You need access to the target subscription and permission to create resources and assign roles. Optional GitHub Actions setup also requires Git, authenticated GitHub CLI (`gh`), repository write access, and Entra app-management permission. Keep passwords and private keys out of logs and committed files.
 
 ## Manual Setup Order
+
+### Subscription-Level Setup Order
 
 | Step | Action | Required State / Result |
 |---|---|---|
@@ -53,16 +19,24 @@ The manual sections below remain the reference for each resource, permission, an
 | 3 | [Create or reuse the managed identity](#managed-identity), then [assign its role](#required-role-assignment) | Produces `automationIdentity.id` and `automationIdentity.principalId`. |
 | 4 | [Create or reuse the vault](#create-or-reuse-key-vault), then [grant your user access](#user-secret-access) | Produces `kvId` and `userObjectId`. Do not run GitHub-app access yet. |
 | 5 | [Prepare SSH keys](#ssh-key-setup) and [administrator passwords](#admin-password-setup) | Requires vault access; allow RBAC propagation if necessary. |
-| 6 | Optional: [choose the OIDC create/reuse path](ci-cd-validation.md#bootstrapping-oidc-for-a-new-subscription-or-tenant), then [grant the app vault access](#github-actions-secret-access) | Configure main, active-branch, and PR credentials on the same app. |
-| 7 | [Configure deployment parameters and public IP](#configure-deployment-parameters) | Use this subscription's resource IDs and verified inventory. |
-| 8 | Optional: [set GitHub secrets and variables](ci-cd-validation.md#github-actions-secrets-and-variables) | Requires GitHub authentication and repository administration access. |
-| 9 | [Apply the foundation deletion lock](#foundation-deletion-lock) | Foundation resources and roles must already be in place. |
-| 10 | [Check regional availability and quota](deployment.md#preflight-checks), then [build, lint, validate, and preview](ci-cd-validation.md#local-validation) | Resolve errors and review what-if before deploying. |
-| 11 | [Deploy greenfield](deployment.md#greenfield-deployment), then [review deployment and guest results](validation-and-troubleshooting.md#post-deployment-review) | Deployment success alone does not prove operational readiness. |
+| 6 | Optional: [choose the OIDC create/reuse path](ci-cd-validation.md#github-oidc-setup), then [grant the app vault access](#github-actions-secret-access) | Configure main, active-branch, and PR credentials on the same app. |
+| 7 | [Apply the foundation deletion lock](#foundation-deletion-lock) | Foundation resources and roles must already be in place. |
 
-Skip steps 6 and 8 for local-only deployment. If you return in a new session, reinitialize shared values and retrieve existing IDs rather than creating replacement resources.
+### Bicep Setup Order
 
-## Azure Context And Foundation
+| Step | Action | Required State / Result |
+|---|---|---|
+| 1 | [Configure deployment parameters and public IP](#bicep-setup) | Use the resolved resource IDs and verified inventory. |
+| 2 | Optional: [set GitHub Actions secrets and variables](ci-cd-validation.md#github-actions-secrets-and-variables) | Publish deployment values after OIDC identity/access setup. |
+| 3 | Continue with [Bicep Deployment](deployment.md#deployment-workflow) | Check availability/quota, build/lint, validate, review `what-if`, deploy, and inspect results. |
+
+Skip the optional GitHub steps for local-only deployment. If you return in a new session, reinitialize shared values and retrieve existing IDs rather than creating replacement resources. For an existing lab, review the [brownfield checklist](deployment.md#brownfield-deployment) before configuring parameters or deploying.
+
+## Subscription-Level Setup
+
+These steps create or reuse prerequisites outside the lab's Bicep deployment. They apply in both new and existing subscriptions.
+
+### Azure Context And Foundation
 
 Sign in, inspect available subscriptions, and select the intended subscription:
 
@@ -81,7 +55,7 @@ $azureContext | Select-Object @{Name='Account';Expression={$_.user.name}}, id, t
 
 If the required tenant is unavailable, use `az login --tenant "<target-tenant-id>" --output none`, then repeat selection and verification. The portal also lists IDs under Subscriptions and Microsoft Entra ID Overview.
 
-Initialize shared values. The foundation location is independent of lab placement; the vault name must be globally unique:
+Initialize subscription-level setup values. The foundation location is independent of lab placement; the vault name must be globally unique:
 
 ```powershell
 az account list-locations --query "[].{name:name,displayName:displayName}" -o table
@@ -91,8 +65,6 @@ $vaultName = '<globally-unique-vault-name>'
 $automationIdentityName = 'amrl-deployment-mi'
 $githubRepository = '<GitHub-owner>/<repository-name>'
 $appDisplayName = 'AMRL-github-actions'
-$parameterFile = '.\main.parameters.local.json'
-$deploymentLocation = 'westeurope'
 if (@($foundationLocation, $vaultName) | Where-Object { [string]::IsNullOrWhiteSpace($_) -or $_ -match '[<>]' }) {
   throw 'Choose an actual foundation region and globally unique vault name before continuing.'
 }
@@ -120,7 +92,7 @@ az group create --name $foundationRg --location $foundationLocation --output non
 
 Storage and Container Instance support the network-reconciliation Deployment Script. `--output none` avoids printing the provider catalogue. If the foundation group already exists, inspect it with `az group show --name $foundationRg --query "{name:name,location:location}" -o json` and reuse its location rather than trying to move it.
 
-### Managed Identity
+#### Managed Identity
 
 After creating the foundation group, inspect its identities. Create the selected identity only if it does not already exist:
 
@@ -137,7 +109,7 @@ $automationIdentity = az identity show --name $automationIdentityName `
   --resource-group $foundationRg | ConvertFrom-Json
 ```
 
-### Required Role Assignment
+#### Required Role Assignment
 
 Grant the identity Network Contributor access to the target subscription for applicable peering/Bastion cleanup:
 
@@ -151,11 +123,11 @@ az role assignment create `
 
 Use `$automationIdentity.id` in the deployment parameter file. The identity is used when network reconciliation runs, not for every VM guest operation. See [Reconciliation RBAC](deployment.md#rbac-requirements-for-network-reconciliation) for its operational scope.
 
-## Key Vault Setup
+### Key Vault Setup
 
 Parameter files reference credentials through Key Vault rather than embedding them. Required secret names are `sshPublicKey`, `sshPrivateKey`, `jumpboxAdminPassword`, `serverAdminPassword`, and `clientAdminPassword`.
 
-### Create Or Reuse Key Vault
+#### Create Or Reuse Key Vault
 
 Inspect existing vaults and create the selected vault only if it does not already exist:
 
@@ -168,7 +140,7 @@ az keyvault create --name $vaultName --resource-group $foundationRg --location $
 
 `--enabled-for-template-deployment true` allows ARM/Bicep to resolve secret references. Purge protection is irreversible: a deleted vault cannot be permanently purged until its soft-delete retention expires. It protects recovery but does not prevent soft deletion.
 
-### User Secret Access
+#### User Secret Access
 
 Grant the signed-in administrator permission to write secrets in the selected vault:
 
@@ -181,7 +153,7 @@ az role assignment create --assignee-object-id $userObjectId `
 
 Allow time for RBAC propagation before writing secrets; do not recreate the vault or broaden permissions merely to bypass propagation delays.
 
-### SSH Key Setup
+#### SSH Key Setup
 
 Use a dedicated lab key rather than a personal GitHub or production key. Generate it interactively at a new path without overwriting an existing key:
 
@@ -199,7 +171,7 @@ az keyvault secret set --vault-name $vaultName --name sshPrivateKey --file $sshK
 
 Keep passphrases out of scripts and chat; a protected key must be unlocked when SSH uses it, and AMRL does not distribute the passphrase. Keep `--output none` on secret-writing commands so the response does not print the private key.
 
-### Admin Password Setup
+#### Admin Password Setup
 
 Set distinct, strong passwords using masked prompts. Run interactively on a protected workstation without transcripts or diagnostic tracing; the CLI receives temporary plaintext in process memory/arguments:
 
@@ -220,9 +192,9 @@ az keyvault secret list --vault-name $vaultName --query "[].{name:name,enabled:a
 
 These secrets initialize local VM accounts, not generated AD users. Generated users receive independent random passwords and require a separate secure reset/delivery process. If credentials were exposed, rotate both vault secrets and credentials on retained guests; updating the vault alone does not rotate existing VM passwords or authorized SSH keys.
 
-### GitHub Actions Secret Access
+#### GitHub Actions Secret Access
 
-Optional for CI automation. Complete or reload the [OIDC app setup](ci-cd-validation.md#bootstrapping-oidc-for-a-new-subscription-or-tenant) first. Use its Application (client) ID to resolve the service principal in the current tenant:
+Optional for CI automation. Complete or reload the [OIDC app setup](ci-cd-validation.md#github-oidc-setup) first. Use its Application (client) ID to resolve the service principal in the current tenant:
 
 ```powershell
 $githubActionsAppId = $app.appId
@@ -232,7 +204,7 @@ az role assignment create --assignee-object-id $githubActionsSpObjectId `
   --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" --scope $kvId --output none
 ```
 
-### Foundation Deletion Lock
+#### Foundation Deletion Lock
 
 After creating foundation resources and their RBAC assignments, protect the group from accidental control-plane deletion:
 
@@ -249,11 +221,20 @@ The lock covers the group and contained resources while permitting updates and s
 az lock delete --name protect-foundation --resource-group $foundationRg --output none
 ```
 
-## Configure Deployment Parameters
+## Bicep Setup
+
+Set the parameter-file path and deployment metadata location separately from the foundation resource locations:
+
+```powershell
+$parameterFile = '.\main.parameters.local.json'
+$deploymentLocation = 'westeurope'
+```
+
+### Configure Deployment Parameters
 
 Before this step, `$kvId` must identify the configured vault and `$automationIdentity.id` must identify the configured managed identity. Both are produced by earlier steps.
 
-### Public IPv4 Address
+#### Public IPv4 Address
 
 The lookup below contacts an external HTTPS service. Alternatively set `$publicIp` using a trusted network-administrator source, then run the address check. Confirm that the address represents the workstation's actual outbound path, including VPN/proxy effects:
 
@@ -267,7 +248,7 @@ if (-not [System.Net.IPAddress]::TryParse($publicIp, [ref]$parsedAddress) -or $p
 
 This is required for the configured administration path regardless of whether GitHub Actions is used. GitHub's `YOUR_PUBLIC_IP` variable uses the bare address; `jumpboxAllowedSources` uses CIDR, such as `$publicIp/32`.
 
-### Parameter File
+#### Parameter File
 
 Copy the demo only if the local file does not exist, then update references and the workstation access source. This example sets one `/32`; add other approved source networks separately:
 
@@ -287,7 +268,11 @@ $parameters | ConvertTo-Json -Depth 30 |
 
 For a fresh lab, set `existingRegions` and `existingVmPlacements` to empty arrays and choose the lab prefix, regions, and VM counts. Do not carry another subscription's inventory into the new one. Keep at least one DC and jumpbox; dedicated file services need a Windows server target. Review images, sizes, and capacity in [Configuration Parameters Reference](configuration-parameters-reference.md). Secrets remain Key Vault references, not literal values.
 
+For GitHub Actions, publish the [deployment secrets and variables](ci-cd-validation.md#github-actions-secrets-and-variables) after this step. Then continue with the [Bicep deployment workflow](deployment.md#deployment-workflow); preparing these values does not deploy the lab.
+
 ## Value Lookups
+
+### Subscription-Level Setup Values
 
 | Value | Retrieval |
 |---|---|
@@ -297,5 +282,11 @@ For a fresh lab, set `existingRegions` and `existingVmPlacements` to empty array
 | Identity resource / principal IDs | `$automationIdentity.id` / `$automationIdentity.principalId` from identity create/show |
 | App client / registration object IDs | `$app.appId` / `$app.id` from app create/show; these are different IDs |
 | GitHub service-principal object ID | `$servicePrincipal.id` from service-principal create/show |
-| Git branch | `git branch --show-current` |
+
+### Bicep Setup Values
+
+| Value | Retrieval |
+|---|---|
+| Parameter file / deployment metadata location | `$parameterFile` / `$deploymentLocation` from [Bicep Setup](#bicep-setup) |
+| Git branch for CI deployment | `git branch --show-current` |
 | Public IPv4 | [Public IPv4 Address](#public-ipv4-address) |

@@ -8,6 +8,7 @@ targetScope = 'resourceGroup'
 
 param vmName string
 param reconciliationToken string
+param targetFqdns array
 
 // 2. Script content
 var installWacScript = loadTextContent('./scripts/Install-WAC.ps1')
@@ -26,7 +27,7 @@ resource installWindowsAdminCenter 'Microsoft.Compute/virtualMachines/runCommand
   properties: {
     asyncExecution: false
     timeoutInSeconds: 3600
-    treatFailureAsDeploymentFailure: true
+    treatFailureAsDeploymentFailure: false
 
     source: {
       script: installWacScript
@@ -36,6 +37,10 @@ resource installWindowsAdminCenter 'Microsoft.Compute/virtualMachines/runCommand
       {
         name: 'ReconciliationToken'
         value: reconciliationToken
+      }
+      {
+        name: 'TargetFqdnsJson'
+        value: string(targetFqdns)
       }
     ]
   }
