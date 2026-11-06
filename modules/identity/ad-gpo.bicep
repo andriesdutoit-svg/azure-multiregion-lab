@@ -24,7 +24,7 @@ resource configureGpo 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01'
     asyncExecution: false
     treatFailureAsDeploymentFailure: true
     source: {
-      script: loadTextContent('./scripts/Configure-GPOs.ps1')
+      script: loadTextContent('./scripts/Set-GPOs.ps1')
     }
     parameters: [
       {

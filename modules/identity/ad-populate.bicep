@@ -27,7 +27,7 @@ param reconciliationToken string
 // The VM receives one self-contained script; no helper file or module must exist on the guest.
 
 var populateAdScript = replace(
-  loadTextContent('./scripts/Populate-AD.ps1'),
+  loadTextContent('./scripts/Initialize-AD.ps1'),
   '# __AMRL_DEPARTMENT_SELECTION__',
   loadTextContent('./scripts/Get-SelectedDepartments.ps1')
 )

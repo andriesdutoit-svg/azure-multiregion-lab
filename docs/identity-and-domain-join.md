@@ -67,7 +67,7 @@ The directory model is not parameterised; it represents a stable architectural d
 
 ## Directory Population Rules
 
-`Populate-AD.ps1` enforces these rules on every run (greenfield and brownfield):
+`Initialize-AD.ps1` enforces these rules on every run (greenfield and brownfield):
 
 - **Manager rule**: exactly one manager per department, identified by a title matching `*Manager*`. If multiple exist, the first is retained and others are demoted. If none exists, a new manager is created from an unused CSV record.
 - **Reporting lines**: unmanaged users are assigned to their department's manager; users with invalid or cross-department reporting lines are reassigned.
@@ -81,9 +81,9 @@ Reruns preserve object identities while repairing the selected attributes and me
 
 ## Windows LAPS Active Directory Configuration
 
-During directory population, `Ensure-LapsConfiguration` checks for the `ms-LAPS-Password` schema attribute and extends the AD schema with `Update-LapsADSchema` only when it is missing. It grants computer self-update permission separately on the Servers and Clients OUs, then grants the configured Windows administrators group (default `GGS_Windows_Admins`) permission to read LAPS passwords on both OUs.
+During directory population, `Set-AmrlLapsConfiguration` checks for the `ms-LAPS-Password` schema attribute and extends the AD schema with `Update-LapsADSchema` only when it is missing. It grants computer self-update permission separately on the Servers and Clients OUs, then grants the configured Windows administrators group (default `GGS_Windows_Admins`) permission to read LAPS passwords on both OUs.
 
-The linked Windows LAPS GPO supplies the policy side of this setup: it backs passwords up to Active Directory. `Configure-GPOs.ps1` creates or reconciles its backup directory, password complexity, password length, password age, and authorized decryptor settings directly in the GPO. The decryptor is derived from the live NetBIOS domain and the Windows administrators group in `directoryModel`.
+The linked Windows LAPS GPO supplies the policy side of this setup: it backs passwords up to Active Directory. `Set-GPOs.ps1` creates or reconciles its backup directory, password complexity, password length, password age, and authorized decryptor settings directly in the GPO. The decryptor is derived from the live NetBIOS domain and the Windows administrators group in `directoryModel`.
 
 ## Departmental File Services
 
@@ -91,7 +91,7 @@ When `enableFileServices=true`, directory population creates each department's `
 
 Directory population and share provisioning embed the same `Get-SelectedDepartments.ps1` helper in their Run Command payloads. All mandatory system-administration departments are retained in input order; additional departments fill the remaining slots in their JSON-property order. Requests smaller than the mandatory set are rejected, keeping directory groups and shares aligned without duplicate selection implementations.
 
-After Windows domain join completes, `Populate-Shares.ps1` runs on the selected file server. It creates `C:\Shares`, creates one SMB share per selected department, and applies the domain-local groups as NTFS Modify and Read-and-Execute permissions. The script retains existing directories and SMB shares and reapplies the expected ACL rules on reconciliation.
+After Windows domain join completes, `Set-Shares.ps1` runs on the selected file server. It creates `C:\Shares`, creates one SMB share per selected department, and applies the domain-local groups as NTFS Modify and Read-and-Execute permissions. The script retains existing directories and SMB shares and reapplies the expected ACL rules on reconciliation.
 
 With `useDedicatedFileServer=false`, the selected host is the primary DC. With `useDedicatedFileServer=true`, it is the first `srvwin` VM in the final placement model. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion) before changing this setting in an existing environment.
 
@@ -103,7 +103,7 @@ Examples:
 
 - Forest bootstrap exits when an AD domain already exists.
 - Replica promotion exits when the target server is already a DC.
-- Windows domain join skips rejoining when `PartOfDomain` is true but still reconciles the workload HTTP SPNs.
+- Windows domain join skips rejoining when `PartOfDomain` is true; a dependent post-join Run Command reconciles workload HTTP SPNs after the guest is ready.
 - Linux domain join skips `realm join` when the VM is already joined.
 - Directory population restores missing OUs, groups, users, and memberships.
 
@@ -111,9 +111,17 @@ Examples:
 
 Windows workload VMs are targeted from `finalVmPlacements` after Group Policy provisioning completes. The PowerShell script checks `Win32_ComputerSystem.PartOfDomain`; retained members skip the join. For a new join, it joins the configured domain and OU, verifies membership, and restarts the machine. Local Administrators membership is managed by Group Policy, not by this script.
 
-The join script ensures the VM has short-name and FQDN HTTP SPNs for Kerberos remote management, including on already-joined members. Windows applies computer policy normally after the join and any required restart; deployment does not wait for policy processing.
+Windows applies computer policy normally; deployment does not wait for policy processing.
 
-Directory population configures DC HTTP SPNs after forest and replica promotion. The identity stage then creates or reconciles the modeled GPOs and joins workload VMs. WAC installation follows GPO configuration and Windows domain join; deployment success does not guarantee that each VM has processed its policies.
+### Windows Remote-Management Components
+
+| Step | Bicep module / orchestration | Guest script | Responsibility |
+|---|---|---|---|
+| Domain join | `modules/stages/identity-stage.bicep` → `modules/identity/domain-join.bicep` | `modules/identity/scripts/Join-Domain.ps1` | Join a new workload to its domain/OU, verify membership, and restart it. Retained members skip rejoining. |
+| Workload SPN reconciliation | `modules/stages/identity-stage.bicep` → `modules/identity/domain-join-spn.bicep` | `modules/identity/scripts/Reconcile-WinRMHttpSpns.ps1` | After the join command completes, wait for the machine secure channel and idempotently reconcile short-name and FQDN HTTP SPNs with bounded retries. |
+| WAC gateway install/repair | `modules/stages/identity-stage.bicep` → `modules/identity/wac.bicep` | `modules/identity/scripts/Install-WAC.ps1` | Install or repair the selected gateway and its configuration. The stage waits for Windows join and SPN reconciliation; workgroup gateways receive explicit modeled target FQDNs in TrustedHosts. |
+
+Directory population configures DC HTTP SPNs after forest and replica promotion. Deployment success does not guarantee that each VM has processed its policies or that guest access is ready.
 
 ## Group Policy Provisioning
 

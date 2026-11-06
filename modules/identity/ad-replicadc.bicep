@@ -17,7 +17,7 @@ param reconciliationToken string
 
 // 2. Script content
 
-var promoteReplicaDcScript = loadTextContent('./scripts/Promote-ReplicaDC.ps1')
+var promoteReplicaDcScript = loadTextContent('./scripts/Install-ReplicaDC.ps1')
 
 // 3. Existing replica DC and Run Command
 // Referencing the VM does not redeploy its disks, NIC, or operating-system configuration.

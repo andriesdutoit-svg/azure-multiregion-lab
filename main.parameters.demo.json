@@ -11,7 +11,20 @@
     },
 
     "prefix": {
-      "value": "AMRL"
+      "value": "AMRL",
+      "metadata": {
+        "bootstrap": {
+          "azureTenantId": "<AZURE_TENANT_ID>",
+          "azureSubscriptionId": "<AZURE_SUBSCRIPTION_ID>",
+          "deploymentLocation": "westeurope",
+          "foundationResourceGroup": "amrl-foundation-rg",
+          "automationManagedIdentityName": "amrl-deployment-mi",
+          "githubRepository": "andriesdutoit-svg/azure-multiregion-lab",
+          "githubAppDisplayName": "AMRL-github-actions",
+          "foundationLocation": "southafricanorth",
+          "foundationLocationSource": "regionIndexMap"
+        }
+      }
     },
 
     "tags": {
@@ -131,7 +144,7 @@
         },
         "jumpbox": {
           "storageAccountType": "StandardSSD_LRS",
-          "diskSizeGB": 64
+          "diskSizeGB": 128
         },
         "windowsServer": {
           "storageAccountType": "Premium_LRS",
@@ -139,7 +152,7 @@
         },
         "windowsClient": {
           "storageAccountType": "StandardSSD_LRS",
-          "diskSizeGB": 64
+          "diskSizeGB": 128
         },
         "linuxServer": {
           "storageAccountType": "Premium_LRS",
@@ -147,7 +160,7 @@
         },
         "linuxClient": {
           "storageAccountType": "StandardSSD_LRS",
-          "diskSizeGB": 64
+          "diskSizeGB": 128
         }
       }
     },

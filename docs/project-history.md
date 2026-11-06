@@ -29,10 +29,11 @@
 - **v2.9 (completed)**: Optional hub-region Azure Bastion, independently gated peering/Bastion cleanup without a separate execution flag, and reconciliation-identity validation. Completion covers the delivered scope, not exhaustive live-transition verification.
 - **v2.10 (completed)**: Windows Admin Center gateway integration and repair in the identity stage, Active Directory discovery support, and cross-region WinRM-over-HTTP management with explicit credentials. Completion covers this delivered scope; Windows-account delegation, PKI-backed WinRM HTTPS, automated Shared Connection onboarding, and Azure Arc onboarding remain deferred.
 - **v2.11 (completed)**: Programmatic creation and reconciliation of modeled Group Policy settings, replacing the GPO backup-import workflow. Live policy application and effective guest settings were validated on fresh and retained Windows VMs.
+- **v2.12 (completed)**: Guided subscription bootstrapper with read-only Plan, prerequisite/configuration Prepare, and explicitly confirmed Deploy modes; brownfield parameter-file support; nested deployment progress and concise final reports; resilient failure diagnostics; UTF-8 Azure CLI output handling on Windows; workgroup WAC gateway support for explicitly trusted modeled Windows targets; and bounded post-reboot WinRM HTTP SPN reconciliation for Windows workloads. The delivered scope is complete; live deployment can still be blocked by Azure capacity or Deployment Script container provisioning.
 
 ## Roadmap
 
-- **v2.12:** Service-account provisioning and reconciliation, file-server migration/reconciliation, and monitoring and observability. Azure Arc onboarding remains future work and is not part of completed v2.10 scope.
+- **v2.13:** Service-account provisioning and reconciliation, file-server migration/reconciliation, and monitoring and observability. Scope and acceptance criteria remain to be defined.
 - **v3.0-v3.3:** Security enhancements and policy baselines, public key infrastructure, hybrid identity, then multi-forest support.
 - **v4.x:** Automatic discovery, explicit DC IP allocation and safe DNS reconciliation, full topology reconciliation, reverse transitions, and zero-VM deployment support.
 - **Stretch goals:** Advanced networking, security, and lab lifecycle automation.
@@ -76,8 +77,8 @@ Concepts derived from or inspired by Set-DummyAD include AD OU generation, depar
 Files containing logic derived from or inspired by Set-DummyAD:
 
 - `modules/identity/scripts/Install-Forest.ps1`
-- `modules/identity/scripts/Promote-ReplicaDC.ps1`
-- `modules/identity/scripts/Populate-AD.ps1`
+- `modules/identity/scripts/Install-ReplicaDC.ps1`
+- `modules/identity/scripts/Initialize-AD.ps1`
 
 AMRL follows a non-destructive deployment model: re-execution of the identity stage creates missing objects and repairs selected attributes rather than enforcing an exact directory state.
 

@@ -644,6 +644,8 @@ module validationEngine 'modules/logic/validation.bicep' = {
     departmentCount: departmentCount
     usersPerDepartment: usersPerDepartment
 
+    enableWindowsAdminCenter: enableWindowsAdminCenter
+    useDedicatedWacHost: useDedicatedWacHost
     enableFileServices: enableFileServices
     useDedicatedFileServer: useDedicatedFileServer
     fileServerVmAvailable: length(fileServerVmList) > 0

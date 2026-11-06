@@ -90,7 +90,7 @@ function Write-AmrlLog {
     Microsoft.PowerShell.Utility\Write-Host "[$Status] $Message"
 }
 
-function Ensure-GpoExists {
+function Set-AmrlGpo {
     param([Parameter(Mandatory)][string]$GpoName)
 
     $gpo = Get-GPO -Name $GpoName -Domain $DomainName -ErrorAction SilentlyContinue
@@ -105,7 +105,7 @@ function Ensure-GpoExists {
     return $gpo
 }
 
-function Ensure-GpoLink {
+function Set-AmrlGpoLink {
     param(
         [Parameter(Mandatory)][string]$GpoName,
         [Parameter(Mandatory)][string]$TargetDn
@@ -138,7 +138,7 @@ function Ensure-GpoLink {
 
 # Policy files written directly to SYSVOL also need their client-side extension
 # registered in AD; the GUID pairs identify the Windows policy processors to invoke.
-function Ensure-GpoMachineExtensionPair {
+function Set-AmrlGpoMachineExtensionPair {
     param(
         [Parameter(Mandatory)][Microsoft.GroupPolicy.Gpo]$Gpo,
         [Parameter(Mandatory)][guid]$ClientExtensionId,
@@ -184,7 +184,7 @@ function Set-GpoRegistryValue {
 
 # System Services policy is stored in the security template, not an ordinary registry value.
 # The native WinRM service entry uses startup mode 2 (Automatic); retain other service entries.
-function Ensure-WinRmServiceStartup {
+function Set-AmrlWinRmServiceStartup {
     param([Parameter(Mandatory)][Microsoft.GroupPolicy.Gpo]$Gpo)
 
     $gpoGuid = ([guid]$Gpo.Id).ToString('B')
@@ -236,7 +236,7 @@ function Ensure-WinRmServiceStartup {
     }
 
     Set-Content -LiteralPath $templatePath -Value ($lines -join "`r`n") -Encoding Unicode -ErrorAction Stop
-    Ensure-GpoMachineExtensionPair `
+    Set-AmrlGpoMachineExtensionPair `
         -Gpo $Gpo `
         -ClientExtensionId '827D319E-6EAC-11D2-A4EA-00C04F79F83A' `
         -ToolExtensionId '803E14A0-B4FB-11D0-A0D0-00A0C90F574B'
@@ -245,7 +245,7 @@ function Ensure-WinRmServiceStartup {
 
 # An Update preference adds the modeled admin group without replacing Administrators membership.
 # SIDs select the built-in group independently of localization and resolve the current domain group.
-function Ensure-GpoLocalAdminPreference {
+function Set-AmrlGpoLocalAdminPreference {
     param([Parameter(Mandatory)][Microsoft.GroupPolicy.Gpo]$Gpo)
 
     $gpoGuid = ([guid]$Gpo.Id).ToString('B')
@@ -370,7 +370,7 @@ function Ensure-GpoLocalAdminPreference {
         Write-AmrlLog "[Verified] $($Gpo.DisplayName): $qualifiedName is an add-only Administrators member."
     }
 
-    Ensure-GpoMachineExtensionPair `
+    Set-AmrlGpoMachineExtensionPair `
         -Gpo $Gpo `
         -ClientExtensionId '17D89FEC-5C44-4972-B12D-241CAEF74509' `
         -ToolExtensionId '79F92669-4224-476C-9C5C-6EFB4D87DF4A'
@@ -379,7 +379,7 @@ function Ensure-GpoLocalAdminPreference {
 # Edit the domain GPO store here, not this DC's local firewall. Windows applies it to guests
 # through normal policy processing. Profile Any handles Public/Private detection at startup;
 # the internal source range remains a separate restriction and is not changed to Any.
-function Ensure-GpoWinRMFirewallRule {
+function Set-AmrlGpoWinRMFirewallRule {
     param(
         [Parameter(Mandatory)][string]$GpoName,
         [Parameter(Mandatory)][string]$DisplayName,
@@ -451,10 +451,10 @@ function Ensure-GpoWinRMFirewallRule {
 }
 
 # 1. Preserve existing policy identities, then reapply the settings owned by this script.
-$serverAdministrationGpo = Ensure-GpoExists -GpoName $serverAdministrationGpoName
-$clientAdministrationGpo = Ensure-GpoExists -GpoName $clientAdministrationGpoName
-$windowsLapsGpo = Ensure-GpoExists -GpoName $windowsLapsGpoName
-$domainControllerWinRmGpo = Ensure-GpoExists -GpoName $domainControllerWinRmGpoName
+$serverAdministrationGpo = Set-AmrlGpo -GpoName $serverAdministrationGpoName
+$clientAdministrationGpo = Set-AmrlGpo -GpoName $clientAdministrationGpoName
+$windowsLapsGpo = Set-AmrlGpo -GpoName $windowsLapsGpoName
+$domainControllerWinRmGpo = Set-AmrlGpo -GpoName $domainControllerWinRmGpoName
 
 # 2. Members need both service startup and listener policy; a firewall allowance alone
 # cannot provide a WSMan endpoint. IPv6 listening also covers WAC reaching its own host
@@ -462,22 +462,22 @@ $domainControllerWinRmGpo = Ensure-GpoExists -GpoName $domainControllerWinRmGpoN
 # local listening addresses, not permitted remote clients; firewall scope is configured below.
 $winRmRegistryKey = 'HKLM\Software\Policies\Microsoft\Windows\WinRM\Service'
 foreach ($gpo in @($serverAdministrationGpo, $clientAdministrationGpo)) {
-    Ensure-WinRmServiceStartup -Gpo $gpo
+    Set-AmrlWinRmServiceStartup -Gpo $gpo
     Set-GpoRegistryValue -Gpo $gpo -Key $winRmRegistryKey -ValueName 'AllowAutoConfig' -Type DWord -Value '1'
     Set-GpoRegistryValue -Gpo $gpo -Key $winRmRegistryKey -ValueName 'IPv4Filter' -Type String -Value '*'
     Set-GpoRegistryValue -Gpo $gpo -Key $winRmRegistryKey -ValueName 'IPv6Filter' -Type String -Value '*'
-    Ensure-GpoLocalAdminPreference -Gpo $gpo
+    Set-AmrlGpoLocalAdminPreference -Gpo $gpo
 }
 
 # 3. WAC currently uses HTTP/5985 to manage targets. Allowing 5986 here does not provision
 # an HTTPS listener or certificate. The gateway's browser-facing HTTPS/443 is separate.
-Ensure-GpoWinRMFirewallRule `
+Set-AmrlGpoWinRMFirewallRule `
     -GpoName $serverAdministrationGpoName `
     -DisplayName 'Allow WinRM HTTP/HTTPS' `
     -RuleName 'AMRL-Server-WinRM-HTTP-HTTPS' `
     -LocalPorts @('5985', '5986')
 
-Ensure-GpoWinRMFirewallRule `
+Set-AmrlGpoWinRMFirewallRule `
     -GpoName $clientAdministrationGpoName `
     -DisplayName 'Allow WinRM HTTP/HTTPS' `
     -RuleName 'AMRL-Client-WinRM-HTTP-HTTPS' `
@@ -499,18 +499,18 @@ Set-GpoRegistryValue `
 
 # 5. DCs get a narrow, separate rule, not the workload local-Administrators preference.
 # This policy manages their firewall only; it does not create DC WinRM service/listener policy.
-Ensure-GpoWinRMFirewallRule `
+Set-AmrlGpoWinRMFirewallRule `
     -GpoName $domainControllerWinRmGpoName `
     -DisplayName 'AMRL DC WinRM HTTP from internal networks' `
     -RuleName 'AMRL-DC-WinRM-HTTP-Internal' `
     -LocalPorts @('5985')
 
 # 6. Link policies only to their intended computer OUs; endpoint processing is a later step.
-Ensure-GpoLink -GpoName $serverAdministrationGpoName -TargetDn $serversOuDn
-Ensure-GpoLink -GpoName $clientAdministrationGpoName -TargetDn $clientsOuDn
-Ensure-GpoLink -GpoName $windowsLapsGpoName -TargetDn $serversOuDn
-Ensure-GpoLink -GpoName $windowsLapsGpoName -TargetDn $clientsOuDn
-Ensure-GpoLink -GpoName $domainControllerWinRmGpoName -TargetDn $domainControllersOuDn
+Set-AmrlGpoLink -GpoName $serverAdministrationGpoName -TargetDn $serversOuDn
+Set-AmrlGpoLink -GpoName $clientAdministrationGpoName -TargetDn $clientsOuDn
+Set-AmrlGpoLink -GpoName $windowsLapsGpoName -TargetDn $serversOuDn
+Set-AmrlGpoLink -GpoName $windowsLapsGpoName -TargetDn $clientsOuDn
+Set-AmrlGpoLink -GpoName $domainControllerWinRmGpoName -TargetDn $domainControllersOuDn
 
 Write-AmrlLog (
     "[Info] GPO configuration summary: Created=$($script:logCounts.Created); Verified=$($script:logCounts.Verified); Updated=$($script:logCounts.Updated); Removed=$($script:logCounts.Removed); Skipped=$($script:logCounts.Skipped); Warnings=$($script:logCounts.Warning); Errors=$($script:logCounts.Error)."

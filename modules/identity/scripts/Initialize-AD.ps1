@@ -140,7 +140,7 @@ Start-Transcript `
 Write-AmrlLog "[Info] Transcript log: $logFile."
 
 # 3. Directory lookup, creation, and membership helpers
-# Ensure-* helpers generally avoid duplicate creation; repair and authoritative membership
+# Set-Amrl* helpers generally avoid duplicate creation; repair and authoritative membership
 # helpers deliberately mutate selected retained state. Function definitions do not imply execution order.
 
 # Get-ManagedOU: Traverse nested OU hierarchy by path string (e.g., 'Computers/Servers')
@@ -168,9 +168,9 @@ function Get-ManagedOU {
     return $ou
 }
 
-# Ensure-OrganizationalUnit: Create OU if not exists; return existing OU if present (idempotent).
+# Set-AmrlOrganizationalUnit: Create OU if not exists; return existing OU if present (idempotent).
 # Supports nested paths (e.g., path 'OU=Computers,DC=...' creates Computers OU within domain).
-function Ensure-OrganizationalUnit {
+function Set-AmrlOrganizationalUnit {
     param(
         [string]$Name,
         [string]$Path,
@@ -202,10 +202,10 @@ function Ensure-OrganizationalUnit {
         -SearchScope OneLevel
 }
 
-# Ensure-ADGroup: Create AGDLP group if not exists; return existing group if present (idempotent).
+# Set-AmrlADGroup: Create AGDLP group if not exists; return existing group if present (idempotent).
 # GroupScope: DomainLocal (DLGS) for local resource permissions, Global (GGS) for distribution/membership.
 # Follows AGDLP nesting: Global group contains users, DomainLocal group grants resource permissions.
-function Ensure-ADGroup {
+function Set-AmrlADGroup {
     param(
         [string]$Name,
         [string]$Path,
@@ -239,7 +239,7 @@ function Ensure-ADGroup {
         -SearchScope OneLevel
 }
 
-function Ensure-ADGroupMember {
+function Set-AmrlADGroupMember {
     param(
         [string]$GroupName,
         [string]$MemberName
@@ -265,7 +265,7 @@ function Ensure-ADGroupMember {
 }
 
 # This helper removes direct members outside DesiredMembers before ensuring desired membership.
-# It is stronger than the additive Ensure-* operations and must not be reordered around callers.
+# It is stronger than the additive Set-Amrl* operations and must not be reordered around callers.
 function Set-ADGroupMembersAuthoritative {
     param(
         [string]$GroupName,
@@ -297,13 +297,13 @@ function Set-ADGroupMembersAuthoritative {
 
     foreach ($member in $DesiredMembers) {
 
-        Ensure-ADGroupMember `
+        Set-AmrlADGroupMember `
             -GroupName $GroupName `
             -MemberName $member
     }
 }
 
-function Ensure-ADPrincipalGroupMembership {
+function Set-AmrlADPrincipalGroupMembership {
     param(
         [string]$GroupName,
         [string]$MemberName
@@ -354,7 +354,7 @@ function New-RandomPassword {
     -join $passwordChars
 }
 
-function Ensure-ADUser {
+function Set-AmrlADUser {
     param(
         [string]$SamAccountName,
         [string]$Path,
@@ -374,7 +374,7 @@ function Ensure-ADUser {
 # Existing users are updated rather than recreated.
 # Selected attributes such as Department and Title
 # are reconciled during re-execution.
-# Reporting lines are reconciled by Reconcile-DepartmentManagers()
+# Reporting lines are reconciled by Sync-AmrlDepartmentManagers()
 # before existing users are repaired.
 
 if ($existingUser) {
@@ -404,7 +404,7 @@ if ($existingUser) {
 
     Set-ADUser @updateParams
 
-    # Reporting lines are reconciled by Reconcile-DepartmentManagers()
+    # Reporting lines are reconciled by Sync-AmrlDepartmentManagers()
     # before this user-repair operation. Manager assignments are not
     # updated here.
 
@@ -555,7 +555,7 @@ function Get-SamAccountName {
     return $sam
 }
 
-function Ensure-DirectoryOuStructure {
+function Set-AmrlDirectoryOuStructure {
     param(
         [object]$PopulationModel,
         [string]$DomainDn
@@ -563,7 +563,7 @@ function Ensure-DirectoryOuStructure {
 
     Write-AmrlLog "[i] OU generation starting"
 
-    $rootOU = Ensure-OrganizationalUnit `
+    $rootOU = Set-AmrlOrganizationalUnit `
         -Name $PopulationModel.rootOuName `
         -Path $DomainDn `
         -ProtectedFromAccidentalDeletion $PopulationModel.preventOuDeletion
@@ -574,7 +574,7 @@ function Ensure-DirectoryOuStructure {
 
         if ($ouName -notlike "*/*") {
 
-            Ensure-OrganizationalUnit `
+            Set-AmrlOrganizationalUnit `
                 -Name $ouName `
                 -Path $rootOUdn `
                 -ProtectedFromAccidentalDeletion $PopulationModel.preventOuDeletion |
@@ -590,7 +590,7 @@ function Ensure-DirectoryOuStructure {
                 -SearchBase $rootOUdn `
                 -ErrorAction Stop
 
-            Ensure-OrganizationalUnit `
+            Set-AmrlOrganizationalUnit `
                 -Name $childOU `
                 -Path $parentOUObject.DistinguishedName `
                 -ProtectedFromAccidentalDeletion $PopulationModel.preventOuDeletion |
@@ -603,7 +603,7 @@ function Ensure-DirectoryOuStructure {
     return $rootOUdn
 }
 
-function Ensure-DepartmentOUs {
+function Set-AmrlDepartmentOUs {
     param(
         [object[]]$SelectedDepartments,
         [string]$RootOuDn,
@@ -619,7 +619,7 @@ function Ensure-DepartmentOUs {
 
     foreach ($department in $SelectedDepartments) {
 
-        Ensure-OrganizationalUnit `
+        Set-AmrlOrganizationalUnit `
             -Name $department.Name `
             -Path $usersOU.DistinguishedName `
             -ProtectedFromAccidentalDeletion $PreventOuDeletion |
@@ -637,7 +637,7 @@ $fileServicesEnabled =
 Write-AmrlLog "EnableFileServices raw value = [$EnableFileServices]"
 Write-AmrlLog "EnableFileServices converted value = [$fileServicesEnabled]"
 
-function Ensure-DepartmentSecurityGroups {
+function Set-AmrlDepartmentSecurityGroups {
     param(
         [object[]]$SelectedDepartments,
         [string]$RootOuDn,
@@ -674,13 +674,13 @@ function Ensure-DepartmentSecurityGroups {
         throw "Unable to resolve group OU: $($PopulationModel.groupOuMapping.domainLocalSecurity)"
     }
 
-    Ensure-ADGroup `
+    Set-AmrlADGroup `
         -Name $windowsAdminsGroup `
         -Path $ggsOU.DistinguishedName `
         -GroupCategory Security `
         -GroupScope Global
 
-    Ensure-ADGroup `
+    Set-AmrlADGroup `
         -Name $linuxAdminsGroup `
         -Path $ggsOU.DistinguishedName `
         -GroupCategory Security `
@@ -690,19 +690,19 @@ function Ensure-DepartmentSecurityGroups {
 
         $code = $department.Value
 
-        Ensure-ADGroup `
+        Set-AmrlADGroup `
             -Name "${ggsPrefix}_${code}_ALL" `
             -Path $ggsOU.DistinguishedName `
             -GroupCategory Security `
             -GroupScope Global
 
-        Ensure-ADGroup `
+        Set-AmrlADGroup `
             -Name "${ggsPrefix}_${code}_Managers" `
             -Path $ggsOU.DistinguishedName `
             -GroupCategory Security `
             -GroupScope Global
 
-        Ensure-ADGroup `
+        Set-AmrlADGroup `
             -Name "${ggsPrefix}_${code}_Users" `
             -Path $ggsOU.DistinguishedName `
             -GroupCategory Security `
@@ -713,15 +713,15 @@ function Ensure-DepartmentSecurityGroups {
         if ($EnableFileServices) {
 
             # Share_RW/Share_RO are AD groups only; 
-            # The file server (Populate-Shares.ps1) references them by name for NTFS ACLs.
+            # The file server (Set-Shares.ps1) references them by name for NTFS ACLs.
             
-            Ensure-ADGroup `
+            Set-AmrlADGroup `
                 -Name "${dlgsPrefix}_${code}_Share_RW" `
                 -Path $dlgsOU.DistinguishedName `
                 -GroupCategory Security `
                 -GroupScope DomainLocal
 
-            Ensure-ADGroup `
+            Set-AmrlADGroup `
                 -Name "${dlgsPrefix}_${code}_Share_RO" `
                 -Path $dlgsOU.DistinguishedName `
                 -GroupCategory Security `
@@ -733,7 +733,7 @@ function Ensure-DepartmentSecurityGroups {
     Write-AmrlLog "[i] Department security group generation completed"
 }
 
-function Ensure-DepartmentGroupNesting {
+function Set-AmrlDepartmentGroupNesting {
     param(
         [object[]]$SelectedDepartments,
         [object]$PopulationModel,
@@ -753,7 +753,7 @@ function Ensure-DepartmentGroupNesting {
 
     Write-AmrlLog "[i] Department group nesting starting"
 
-    # Nests Managers/Users into Share_RW/Share_RO so the file server's ACLs (Populate-Shares.ps1) resolve correct membership.
+    # Nests Managers/Users into Share_RW/Share_RO so the file server's ACLs (Set-Shares.ps1) resolve correct membership.
 
     $platformAdminUsersGroup = (
         "${ggsPrefix}_" +
@@ -790,11 +790,11 @@ function Ensure-DepartmentGroupNesting {
 
             $code = $department.Value
 
-            Ensure-ADGroupMember `
+            Set-AmrlADGroupMember `
                 -GroupName "${dlgsPrefix}_${code}_Share_RW" `
                 -MemberName "${ggsPrefix}_${code}_Managers"
 
-            Ensure-ADGroupMember `
+            Set-AmrlADGroupMember `
                 -GroupName "${dlgsPrefix}_${code}_Share_RO" `
                 -MemberName "${ggsPrefix}_${code}_Users"
         }
@@ -826,7 +826,7 @@ function Ensure-DepartmentGroupNesting {
 # - Departmental ALL groups
 # - Departmental Manager groups
 
-function Reconcile-DepartmentManagers {
+function Sync-AmrlDepartmentManagers {
     param(
         [object[]]$SelectedDepartments,
         [object]$UsersOu,
@@ -888,7 +888,7 @@ function Reconcile-DepartmentManagers {
                     -Confirm:$false `
                     -ErrorAction SilentlyContinue
 
-                Ensure-ADPrincipalGroupMembership `
+                Set-AmrlADPrincipalGroupMembership `
                     -GroupName "${ggsPrefix}_$($department.Value)_Users" `
                     -MemberName $duplicateManager.SamAccountName
             }
@@ -970,11 +970,11 @@ function Reconcile-DepartmentManagers {
 
                 $managerSam = $managerObject.SamAccountName
 
-                Ensure-ADPrincipalGroupMembership `
+                Set-AmrlADPrincipalGroupMembership `
                     -GroupName "${ggsPrefix}_$($department.Value)_ALL" `
                     -MemberName $managerSam
 
-                Ensure-ADPrincipalGroupMembership `
+                Set-AmrlADPrincipalGroupMembership `
                     -GroupName "${ggsPrefix}_$($department.Value)_Managers" `
                     -MemberName $managerSam
 
@@ -1043,7 +1043,7 @@ if ($existingDepartmentManagers.Count -eq 0) {
 
     $managerUpn = "$managerSam@$DomainName"
 
-    $managerObject = Ensure-ADUser `
+    $managerObject = Set-AmrlADUser `
         -SamAccountName $managerSam `
         -Path $departmentOU.DistinguishedName `
         -DisplayName "$($managerUser.FirstName) $($managerUser.LastName)" `
@@ -1054,11 +1054,11 @@ if ($existingDepartmentManagers.Count -eq 0) {
         -Title "$($department.Name) Manager" `
         -Manager ""
 
-    Ensure-ADPrincipalGroupMembership `
+    Set-AmrlADPrincipalGroupMembership `
         -GroupName "${ggsPrefix}_$($department.Value)_ALL" `
         -MemberName $managerSam
 
-    Ensure-ADPrincipalGroupMembership `
+    Set-AmrlADPrincipalGroupMembership `
         -GroupName "${ggsPrefix}_$($department.Value)_Managers" `
         -MemberName $managerSam
 
@@ -1236,7 +1236,7 @@ function Get-DepartmentUserTargets {
 # - Department attribute remediation
 # - Group membership remediation
 # Reporting-line reconciliation is completed by
-# Reconcile-DepartmentManagers() before this function runs.
+# Sync-AmrlDepartmentManagers() before this function runs.
 
 function Repair-ExistingUsers {
     param(
@@ -1333,11 +1333,11 @@ function Repair-ExistingUsers {
 
                 # Add correct groups
 
-                Ensure-ADPrincipalGroupMembership `
+                Set-AmrlADPrincipalGroupMembership `
                     -GroupName "${ggsPrefix}_$($department.Value)_ALL" `
                     -MemberName $user.SamAccountName
 
-                Ensure-ADPrincipalGroupMembership `
+                Set-AmrlADPrincipalGroupMembership `
                     -GroupName "${ggsPrefix}_$($department.Value)_Users" `
                     -MemberName $user.SamAccountName
             }
@@ -1358,7 +1358,7 @@ function Repair-ExistingUsers {
 # - All departments have reached target capacity.
 # - No additional unique usernames are available.
 
-function Populate-DepartmentUsers {
+function Initialize-AmrlDepartmentUsers {
     param(
         [hashtable]$DepartmentTargets,
         [System.Collections.ArrayList]$CsvNames,
@@ -1491,7 +1491,7 @@ function Populate-DepartmentUsers {
 
             $userUpn = "$userSam@$($ConnectedDomain.DNSRoot)"
 
-            $userObject = Ensure-ADUser `
+            $userObject = Set-AmrlADUser `
                 -SamAccountName $userSam `
                 -Path $departmentOU.DistinguishedName `
                 -DisplayName "$($userRecord.FirstName) $($userRecord.LastName)" `
@@ -1521,11 +1521,11 @@ function Populate-DepartmentUsers {
                 continue
             }
 
-            Ensure-ADPrincipalGroupMembership `
+            Set-AmrlADPrincipalGroupMembership `
                 -GroupName "${ggsPrefix}_$($department.Value)_ALL" `
                 -MemberName $userSam
 
-            Ensure-ADPrincipalGroupMembership `
+            Set-AmrlADPrincipalGroupMembership `
                 -GroupName "${ggsPrefix}_$($department.Value)_Users" `
                 -MemberName $userSam
 
@@ -1555,7 +1555,7 @@ function Populate-DepartmentUsers {
 # 7. Windows LAPS directory prerequisites
 # Extend schema if absent, then apply self/read permissions to the two modeled workload OUs.
 # This requires schema/ACL permissions; it prepares AD rather than setting endpoint LAPS passwords.
-function Ensure-LapsConfiguration {
+function Set-AmrlLapsConfiguration {
     param(
         [object]$DirectoryModel
     )
@@ -1744,7 +1744,7 @@ if ($null -eq $currentDomain) {
 # Kerberos needs HTTP service identities for WAC/WinRM connections by short name or FQDN.
 # Promotion creates the DC accounts first; population then repairs these account attributes
 # on both fresh and retained DCs. This does not open a port or configure a WinRM listener.
-function Ensure-DomainControllerHttpSpns {
+function Set-AmrlDomainControllerHttpSpns {
     param([string[]]$ComputerNames)
 
     if ($currentDomain.DNSRoot -ine $DomainName.TrimEnd('.')) {
@@ -1789,7 +1789,7 @@ function Ensure-DomainControllerHttpSpns {
 
 # The stage supplies modeled DCs only; this is not discovery or repair of unrelated AD hosts.
 $domainControllerNames = $DomainControllerNamesJson | ConvertFrom-Json
-Ensure-DomainControllerHttpSpns -ComputerNames $domainControllerNames
+Set-AmrlDomainControllerHttpSpns -ComputerNames $domainControllerNames
 
 $model = $DirectoryModel | ConvertFrom-Json
 
@@ -1814,26 +1814,26 @@ $departments = Get-SelectedDepartments `
     -AdditionalDepartmentsJson $AdditionalDepartmentsJson `
     -InputDepartmentCount $DepartmentCount
 
-$rootOUdn = Ensure-DirectoryOuStructure `
+$rootOUdn = Set-AmrlDirectoryOuStructure `
     -PopulationModel $model `
     -DomainDn $domainDN
 
-$usersOU = Ensure-DepartmentOUs `
+$usersOU = Set-AmrlDepartmentOUs `
     -SelectedDepartments $departments `
     -RootOuDn $rootOUdn `
     -PreventOuDeletion $model.preventOuDeletion `
     -PopulationModel $model
 
-Ensure-DepartmentSecurityGroups `
+Set-AmrlDepartmentSecurityGroups `
     -SelectedDepartments $departments `
     -RootOuDn $rootOUdn `
     -PopulationModel $model `
     -EnableFileServices $fileServicesEnabled
 
-Ensure-LapsConfiguration `
+Set-AmrlLapsConfiguration `
     -DirectoryModel $model
 
-Ensure-DepartmentGroupNesting `
+Set-AmrlDepartmentGroupNesting `
     -SelectedDepartments $departments `
     -PopulationModel $model `
     -EnableFileServices $fileServicesEnabled
@@ -1856,7 +1856,7 @@ if ($CSVNames.Count -lt $requiredUsers) {
     )
 }
 
-$departmentInfo = Reconcile-DepartmentManagers `
+$departmentInfo = Sync-AmrlDepartmentManagers `
     -SelectedDepartments $departments `
     -UsersOu $usersOU `
     -CsvNames $CSVNames `
@@ -1871,7 +1871,7 @@ Repair-ExistingUsers `
     -DepartmentInfo $departmentInfo `
     -PopulationModel $model
 
-Populate-DepartmentUsers `
+Initialize-AmrlDepartmentUsers `
     -DepartmentTargets $departmentTargets `
     -CsvNames $CSVNames `
     -ConnectedDomain $currentDomain `

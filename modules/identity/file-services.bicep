@@ -21,7 +21,7 @@ param reconciliationToken string
 // Embed the same department selector as AD population to keep share and group targets aligned.
 
 var populateSharesScript = replace(
-  loadTextContent('./scripts/Populate-Shares.ps1'),
+  loadTextContent('./scripts/Set-Shares.ps1'),
   '# __AMRL_DEPARTMENT_SELECTION__',
   loadTextContent('./scripts/Get-SelectedDepartments.ps1')
 )

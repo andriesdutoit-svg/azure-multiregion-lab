@@ -6,7 +6,9 @@ Start with local checks for manual deployments. GitHub Actions and OIDC setup ar
 
 ## Local Validation
 
-Prerequisites: Azure CLI authenticated to the target subscription, an existing parameter file, and referenced foundation resources. Set the parameter path and deployment metadata location explicitly, or reuse the values from [New Subscription Setup](new-subscription-setup.md):
+Subscription-level prerequisites: authenticated Azure CLI and the referenced identity, roles, vault, and credentials. Use the [bootstrapper](bootstrapper.md) or [manual subscription-level preparation](manual-preparation.md#subscription-level-setup) to create or reuse them.
+
+Bicep setup prerequisites: Bicep available and an existing parameter file saved by the bootstrapper or prepared through [manual Bicep setup](manual-preparation.md#bicep-setup). Set the local validation values explicitly:
 
 ```powershell
 $parameterFile = '.\main.parameters.local.json'
@@ -50,7 +52,13 @@ It performs:
 5. Subscription deployment validation.
 6. What-if analysis.
 
-The workflow requires Azure credentials configured as GitHub secrets and demo values configured as repository variables. Configure these GitHub Actions values:
+### Subscription-Level Setup
+
+Prepare the Entra app, service principal, federated credentials, and required access using [GitHub OIDC Setup](#github-oidc-setup), or let the bootstrapper handle them with `-IncludeGitHub`.
+
+### Bicep Setup
+
+The workflow requires the OIDC IDs configured as GitHub secrets and Bicep deployment values configured as repository variables. Publish these after subscription-level setup:
 
 | Name | Type | Purpose |
 |---|---|---|
@@ -76,17 +84,21 @@ git tag <release-tag-starting-with-v>
 git push origin <release-tag-starting-with-v>
 ```
 
-## Bootstrapping OIDC for a New Subscription or Tenant
+## GitHub OIDC Setup
 
-Run this once whenever the target Azure subscription or tenant changes (for example, moving the lab to a new subscription). It creates the Entra app registration used for GitHub Actions OIDC login, grants it access, and wires up federated credentials for `main`, the active branch, and pull requests.
+Create or reuse the Entra app used for GitHub Actions OIDC login, grant it access, and configure federated credentials for `main`, the active branch, and pull requests. Recheck the app and its access whenever the target subscription or tenant changes; this is not limited to new subscriptions.
 
-This is optional for local-only deployment. Prerequisites: initialize `$githubRepository` and `$appDisplayName` using [Azure Context And Foundation](new-subscription-setup.md#azure-context-and-foundation), and authenticate to the target subscription. App registrations are tenant-scoped: an app may be reused across subscriptions in the same tenant after assigning appropriate access, but an old tenant's app ID must not be assumed valid in a new tenant.
+The [bootstrapper](bootstrapper.md#prepare-and-deploy) performs these steps automatically with `-IncludeGitHub`, reusing existing credentials. If the active branch is `main`, only the main and pull-request credentials are needed. It verifies the OIDC subjects, issuer/audience, service-principal roles, repository variable values, and secret names after setup; secret values cannot be read back. Conflicting credential trust settings require manual review and are not overwritten. `-Plan -IncludeGitHub` inspects these settings and reports missing actions without changing them. The commands below are the manual alternative.
+
+### Subscription-Level Identity And Access
+
+This is optional for local-only deployment. Prerequisites: initialize `$githubRepository` and `$appDisplayName` using [Azure Context And Foundation](manual-preparation.md#azure-context-and-foundation), and authenticate to the target subscription. App registrations are tenant-scoped: an app may be reused across subscriptions in the same tenant after assigning appropriate access, but an old tenant's app ID must not be assumed valid in a new tenant.
 
 Use the same PowerShell session for the examples below. Set the repository owner/name and capture the currently selected Azure subscription and tenant first. For AMRL, the repository is `andriesdutoit-svg/azure-multiregion-lab`:
 
 ```powershell
 if ([string]::IsNullOrWhiteSpace($githubRepository) -or $githubRepository -match '[<>]') {
-  throw 'Set githubRepository to the actual owner/repository name from New Subscription Setup.'
+  throw 'Set githubRepository to the actual owner/repository name from Manual Preparation.'
 }
 $azureContext = az account show | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0 -or -not $azureContext.id -or -not $azureContext.tenantId) {
@@ -96,7 +108,7 @@ if ($LASTEXITCODE -ne 0 -or -not $azureContext.id -or -not $azureContext.tenantI
 
 Choose exactly one of the following paths, then continue with [Grant Access And Configure Credentials](#grant-access-and-configure-credentials).
 
-### Create New App
+#### Create New App
 
 Use this path only if the app and service principal do not already exist in the current tenant:
 
@@ -107,7 +119,7 @@ $app = az ad app create --display-name $appDisplayName | ConvertFrom-Json
 $servicePrincipal = az ad sp create --id $app.appId | ConvertFrom-Json
 ```
 
-### Reuse Existing App
+#### Reuse Existing App
 
 If the app was already created, skip the create path. Populate the variables using its Application (client) ID:
 
@@ -117,7 +129,7 @@ $app = az ad app show --id $githubActionsAppId | ConvertFrom-Json
 $servicePrincipal = az ad sp show --id $app.appId | ConvertFrom-Json
 ```
 
-### Grant Access And Configure Credentials
+#### Grant Access And Configure Credentials
 
 Prerequisites: `$app` and `$servicePrincipal` from exactly one create/reuse path above, and the verified `$azureContext`. Grant access and create the main-branch credential:
 
@@ -190,9 +202,11 @@ az ad app federated-credential create `
 
 The pull-request subject has no branch suffix; the same credential covers pull-request runs for this repository. Do not grant Azure access to workflows executing untrusted fork code.
 
-### GitHub Actions Secrets And Variables
+### Bicep Deployment Settings
 
-Prerequisites: the app/credentials above, the configured vault and identity, `$githubRepository` and `$azureContext`, and `$publicIp` from [Public IPv4 Address](new-subscription-setup.md#public-ipv4-address). These commands require repository administration access. Authenticate GitHub CLI and set the Actions values:
+#### GitHub Actions Secrets And Variables
+
+Prerequisites: the app/credentials above, the configured vault and identity, `$githubRepository` and `$azureContext`, and `$publicIp` from [Public IPv4 Address](manual-preparation.md#public-ipv4-address). These commands require repository administration access. Authenticate GitHub CLI and publish the Actions deployment values:
 
 ```powershell
 gh auth login

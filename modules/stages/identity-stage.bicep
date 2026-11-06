@@ -249,8 +249,26 @@ module domainJoinWindows '../identity/domain-join.bicep' = [
   }
 ]
 
-// 3.5 Windows Admin Center
-// Wait for GPO configuration and Windows joins, not for target-management readiness.
+// 3.5 Reconcile HTTP SPNs only after each Windows join command has completed its reboot.
+module domainJoinWindowsSpns '../identity/domain-join-spn.bicep' = [
+  for vm in filter(finalVmPlacements, vm => vm.type == 'srvwin' || vm.type == 'cliwin'): if (deployIdentity) {
+    name: '${prefix}-domainjoin-spn-${vm.name}'
+    scope: resourceGroup('${prefix}-rg-${vm.regionKey}')
+
+    dependsOn: [
+      domainJoinWindows
+    ]
+
+    params: {
+      vmName: vm.name
+      domainName: domainName
+      reconciliationToken: reconciliationToken
+    }
+  }
+]
+
+// 3.6 Windows Admin Center
+// Wait for GPO configuration, Windows joins, and post-reboot HTTP SPN reconciliation.
 // The VM agent installs WAC independently of the targets' current WinRM firewall state.
 module windowsAdminCenter '../identity/wac.bicep' = if (deployIdentity && enableWindowsAdminCenter) {
   name: '${prefix}-wac-${wacHostVm.name}'
@@ -260,11 +278,15 @@ module windowsAdminCenter '../identity/wac.bicep' = if (deployIdentity && enable
   dependsOn: [
     adGpo
     domainJoinWindows
+    domainJoinWindowsSpns
   ]
 
   params: {
     vmName: wacHostVm.name
     reconciliationToken: reconciliationToken
+    targetFqdns: [
+      for vm in filter(finalVmPlacements, vm => vm.type == 'dc' || vm.type == 'srvwin' || vm.type == 'cliwin'): '${vm.name}.${domainName}'
+    ]
   }
 }
 
