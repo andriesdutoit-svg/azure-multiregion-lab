@@ -3,7 +3,7 @@ Populate AMRL AD objects (OU/group/user) on dc01.
 Derived from Set-DummyAD and adapted for idempotent Run Command execution.
 
 Consumes the serialized directory model, ordered department definitions, CSV name
-content, user targets, and file-service setting. Requires AD administration on the
+content, and user targets. Requires AD administration on the
 primary DC plus the AD/LAPS tooling used below; identity-stage orders population
 after forest and replica provisioning and before GPO configuration.
 
@@ -55,10 +55,7 @@ param(
     [int]$UsersPerDepartment,
 
     [Parameter(Mandatory = $false)]
-    [string]$ReconciliationToken,
-
-    [Parameter(Mandatory = $false)]
-    [string]$EnableFileServices
+    [string]$ReconciliationToken
 )
 
 # 2. Status logging and AD/transcript initialization
@@ -631,18 +628,11 @@ function Set-AmrlDepartmentOUs {
     return $usersOU
 }
 
-$fileServicesEnabled =
-    [System.Convert]::ToBoolean($EnableFileServices)
-
-Write-AmrlLog "EnableFileServices raw value = [$EnableFileServices]"
-Write-AmrlLog "EnableFileServices converted value = [$fileServicesEnabled]"
-
 function Set-AmrlDepartmentSecurityGroups {
     param(
         [object[]]$SelectedDepartments,
         [string]$RootOuDn,
-        [object]$PopulationModel,
-        [bool]$EnableFileServices
+        [object]$PopulationModel
     )
 
     $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
@@ -708,26 +698,18 @@ function Set-AmrlDepartmentSecurityGroups {
             -GroupCategory Security `
             -GroupScope Global
            
-        Write-AmrlLog "Department security group file-service setting = [$EnableFileServices]"
+        # Share_RW/Share_RO are part of the platform directory model; the file server uses them for NTFS ACLs.
+        Set-AmrlADGroup `
+            -Name "${dlgsPrefix}_${code}_Share_RW" `
+            -Path $dlgsOU.DistinguishedName `
+            -GroupCategory Security `
+            -GroupScope DomainLocal
 
-        if ($EnableFileServices) {
-
-            # Share_RW/Share_RO are AD groups only; 
-            # The file server (Set-Shares.ps1) references them by name for NTFS ACLs.
-            
-            Set-AmrlADGroup `
-                -Name "${dlgsPrefix}_${code}_Share_RW" `
-                -Path $dlgsOU.DistinguishedName `
-                -GroupCategory Security `
-                -GroupScope DomainLocal
-
-            Set-AmrlADGroup `
-                -Name "${dlgsPrefix}_${code}_Share_RO" `
-                -Path $dlgsOU.DistinguishedName `
-                -GroupCategory Security `
-                -GroupScope DomainLocal
-
-        }
+        Set-AmrlADGroup `
+            -Name "${dlgsPrefix}_${code}_Share_RO" `
+            -Path $dlgsOU.DistinguishedName `
+            -GroupCategory Security `
+            -GroupScope DomainLocal
     }
 
     Write-AmrlLog "[i] Department security group generation completed"
@@ -736,8 +718,7 @@ function Set-AmrlDepartmentSecurityGroups {
 function Set-AmrlDepartmentGroupNesting {
     param(
         [object[]]$SelectedDepartments,
-        [object]$PopulationModel,
-        [bool]$EnableFileServices
+        [object]$PopulationModel
     )
 
     $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
@@ -782,22 +763,16 @@ function Set-AmrlDepartmentGroupNesting {
         )
     }
 
-    Write-AmrlLog "Department group nesting file-service setting = [$EnableFileServices]"
+    foreach ($department in $SelectedDepartments) {
+        $code = $department.Value
 
-    if ($EnableFileServices) {
+        Set-AmrlADGroupMember `
+            -GroupName "${dlgsPrefix}_${code}_Share_RW" `
+            -MemberName "${ggsPrefix}_${code}_Managers"
 
-        foreach ($department in $SelectedDepartments) {
-
-            $code = $department.Value
-
-            Set-AmrlADGroupMember `
-                -GroupName "${dlgsPrefix}_${code}_Share_RW" `
-                -MemberName "${ggsPrefix}_${code}_Managers"
-
-            Set-AmrlADGroupMember `
-                -GroupName "${dlgsPrefix}_${code}_Share_RO" `
-                -MemberName "${ggsPrefix}_${code}_Users"
-        }
+        Set-AmrlADGroupMember `
+            -GroupName "${dlgsPrefix}_${code}_Share_RO" `
+            -MemberName "${ggsPrefix}_${code}_Users"
     }
 
     Write-AmrlLog "[i] Department group nesting completed"
@@ -1827,16 +1802,14 @@ $usersOU = Set-AmrlDepartmentOUs `
 Set-AmrlDepartmentSecurityGroups `
     -SelectedDepartments $departments `
     -RootOuDn $rootOUdn `
-    -PopulationModel $model `
-    -EnableFileServices $fileServicesEnabled
+    -PopulationModel $model
 
 Set-AmrlLapsConfiguration `
     -DirectoryModel $model
 
 Set-AmrlDepartmentGroupNesting `
     -SelectedDepartments $departments `
-    -PopulationModel $model `
-    -EnableFileServices $fileServicesEnabled
+    -PopulationModel $model
 
 Write-AmrlLog "[i] User generation starting"
 

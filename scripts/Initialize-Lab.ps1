@@ -1,7 +1,6 @@
 <#
 .SYNOPSIS
 Prepares AMRL prerequisites and Bicep configuration, with optional deployment.
-.DESCRIPTION
 Creates or reuses subscription-level identity/RBAC, Key Vault credentials, and
 protection locks. Configures Bicep parameters and runs template preflight/what-if.
 Normal preparation does not deploy the lab; existing subscriptions are supported.
@@ -125,10 +124,12 @@ function Invoke-AzCli {
     )
 
     $operation = {
+        $previousErrorActionPreference = $ErrorActionPreference
         $previousPythonEncoding = [System.Environment]::GetEnvironmentVariable('PYTHONIOENCODING', 'Process')
         $previousInstaller = [System.Environment]::GetEnvironmentVariable('AZ_INSTALLER', 'Process')
         $previousConsoleEncoding = [Console]::OutputEncoding
         try {
+            $ErrorActionPreference = 'Continue'
             [System.Environment]::SetEnvironmentVariable('PYTHONIOENCODING', 'utf-8', 'Process')
             [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
             $invocation = Get-AMRLAzCliInvocation
@@ -153,6 +154,7 @@ function Invoke-AzCli {
             return $text.Trim()
         }
         finally {
+            $ErrorActionPreference = $previousErrorActionPreference
             [Console]::OutputEncoding = $previousConsoleEncoding
             [System.Environment]::SetEnvironmentVariable('PYTHONIOENCODING', $previousPythonEncoding, 'Process')
             [System.Environment]::SetEnvironmentVariable('AZ_INSTALLER', $previousInstaller, 'Process')
@@ -1190,34 +1192,41 @@ function New-AMRLPassword {
     return (-join $characters.ToArray())
 }
 
-function Set-AMRLParameterReferences {
+function Set-AMRLParameterValues {
     param(
         [Parameter(Mandatory = $true)][object]$Parameters,
-        [Parameter(Mandatory = $true)][string]$KeyVaultId,
         [Parameter(Mandatory = $true)][string]$IdentityId,
+        [Parameter(Mandatory = $true)][string]$FoundationResourceGroup,
+        [Parameter(Mandatory = $true)][string]$KeyVaultName,
         [string]$PublicIp
     )
 
-    foreach ($entry in $Parameters.parameters.PSObject.Properties) {
-        $reference = $entry.Value.PSObject.Properties['reference']
-        if ($null -ne $reference -and $null -ne $entry.Value.reference.keyVault) {
-            $existingId = [string]$entry.Value.reference.keyVault.id
-            if (-not [string]::IsNullOrWhiteSpace($existingId) -and
-                $existingId -notmatch '[<>]' -and
-                $existingId -ne $KeyVaultId) {
-                throw "Parameter '$($entry.Name)' references a different Key Vault. Review the parameter file; it was not overwritten."
-            }
-            $entry.Value.reference.keyVault.id = $KeyVaultId
-        }
+    Assert-AMRLParameterDocumentCurrent -Parameters $Parameters
+    $foundationResourceGroupParameter = $Parameters.parameters.PSObject.Properties['foundationResourceGroup']
+    $keyVaultNameParameter = $Parameters.parameters.PSObject.Properties['keyVaultName']
+    if ($null -eq $foundationResourceGroupParameter -or $null -eq $keyVaultNameParameter) {
+        throw 'The current parameter contract requires top-level foundationResourceGroup and keyVaultName values.'
     }
-
+    if ([string]::IsNullOrWhiteSpace($FoundationResourceGroup) -or [string]::IsNullOrWhiteSpace($KeyVaultName)) {
+        throw 'Resolved foundationResourceGroup and keyVaultName values must not be empty.'
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$foundationResourceGroupParameter.Value.value) -and
+        [string]$foundationResourceGroupParameter.Value.value -notmatch '[<>]' -and
+        [string]$foundationResourceGroupParameter.Value.value -ine $FoundationResourceGroup) {
+        throw 'The parameter file foundationResourceGroup differs from the resolved foundation resource group.'
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$keyVaultNameParameter.Value.value) -and
+        [string]$keyVaultNameParameter.Value.value -notmatch '[<>]' -and
+        [string]$keyVaultNameParameter.Value.value -ine $KeyVaultName) {
+        throw 'The parameter file keyVaultName differs from the resolved Key Vault name.'
+    }
     $identityValue = [string]$Parameters.parameters.automationManagedIdentityResourceId.value
-    if (-not [string]::IsNullOrWhiteSpace($identityValue) -and
-        $identityValue -notmatch '[<>]' -and
-        $identityValue -ne $IdentityId) {
+    if (-not [string]::IsNullOrWhiteSpace($identityValue) -and $identityValue -notmatch '[<>]' -and $identityValue -ne $IdentityId) {
         throw 'The parameter file references a different managed identity. Review the file; it was not overwritten.'
     }
     $Parameters.parameters.automationManagedIdentityResourceId.value = $IdentityId
+    $foundationResourceGroupParameter.Value.value = $FoundationResourceGroup
+    $keyVaultNameParameter.Value.value = $KeyVaultName
 
     if (-not [string]::IsNullOrWhiteSpace($PublicIp)) {
         $sources = @($Parameters.parameters.jumpboxAllowedSources.value)
@@ -1248,7 +1257,7 @@ function Get-AMRLParameterFilePublicIp {
     return ([string]$parsedSources[0] -replace '/32$', '')
 }
 
-# Resolve explicit prerequisite references before normal setup can create resources.
+# Resolve current foundation inputs before normal setup can create resources.
 function Get-AMRLFoundationConfiguration {
     param(
         [Parameter(Mandatory = $true)][object]$Parameters,
@@ -1256,55 +1265,51 @@ function Get-AMRLFoundationConfiguration {
         [switch]$AllowMissingFoundation
     )
 
-    $bootstrap = $null
-    $prefixMetadataProperty = $Parameters.parameters.prefix.PSObject.Properties['metadata']
-    if ($null -ne $prefixMetadataProperty) {
-        $bootstrapProperty = $prefixMetadataProperty.Value.PSObject.Properties['bootstrap']
-        if ($null -ne $bootstrapProperty) { $bootstrap = $bootstrapProperty.Value }
+    Assert-AMRLParameterDocumentCurrent -Parameters $Parameters
+    $foundationResourceGroupParameter = $Parameters.parameters.PSObject.Properties['foundationResourceGroup']
+    $keyVaultNameParameter = $Parameters.parameters.PSObject.Properties['keyVaultName']
+    if ($null -eq $foundationResourceGroupParameter -or $null -eq $keyVaultNameParameter) {
+        throw 'The current parameter contract requires top-level foundationResourceGroup and keyVaultName values.'
     }
-    $defaultResourceGroup = if ($null -eq $bootstrap) { '' } else { [string]$bootstrap.foundationResourceGroup }
-    if ([string]::IsNullOrWhiteSpace($defaultResourceGroup)) { $defaultResourceGroup = 'amrl-foundation-rg' }
-    $defaultIdentityName = if ($null -eq $bootstrap) { '' } else { [string]$bootstrap.automationManagedIdentityName }
+    $defaultResourceGroup = [string]$foundationResourceGroupParameter.Value.value
+    $configuredVaultName = [string]$keyVaultNameParameter.Value.value
+    if ([string]::IsNullOrWhiteSpace($defaultResourceGroup) -or $defaultResourceGroup -match '[<>]') {
+        throw 'Set a concrete top-level foundationResourceGroup value in the parameter file.'
+    }
+    if ($configuredVaultName -match '[<>]') { $configuredVaultName = '' }
+    if ($script:ParameterFileWasExplicit -and [string]::IsNullOrWhiteSpace($configuredVaultName)) {
+        throw 'Set a concrete top-level keyVaultName value in the explicit parameter file.'
+    }
+    $bootstrap = $Parameters.parameters.prefix.metadata.bootstrap
+    $defaultIdentityName = [string]$bootstrap.automationManagedIdentityName
     if ([string]::IsNullOrWhiteSpace($defaultIdentityName)) { $defaultIdentityName = 'amrl-deployment-mi' }
+    $identityId = [string]$Parameters.parameters.automationManagedIdentityResourceId.value
+    if ($script:ParameterFileWasExplicit -and ([string]::IsNullOrWhiteSpace($identityId) -or $identityId -match '[<>]')) {
+        throw 'Set a concrete automationManagedIdentityResourceId value in the explicit parameter file.'
+    }
     $result = [pscustomobject]@{
         ResourceGroup = $defaultResourceGroup
         IdentityResourceGroup = $defaultResourceGroup
         IdentityName = $defaultIdentityName
         IdentityId = ''
         VaultResourceGroup = $defaultResourceGroup
-        VaultName = ''
+        VaultName = $configuredVaultName
         VaultId = ''
         RebuildFoundation = $false
         RecoveryConfirmed = $false
     }
-    $vaultIds = New-Object 'System.Collections.Generic.List[string]'
-    foreach ($entry in $Parameters.parameters.PSObject.Properties) {
-        $reference = $entry.Value.PSObject.Properties['reference']
-        if ($null -ne $reference) {
-            $vaultId = [string]$reference.Value.keyVault.id
-            if (-not [string]::IsNullOrWhiteSpace($vaultId) -and $vaultId -notmatch '[<>]' -and $vaultId -notin $vaultIds) { $vaultIds.Add($vaultId) }
-        }
+    if (-not [string]::IsNullOrWhiteSpace($identityId) -and $identityId -notmatch '[<>]') {
+        $identityPattern = '^/subscriptions/([^/]+)/resourceGroups/([^/]+)/providers/Microsoft\.ManagedIdentity/userAssignedIdentities/([^/]+)$'
+        $identityMatch = [regex]::Match($identityId, $identityPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if (-not $identityMatch.Success) { throw 'Invalid automationManagedIdentityResourceId in the parameter file.' }
+        if ($identityMatch.Groups[1].Value -ne $SubscriptionId) { throw 'The managed identity belongs to a different subscription. No foundation changes were made.' }
+        $result.IdentityId = $identityId
+        $result.IdentityResourceGroup = $identityMatch.Groups[2].Value
+        $result.IdentityName = $identityMatch.Groups[3].Value
     }
-    if ($vaultIds.Count -gt 1) { throw 'Bootstrap setup requires a single referenced Key Vault. Review the supplied vault references before continuing.' }
-    $references = @{
-        Identity = [string]$Parameters.parameters.automationManagedIdentityResourceId.value
-        Vault = if ($vaultIds.Count -eq 1) { $vaultIds[0] } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($configuredVaultName)) {
+        $result.VaultId = "/subscriptions/$SubscriptionId/resourceGroups/$defaultResourceGroup/providers/Microsoft.KeyVault/vaults/$configuredVaultName"
     }
-    foreach ($kind in @('Vault', 'Identity')) {
-        $resourceId = $references[$kind]
-        if ([string]::IsNullOrWhiteSpace($resourceId) -or $resourceId -match '[<>]') { continue }
-        $resourceType = if ($kind -eq 'Identity') { 'Microsoft.ManagedIdentity/userAssignedIdentities' } else { 'Microsoft.KeyVault/vaults' }
-        $pattern = '^/subscriptions/([^/]+)/resourceGroups/([^/]+)/providers/' + [regex]::Escape($resourceType) + '/([^/]+)$'
-        $match = [regex]::Match($resourceId, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-        if (-not $match.Success) { throw "Invalid $kind resource ID in the parameter file." }
-        if ($match.Groups[1].Value -ne $SubscriptionId) { throw "The referenced $kind belongs to a different subscription. No foundation changes were made." }
-        $result."${kind}Id" = $resourceId
-        $result."${kind}ResourceGroup" = $match.Groups[2].Value
-        $result."${kind}Name" = $match.Groups[3].Value
-        $result.ResourceGroup = $match.Groups[2].Value
-    }
-    if ([string]::IsNullOrWhiteSpace($result.IdentityId)) { $result.IdentityResourceGroup = $result.ResourceGroup }
-    if ([string]::IsNullOrWhiteSpace($result.VaultId)) { $result.VaultResourceGroup = $result.ResourceGroup }
     $canRebuildFoundation = $AllowMissingFoundation -and
         $result.ResourceGroup -eq $defaultResourceGroup -and
         $result.IdentityResourceGroup -eq $defaultResourceGroup -and
@@ -1324,14 +1329,15 @@ function Get-AMRLFoundationConfiguration {
         if ($null -eq $identity -and $canRebuildFoundation) { $result.RebuildFoundation = $true }
         elseif ($null -eq $identity -or $identity.id -ne $result.IdentityId) { throw 'The explicitly referenced managed identity was not found. Restore it or review the parameter file.' }
     }
-    if (-not [string]::IsNullOrWhiteSpace($result.VaultId)) {
+    if (-not [string]::IsNullOrWhiteSpace($result.VaultName)) {
         $vault = $null
         try { $vault = Get-AzJson -Arguments @('keyvault', 'show', '--name', $result.VaultName, '--resource-group', $result.VaultResourceGroup) }
         catch {
-            if (-not $canRebuildFoundation -or $_.Exception.Message -notmatch '\b(ResourceNotFound|ResourceGroupNotFound)\b') { throw }
+            if ($_.Exception.Message -notmatch '\b(ResourceNotFound|ResourceGroupNotFound)\b') { throw }
         }
         if ($null -eq $vault -and $canRebuildFoundation) { $result.RebuildFoundation = $true }
-        elseif ($null -eq $vault -or $vault.id -ne $result.VaultId) { throw 'The explicitly referenced Key Vault was not found. Restore it or review the parameter file.' }
+        elseif ($null -eq $vault) { $result.VaultId = '' }
+        elseif ($vault.id -ne $result.VaultId) { throw 'The Key Vault name resolved to an unexpected resource ID.' }
     }
     return $result
 }
@@ -1344,6 +1350,7 @@ function Set-AMRLFoundationResourceGroup {
         [Parameter(Mandatory = $true)][string]$SubscriptionId
     )
 
+    Assert-AMRLParameterDocumentCurrent -Parameters $Parameters
     $Foundation.ResourceGroup = $ResourceGroupName
     $Foundation.IdentityResourceGroup = $ResourceGroupName
     $Foundation.VaultResourceGroup = $ResourceGroupName
@@ -1354,16 +1361,14 @@ function Set-AMRLFoundationResourceGroup {
     $Foundation.RebuildFoundation = $true
     $Foundation.RecoveryConfirmed = $false
 
-    $Parameters.parameters.prefix.metadata.bootstrap.foundationResourceGroup = $ResourceGroupName
-    $Parameters.parameters.automationManagedIdentityResourceId.value = ''
-    foreach ($entry in $Parameters.parameters.PSObject.Properties) {
-        $referenceProperty = $entry.Value.PSObject.Properties['reference']
-        if ($null -eq $referenceProperty) { continue }
-        $keyVaultProperty = $referenceProperty.Value.PSObject.Properties['keyVault']
-        if ($null -eq $keyVaultProperty) { continue }
-        $idProperty = $keyVaultProperty.Value.PSObject.Properties['id']
-        if ($null -ne $idProperty) { $idProperty.Value = '' }
+    $foundationResourceGroupParameter = $Parameters.parameters.PSObject.Properties['foundationResourceGroup']
+    $keyVaultNameParameter = $Parameters.parameters.PSObject.Properties['keyVaultName']
+    if ($null -eq $foundationResourceGroupParameter -or $null -eq $keyVaultNameParameter) {
+        throw 'Foundation replacement requires top-level foundationResourceGroup and keyVaultName parameters.'
     }
+    $foundationResourceGroupParameter.Value.value = $ResourceGroupName
+    $keyVaultNameParameter.Value.value = $Foundation.VaultName
+    $Parameters.parameters.automationManagedIdentityResourceId.value = ''
 }
 
 function Read-AMRLFoundationResourceGroupName {
@@ -1439,6 +1444,43 @@ function Get-GitHubSubject {
     return "repo:${Repository}:ref:refs/heads/${Branch}"
 }
 
+function Assert-AMRLParameterDocumentCurrent {
+    param([Parameter(Mandatory = $true)][object]$Parameters)
+
+    $bootstrap = $null
+    $prefixProperty = $Parameters.parameters.PSObject.Properties['prefix']
+    if ($null -ne $prefixProperty) {
+        $metadataProperty = $prefixProperty.Value.PSObject.Properties['metadata']
+        if ($null -ne $metadataProperty) {
+            $bootstrapProperty = $metadataProperty.Value.PSObject.Properties['bootstrap']
+            if ($null -ne $bootstrapProperty) { $bootstrap = $bootstrapProperty.Value }
+        }
+    }
+    if ($null -ne $bootstrap -and $null -ne $bootstrap.PSObject.Properties['foundationResourceGroup']) {
+        throw 'This parameter file uses the retired metadata foundationResourceGroup field. Set top-level foundationResourceGroup and remove the metadata field.'
+    }
+    foreach ($obsoleteName in @('jumpboxAdminPassword', 'labAdminPassword', 'sshPublicKey', 'sshPrivateKey')) {
+        if ($null -ne $Parameters.parameters.PSObject.Properties[$obsoleteName]) {
+            throw "This parameter file contains retired per-secret parameter '$obsoleteName'. Use the current parameter templates with top-level Key Vault settings."
+        }
+    }
+    foreach ($entry in $Parameters.parameters.PSObject.Properties) {
+        if ($null -ne $entry.Value.PSObject.Properties['reference']) {
+            throw "Parameter '$($entry.Name)' uses a retired Key Vault reference object. The current contract uses Bicep getSecret() and value parameters only."
+        }
+    }
+    foreach ($parameterName in @('foundationResourceGroup', 'keyVaultName', 'automationManagedIdentityResourceId')) {
+        $parameter = $Parameters.parameters.PSObject.Properties[$parameterName]
+        if ($null -eq $parameter -or $null -eq $parameter.Value.PSObject.Properties['value']) {
+            throw "The current parameter contract requires a value for '$parameterName'. Use main.parameters.example.json as the schema."
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Parameters.parameters.foundationResourceGroup.value) -or
+        [string]$Parameters.parameters.foundationResourceGroup.value -match '[<>]') {
+        throw 'Set a concrete top-level foundationResourceGroup value in the parameter file.'
+    }
+}
+
 # GitHub defaults use client metadata, not extra Bicep deployment parameters.
 function Assert-AMRLParameterDocumentComplete {
     param([Parameter(Mandatory = $true)][object]$Parameters)
@@ -1448,14 +1490,14 @@ function Assert-AMRLParameterDocumentComplete {
     $missing = New-Object 'System.Collections.Generic.List[string]'
     foreach ($entry in $template.parameters.PSObject.Properties) {
         $provided = $Parameters.parameters.PSObject.Properties[$entry.Name]
-        if ($null -eq $provided -or
-            ($null -eq $provided.Value.PSObject.Properties['value'] -and $null -eq $provided.Value.PSObject.Properties['reference'])) {
+        if ($null -eq $provided -or $null -eq $provided.Value.PSObject.Properties['value']) {
             $missing.Add($entry.Name)
         }
     }
     if ($missing.Count -gt 0) {
         throw "The parameter file is missing required Bicep parameter values: $($missing -join ', '). Add them from main.parameters.example.json before running the bootstrapper."
     }
+    Assert-AMRLParameterDocumentCurrent -Parameters $Parameters
 }
 
 function Get-ParameterDocument {
@@ -1492,6 +1534,7 @@ function Get-ParameterDocument {
         $document.parameters.stage.value = $stageAnswer.ToLowerInvariant()
     }
     $selectedStage = [string]$document.parameters.stage.value
+    Assert-AMRLParameterDocumentCurrent -Parameters $document
 
     $templatePath = Join-Path $script:RepositoryRoot 'main.parameters.demo.json'
     $templateDocument = if ($Path -eq $templatePath) {
@@ -1517,7 +1560,7 @@ function Get-ParameterDocument {
             }
         }
     }
-    $bootstrapSettings = @('githubRepository', 'githubAppDisplayName', 'deploymentLocation', 'foundationResourceGroup', 'automationManagedIdentityName')
+    $bootstrapSettings = @('githubRepository', 'githubAppDisplayName', 'deploymentLocation', 'automationManagedIdentityName')
     if ($script:InteractiveConfiguration) { $bootstrapSettings += @('azureTenantId', 'azureSubscriptionId') }
     foreach ($setting in $bootstrapSettings) {
         $defaultProperty = $bootstrapDefaults.PSObject.Properties[$setting]
@@ -1572,8 +1615,9 @@ function Get-ParameterDocument {
 
     $document.parameters.maxVmsPerRegion.value = Read-NonNegativeInteger -Prompt 'maxVmsPerRegion' -Minimum 1 -DefaultValue ([string]$document.parameters.maxVmsPerRegion.value)
     if ($selectedStage -in @('all', 'identity')) {
+        $minimumDepartmentCount = @($document.parameters.sysAdminDepartment.value.PSObject.Properties).Count
         $maximumDepartmentCount = @($document.parameters.sysAdminDepartment.value.PSObject.Properties).Count + @($document.parameters.additionalDepartments.value.PSObject.Properties).Count
-        $document.parameters.departmentCount.value = Read-NonNegativeInteger -Prompt 'departmentCount' -Hint "whole number, 0 or greater; maximum $maximumDepartmentCount defined departments" -DefaultValue ([string]$document.parameters.departmentCount.value)
+        $document.parameters.departmentCount.value = Read-NonNegativeInteger -Prompt 'departmentCount' -Minimum $minimumDepartmentCount -Hint "whole number, $minimumDepartmentCount or greater; maximum $maximumDepartmentCount defined departments" -DefaultValue ([string]$document.parameters.departmentCount.value)
         $document.parameters.usersPerDepartment.value = Read-NonNegativeInteger -Prompt 'usersPerDepartment' -Minimum 1 -DefaultValue ([string]$document.parameters.usersPerDepartment.value)
     }
 
@@ -1583,7 +1627,7 @@ function Get-ParameterDocument {
         $document.parameters.vmCounts.value.$countName = Read-NonNegativeInteger -Prompt "VM count for $countName" -Hint $hint -DefaultValue $defaultCount
     }
 
-    $stageFeatureSettings = if ($selectedStage -in @('all', 'identity')) { @('enableFileServices', 'useDedicatedFileServer', 'enableWindowsAdminCenter', 'useDedicatedWacHost') } else { @() }
+    $stageFeatureSettings = if ($selectedStage -in @('all', 'identity')) { @('useDedicatedFileServer', 'enableWindowsAdminCenter', 'useDedicatedWacHost') } else { @() }
     foreach ($setting in $stageFeatureSettings) {
         $defaultAnswer = if ($document.parameters.$setting.value) { 'yes' } else { 'no' }
         $answer = Read-RequiredValue -Prompt $setting -Hint 'y/N' -DefaultValue $defaultAnswer -Validator {
@@ -1762,6 +1806,7 @@ function Get-AMRLGitHubReadiness {
         [Parameter(Mandatory = $true)][string]$AppDisplayName,
         [Parameter(Mandatory = $true)][string]$SubscriptionId,
         [string]$VaultId,
+        [string]$VaultName,
         [string]$IdentityId,
         [string]$PublicIp
     )
@@ -1807,7 +1852,7 @@ function Get-AMRLGitHubReadiness {
         }
         $variableJson = Invoke-GhCli -Arguments @('variable', 'list', '--repo', $Repository, '--json', 'name,value')
         $variables = $variableJson | ConvertFrom-Json
-        $expectedVariables = @{ KEYVAULT_ID = $VaultId; AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID = $IdentityId; YOUR_PUBLIC_IP = $PublicIp }
+        $expectedVariables = @{ KEYVAULT_NAME = $VaultName; AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID = $IdentityId; YOUR_PUBLIC_IP = $PublicIp }
         foreach ($variableName in $expectedVariables.Keys) {
             $matching = @($variables | Where-Object { $_.name -ceq $variableName })
             if ($matching.Count -ne 1 -or
@@ -1870,6 +1915,7 @@ function Set-AMRLGitHubConfiguration {
         [Parameter(Mandatory = $true)][string]$TenantId,
         [Parameter(Mandatory = $true)][string]$SubscriptionId,
         [Parameter(Mandatory = $true)][string]$VaultId,
+        [Parameter(Mandatory = $true)][string]$VaultName,
         [Parameter(Mandatory = $true)][string]$IdentityId,
         [Parameter(Mandatory = $true)][string]$Repository,
         [Parameter(Mandatory = $true)][string]$AppDisplayName,
@@ -1926,13 +1972,13 @@ function Set-AMRLGitHubConfiguration {
     })
 
     [void](Invoke-AMRLChange -Target "GitHub Actions variables in $Repository" -Action 'Set AMRL repository variables' -Operation {
-        Invoke-GhCli -Arguments @('variable', 'set', 'KEYVAULT_ID', '--body', $VaultId, '--repo', $Repository) | Out-Null
+        Invoke-GhCli -Arguments @('variable', 'set', 'KEYVAULT_NAME', '--body', $VaultName, '--repo', $Repository) | Out-Null
         Invoke-GhCli -Arguments @('variable', 'set', 'AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID', '--body', $IdentityId, '--repo', $Repository) | Out-Null
         if (-not [string]::IsNullOrWhiteSpace($PublicIp)) {
             Invoke-GhCli -Arguments @('variable', 'set', 'YOUR_PUBLIC_IP', '--body', $PublicIp, '--repo', $Repository) | Out-Null
         }
     })
-    $readiness = Get-AMRLGitHubReadiness -Repository $Repository -AppDisplayName $AppDisplayName -SubscriptionId $SubscriptionId -VaultId $VaultId -IdentityId $IdentityId -PublicIp $PublicIp
+    $readiness = Get-AMRLGitHubReadiness -Repository $Repository -AppDisplayName $AppDisplayName -SubscriptionId $SubscriptionId -VaultId $VaultId -VaultName $VaultName -IdentityId $IdentityId -PublicIp $PublicIp
     if ($readiness.Actions.Count -gt 0 -or $readiness.Blockers.Count -gt 0) {
         throw "GitHub setup read-back found unresolved settings:`n$((@($readiness.Actions) + @($readiness.Blockers)) -join "`n")"
     }
@@ -2001,7 +2047,7 @@ function Invoke-AMRLPlan {
             $VaultName = [string]$vaults[0].name
         }
         elseif ($vaults.Count -gt 1) {
-            $blockers.Add('Multiple Key Vaults exist in the foundation group; select the intended vault through the parameter file Key Vault references.')
+            $blockers.Add('Multiple Key Vaults exist in the foundation group; set top-level keyVaultName to select the intended vault.')
         }
         else {
             $VaultName = Get-AMRLAvailableVaultName -SubscriptionId $Context.id
@@ -2058,7 +2104,7 @@ function Invoke-AMRLPlan {
 
         try {
             $existingSecrets = @(Get-AzJson -Arguments @('keyvault', 'secret', 'list', '--vault-name', $VaultName, '--query', '[].name'))
-            foreach ($secretName in @('jumpboxAdminPassword', 'serverAdminPassword', 'clientAdminPassword', 'sshPublicKey', 'sshPrivateKey')) {
+            foreach ($secretName in @('jumpboxAdminPassword', 'labAdminPassword', 'sshPublicKey', 'sshPrivateKey')) {
                 if ($secretName -notin $existingSecrets) {
                     $actions.Add("Create Key Vault secret $secretName")
                     $blockers.Add("Required Key Vault secret '$secretName' is missing.")
@@ -2120,7 +2166,7 @@ function Invoke-AMRLPlan {
             catch { $blockers.Add("GitHub CLI is not authenticated: $($_.Exception.Message)") }
             $vaultIdForGitHub = if ($null -eq $vault) { '' } else { [string]$vault.id }
             $identityIdForGitHub = if ($null -eq $identity) { '' } else { [string]$identity.id }
-            $readiness = Get-AMRLGitHubReadiness -Repository $Repository -AppDisplayName $AppDisplayName -SubscriptionId $Context.id -VaultId $vaultIdForGitHub -IdentityId $identityIdForGitHub -PublicIp $PublicIp
+            $readiness = Get-AMRLGitHubReadiness -Repository $Repository -AppDisplayName $AppDisplayName -SubscriptionId $Context.id -VaultId $vaultIdForGitHub -VaultName $VaultName -IdentityId $identityIdForGitHub -PublicIp $PublicIp
             foreach ($action in $readiness.Actions) { $actions.Add($action) }
             foreach ($blocker in $readiness.Blockers) { $blockers.Add($blocker) }
         }
@@ -2161,7 +2207,7 @@ function Invoke-AMRLPlan {
     Complete-AMRLRunPhase -Name 'Plan prerequisite checks' -Summary 'Required foundation and identity checks passed.'
     Set-AMRLReportSource -Name 'Read-only prerequisite plan' -Status 'Ready' -Summary 'No blocking prerequisites found.'
 
-    $updatedParameters = Set-AMRLParameterReferences -Parameters $Parameters -KeyVaultId $vault.id -IdentityId $identity.id -PublicIp $PublicIp
+    $updatedParameters = Set-AMRLParameterValues -Parameters $Parameters -IdentityId $identity.id -FoundationResourceGroup $ResourceGroup -KeyVaultName $VaultName -PublicIp $PublicIp
     $temporaryParameterFile = Join-Path $env:TEMP ('amrl-plan-parameters-' + [guid]::NewGuid().ToString('N') + '.json')
     $temporaryBicepFile = Join-Path $env:TEMP ('amrl-plan-bicep-' + [guid]::NewGuid().ToString('N') + '.json')
     try {
@@ -2375,10 +2421,11 @@ function Invoke-AMRLSubscriptionSetup {
             -ExpectedTenantId $(if ($null -eq $tenantIdProperty) { '' } else { [string]$tenantIdProperty.Value }) `
             -RequireParameterFileContext
     }
-    $FoundationResourceGroup = [string]$bootstrap.foundationResourceGroup
+    $foundationResourceGroupParameter = $parameterDocument.parameters.PSObject.Properties['foundationResourceGroup']
+    $FoundationResourceGroup = if ($null -eq $foundationResourceGroupParameter) { '' } else { [string]$foundationResourceGroupParameter.Value.value }
     $AutomationIdentityName = [string]$bootstrap.automationManagedIdentityName
     $DeploymentLocation = [string]$bootstrap.deploymentLocation
-    if ([string]::IsNullOrWhiteSpace($FoundationResourceGroup)) { $FoundationResourceGroup = 'amrl-foundation-rg' }
+    if ([string]::IsNullOrWhiteSpace($FoundationResourceGroup)) { throw 'Set top-level foundationResourceGroup in the parameter file.' }
     if ([string]::IsNullOrWhiteSpace($AutomationIdentityName)) { $AutomationIdentityName = 'amrl-deployment-mi' }
     if ([string]::IsNullOrWhiteSpace($DeploymentLocation)) { throw 'The parameter template must define prefix.metadata.bootstrap.deploymentLocation.' }
     # 8.2 Collect Bicep choices and resolve prerequisite IDs before Azure resource writes.
@@ -2731,7 +2778,7 @@ function Invoke-AMRLSubscriptionSetup {
         }
 
         $secretSetupFailed = $false
-        foreach ($secretName in @('jumpboxAdminPassword', 'serverAdminPassword', 'clientAdminPassword')) {
+        foreach ($secretName in @('jumpboxAdminPassword', 'labAdminPassword')) {
             try {
                 Set-AMRLSecretIfMissing -VaultName $KeyVaultName -SecretName $secretName -Password -Prompt:$script:PromptForPasswords
             }
@@ -2795,7 +2842,7 @@ function Invoke-AMRLSubscriptionSetup {
     }
     # 8.5 Bicep setup: persist resolved references and optionally configure GitHub Actions.
     Initialize-AMRLRunPhase -Name 'Bicep build and validation'
-    $updatedParameters = Set-AMRLParameterReferences -Parameters $parameterDocument -KeyVaultId $vaultId -IdentityId $identity.id -PublicIp $PublicIp
+    $updatedParameters = Set-AMRLParameterValues -Parameters $parameterDocument -IdentityId $identity.id -FoundationResourceGroup $foundation.ResourceGroup -KeyVaultName $KeyVaultName -PublicIp $PublicIp
     if ($null -ne $script:BootstrapperReport) { $script:BootstrapperReport.Parameters = $updatedParameters }
     $json = ConvertTo-AMRLParameterJson -InputObject $updatedParameters
     [System.IO.File]::WriteAllText($script:ParameterFilePath, $json, [System.Text.UTF8Encoding]::new($false))
@@ -2804,7 +2851,7 @@ function Invoke-AMRLSubscriptionSetup {
 
     if ($IncludeGitHub -and $githubRepositoryReady) {
         try {
-            $githubSetupResult = Set-AMRLGitHubConfiguration -TenantId $context.tenantId -SubscriptionId $context.id -VaultId $vaultId -IdentityId $identity.id -Repository $updatedParameters.parameters.prefix.metadata.bootstrap.githubRepository -AppDisplayName $updatedParameters.parameters.prefix.metadata.bootstrap.githubAppDisplayName -PublicIp $PublicIp
+            $githubSetupResult = Set-AMRLGitHubConfiguration -TenantId $context.tenantId -SubscriptionId $context.id -VaultId $vaultId -VaultName $KeyVaultName -IdentityId $identity.id -Repository $updatedParameters.parameters.prefix.metadata.bootstrap.githubRepository -AppDisplayName $updatedParameters.parameters.prefix.metadata.bootstrap.githubAppDisplayName -PublicIp $PublicIp
             $createdCredentials = @($githubSetupResult.FederatedCredentials | Where-Object { $_.Status -eq 'Created' })
             $existingCredentials = @($githubSetupResult.FederatedCredentials | Where-Object { $_.Status -eq 'Already existed' })
             $credentialDetails = @($githubSetupResult.FederatedCredentials | ForEach-Object { "$($_.Status): $($_.Subject)" }) -join [Environment]::NewLine
@@ -2970,7 +3017,7 @@ function Write-AMRLConfigurationSummary {
         "Linux server $($vmCounts.linuxServer)", "Linux client $($vmCounts.linuxClient)"
     ) -join '; '
     $booleanSummary = @(
-        "File services $(if ($parameters.enableFileServices.value) { 'on' } else { 'off' })",
+        'File services on (identity stage)',
         "Dedicated file server $(if ($parameters.useDedicatedFileServer.value) { 'on' } else { 'off' })",
         "Windows Admin Center $(if ($parameters.enableWindowsAdminCenter.value) { 'on' } else { 'off' })",
         "Dedicated WAC host $(if ($parameters.useDedicatedWacHost.value) { 'on' } else { 'off' })"

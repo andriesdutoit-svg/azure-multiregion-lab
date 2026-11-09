@@ -3,7 +3,7 @@ targetScope = 'resourceGroup'
 // Populates the declared directory model and reconciles modeled DC HTTP SPNs on the primary DC.
 // Runs after forest/replica provisioning. The directory model aligns OU/group naming with GPO and joins;
 // names.csv supplies population data, while the guest script owns existing-object handling.
-// Optional file-service groups are controlled here, but share creation belongs to file-services.bicep.
+// Departmental file-service groups and membership are part of population; share creation belongs to file-services.bicep.
 // DC HTTP SPNs are directory account state, so they are reconciled centrally after all DCs
 // are promoted, not by VM creation or firewall policy. The full DC list includes retained DCs.
 
@@ -18,7 +18,6 @@ param sysAdminDepartment object
 param additionalDepartments object
 param departmentCount int
 param usersPerDepartment int
-param enableFileServices bool
 
 param reconciliationToken string
 
@@ -84,10 +83,6 @@ resource populateDirectory 'Microsoft.Compute/virtualMachines/runCommands@2023-0
       {
         name: 'UsersPerDepartment'
         value: string(usersPerDepartment)
-      }
-      {
-        name: 'EnableFileServices'
-        value: string(enableFileServices)
       }
       {
         name: 'ReconciliationToken'

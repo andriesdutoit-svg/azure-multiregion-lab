@@ -103,7 +103,7 @@ The `useDedicatedFileServer` parameter controls the file server target:
 - `false` — file services always run on the primary DC.
 - `true` — file services run on the first `srvwin` VM in `finalVmPlacements`. If none exists, target selection falls back to the primary DC so template evaluation can continue, while `validationFlags.missingDedicatedFileServer` and `validationMessage` report the invalid configuration. Add a Windows server or disable dedicated mode before relying on the result. See [Deployment Results and Troubleshooting](validation-and-troubleshooting.md) for reviewing validation outputs.
 
-File services are provisioned only when `enableFileServices=true` during an `identity` or `all` stage. Dedicated mode requires file services to be enabled and a Windows server target; the validation module reports unsupported combinations.
+File services are provisioned during every `identity` or `all` stage. Dedicated mode requires a Windows server target; the validation module reports when no `srvwin` placement is available.
 
 The file server target is recomputed on every deployment. Enabling dedicated mode when adding a Windows server selects that server instead of the DC. If dedicated mode was already enabled without a server, adding one replaces the invalid configuration's DC fallback. With dedicated mode disabled, adding a server does not change the DC target.
 

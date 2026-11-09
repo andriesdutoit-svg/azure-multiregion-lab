@@ -15,11 +15,13 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | `enableBastion` | bool | Adds hub-region Bastion alongside public jumpbox access. See [access and retirement behavior](access-and-administration.md#bastion-and-retained-jumpboxes). | `true` |
 | `bastionSku` | string | Azure Bastion SKU: `Basic`, `Standard`, or `Premium`. | `"Standard"` |
 | `automationManagedIdentityResourceId` | string | Required deployment-script identity ID. Applicable brownfield cleanup uses its Network Contributor permissions. See [subscription-level identity setup](manual-preparation.md#managed-identity) and [reconciliation RBAC](deployment.md#rbac-requirements-for-network-reconciliation). | `"/subscriptions/<subscriptionId>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identityName>"` |
+| `foundationResourceGroup` | string | Resource group containing the Key Vault used by the bootstrapper and root Bicep template. | `"amrl-foundation-rg"` |
+| `keyVaultName` | string | Key Vault name; Bicep resolves required secret values directly with `getSecret()`. | `"amrl-kv-example"` |
 | `tags` | object | Resource tags for organisation and billing | `{"environment": "lab"}` |
 | `regionCount` | integer | Number of regions to deploy across | `2` |
 | `maxVmsPerRegion` | integer | Maximum VMs allowed per region | `2` |
 
-In JSON parameter files, `parameters.prefix.value` supplies the resource naming prefix to Bicep. The sibling `parameters.prefix.metadata.bootstrap` object stores bootstrapper settings for Azure context, foundation resources, and optional GitHub integration; these are not additional Bicep parameters and do not change the prefix value. See [Using `-ParameterFile`](bootstrapper.md#using-parameterfile) and [Subscription-Level Setup Values](bootstrapper.md#subscription-level-setup-values) for field requirements and behavior.
+In JSON parameter files, `parameters.prefix.value` supplies the resource naming prefix to Bicep. The sibling `parameters.prefix.metadata.bootstrap` object stores bootstrapper settings for Azure context, foundation location, identity naming, and optional GitHub integration; these are not additional Bicep parameters and do not change the prefix value. Foundation resource group and Key Vault name are top-level Bicep parameters. See [Using `-ParameterFile`](bootstrapper.md#using-parameterfile) and [Subscription-Level Setup Values](bootstrapper.md#subscription-level-setup-values) for field requirements and behavior.
 
 ## Region and Network Configuration
 
@@ -134,12 +136,11 @@ All credentials are stored in Azure Key Vault during subscription-level setup an
 |---|---|---|---|
 | `jumpboxAdminUsername` | string | N/A (local username) | Local admin account on jumpbox VMs |
 | `jumpboxAdminPassword` | reference | `jumpboxAdminPassword` | Password for jumpbox local admin |
-| `serverAdminUsername` | string | N/A (local username) | Local admin account on server VMs |
-| `serverAdminPassword` | reference | `serverAdminPassword` | Password for server local admin |
-| `clientAdminUsername` | string | N/A (local username) | Local admin account on client VMs |
-| `clientAdminPassword` | reference | `clientAdminPassword` | Password for client local admin |
+| `labAdminPassword` | reference | `labAdminPassword` | Shared local-admin password for non-jumpbox VMs and the domain-join credential |
 | `sshPublicKey` | reference | `sshPublicKey` | Public key for Linux VM creation |
 | `sshPrivateKey` | reference | `sshPrivateKey` | Private key deployed to jumpboxes |
+
+All non-jumpbox VM roles use the shared local username `labAdminUsername`, currently fixed to `labadmin` in `main.bicep`, and the `labAdminPassword` secret. There are no separate server and client administrator credentials.
 
 Use a matching SSH key pair. See [SSH Key Setup](manual-preparation.md#ssh-key-setup) for subscription-level upload instructions; Bicep parameters reference the stored secrets.
 
@@ -186,24 +187,13 @@ This is always an AD lab. Select `stage=identity` or `stage=all` to run AD autom
 
 If WAC is enabled for a stage that does not run identity, `windowsAdminCenterSkippedForStage` is advisory. AMRL uses Windows Authentication; the browser connects to the gateway over HTTPS and the gateway manages Windows VMs over WinRM HTTP. WinRM over HTTPS is deferred until PKI is available. See [Windows Admin Center access](access-and-administration.md#windows-admin-center) for connection instructions.
 
-## File Server Configuration (Optional)
+## File Server Configuration
+
+File services are provisioned as part of every `identity` or `all` stage; they have no enable/disable parameter. `useDedicatedFileServer` chooses the target host:
 
 | Parameter | Type | Purpose | Example |
 |---|---|---|---|
-| `enableFileServices` | boolean | Create departmental share groups and memberships, then provision the `C:\Shares` directory, departmental SMB shares, and NTFS permissions during the identity stage. | `true` |
-| `useDedicatedFileServer` | boolean | When file services are enabled, target the first `srvwin` VM in the final placement model instead of the primary DC. Requires `enableFileServices=true` and at least one `srvwin` VM. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion). | `true` |
-
-Supported combinations:
-
-| `enableFileServices` | `useDedicatedFileServer` | Result during `identity` or `all` |
-|---|---|---|
-| `false` | `false` | AD is populated without share groups, SMB shares, or file-system permissions. |
-| `true` | `false` | File services are provisioned on the primary DC. |
-| `true` | `true` | File services are provisioned on the first `srvwin` VM. |
-
-The following combinations produce validation flags:
-
-- `enableFileServices=false` with `useDedicatedFileServer=true`.
+| `useDedicatedFileServer` | boolean | Use the first `srvwin` VM in the final placement model instead of the primary DC. When true, a `srvwin` target is required. See [File Server Reassignment on Brownfield Expansion](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion). | `true` |
 
 If dedicated mode has no `srvwin` placement, target selection falls back to the primary DC so template evaluation can continue, but `missingDedicatedFileServer` is reported and the configuration should be corrected. Changing the target does not move existing share data or remove shares from the former host.
 

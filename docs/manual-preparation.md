@@ -125,7 +125,7 @@ Use `$automationIdentity.id` in the deployment parameter file. The identity is u
 
 ### Key Vault Setup
 
-Parameter files reference credentials through Key Vault rather than embedding them. Required secret names are `sshPublicKey`, `sshPrivateKey`, `jumpboxAdminPassword`, `serverAdminPassword`, and `clientAdminPassword`.
+Parameter files contain the top-level `foundationResourceGroup` and `keyVaultName`, not secret values or per-secret Key Vault references. Bicep retrieves the required secrets directly from Key Vault; the vault must allow template deployment. Required secret names are `sshPublicKey`, `sshPrivateKey`, `jumpboxAdminPassword`, and `labAdminPassword`. The shared `labAdminPassword` is used with the template-defined `labAdminUsername` for all non-jumpbox VM roles and for domain join.
 
 #### Create Or Reuse Key Vault
 
@@ -138,7 +138,7 @@ az keyvault create --name $vaultName --resource-group $foundationRg --location $
   --enable-purge-protection true --output none
 ```
 
-`--enabled-for-template-deployment true` allows ARM/Bicep to resolve secret references. Purge protection is irreversible: a deleted vault cannot be permanently purged until its soft-delete retention expires. It protects recovery but does not prevent soft deletion.
+`--enabled-for-template-deployment true` allows Bicep `getSecret()` to resolve secrets during module deployment. Purge protection is irreversible: a deleted vault cannot be permanently purged until its soft-delete retention expires. It protects recovery but does not prevent soft deletion.
 
 #### User Secret Access
 
@@ -176,7 +176,7 @@ Keep passphrases out of scripts and chat; a protected key must be unlocked when 
 Set distinct, strong passwords using masked prompts. Run interactively on a protected workstation without transcripts or diagnostic tracing; the CLI receives temporary plaintext in process memory/arguments:
 
 ```powershell
-foreach ($secretName in @('jumpboxAdminPassword', 'serverAdminPassword', 'clientAdminPassword')) {
+foreach ($secretName in @('jumpboxAdminPassword', 'labAdminPassword')) {
   $securePassword = Read-Host "Password for $secretName" -AsSecureString
   try {
     $passwordValue = [System.Net.NetworkCredential]::new('', $securePassword).Password
@@ -250,23 +250,22 @@ This is required for the configured administration path regardless of whether Gi
 
 #### Parameter File
 
-Copy the demo only if the local file does not exist, then update references and the workstation access source. This example sets one `/32`; add other approved source networks separately:
+Copy the demo only if the local file does not exist, then set the foundation resource group, Key Vault name, managed identity, and workstation access source. This example sets one `/32`; add other approved source networks separately:
 
 ```powershell
 if (-not (Test-Path -LiteralPath $parameterFile)) {
   Copy-Item -LiteralPath '.\main.parameters.demo.json' -Destination $parameterFile
 }
 $parameters = Get-Content -Raw -LiteralPath $parameterFile | ConvertFrom-Json
-foreach ($entry in $parameters.parameters.PSObject.Properties) {
-  if ($entry.Value.reference.keyVault) { $entry.Value.reference.keyVault.id = $kvId }
-}
+$parameters.parameters.foundationResourceGroup.value = $foundationRg
+$parameters.parameters.keyVaultName.value = $vaultName
 $parameters.parameters.automationManagedIdentityResourceId.value = $automationIdentity.id
 $parameters.parameters.jumpboxAllowedSources.value = @("$publicIp/32")
 $parameters | ConvertTo-Json -Depth 30 |
   Set-Content -LiteralPath $parameterFile -Encoding UTF8
 ```
 
-For a fresh lab, set `existingRegions` and `existingVmPlacements` to empty arrays and choose the lab prefix, regions, and VM counts. Do not carry another subscription's inventory into the new one. Keep at least one DC and jumpbox; dedicated file services need a Windows server target. Review images, sizes, and capacity in [Configuration Parameters Reference](configuration-parameters-reference.md). Secrets remain Key Vault references, not literal values.
+For a fresh lab, set `existingRegions` and `existingVmPlacements` to empty arrays and choose the lab prefix, regions, and VM counts. Do not carry another subscription's inventory into the new one. Keep at least one DC and jumpbox; dedicated file services need a Windows server target. Review images, sizes, and capacity in [Configuration Parameters Reference](configuration-parameters-reference.md). Secret values stay in Key Vault and are resolved by Bicep; do not add them to the parameter file.
 
 For GitHub Actions, publish the [deployment secrets and variables](ci-cd-validation.md#github-actions-secrets-and-variables) after this step. Then continue with the [Bicep deployment workflow](deployment.md#deployment-workflow); preparing these values does not deploy the lab.
 

@@ -47,7 +47,7 @@ When `enableWindowsAdminCenter=true`, AMRL installs the gateway during `stage=id
 
 Open `https://<wac-hostname>` from a network that can reach the gateway, and trust its certificate if prompted. On a workgroup jumpbox gateway, sign in with the jumpbox local administrator (`<jumpbox-name>\<jumpboxAdminUsername>`) and its jumpbox-admin password. This gateway login is separate from credentials for managed VMs; the gateway's own connection can use the existing local credentials.
 
-In WAC, choose **All connections > Add** and add a target by its FQDN (for example, `<prefix>-srvwin01.<domainName>`). A workgroup gateway does not provide domain discovery automatically; on a domain-joined gateway, Active Directory search is also an option. For remote targets, use **Add with credentials** or **Manage As** with an authorized domain account in `user@domain` format. In the initial lab, `serverAdminUsername@<domainName>` with the server-admin password is the domain credential used for joins; use an authorized, least-privileged administration account for routine work. Do not use the jumpbox's local account for domain targets or assume a client's local-admin password is its domain-account password. AMRL does not configure credential delegation for **Use my Windows account** on remote targets.
+In WAC, choose **All connections > Add** and add a target by its FQDN (for example, `<prefix>-srvwin01.<domainName>`). A workgroup gateway does not provide domain discovery automatically; on a domain-joined gateway, Active Directory search is also an option. For remote targets, use **Add with credentials** or **Manage As** with an authorized domain account in `user@domain` format. The initial domain-join credential is `labAdminUsername@<domainName>` with `labAdminPassword`; use an authorized, least-privileged administration account for routine work. Do not use the jumpbox's local account for domain targets. AMRL does not configure credential delegation for **Use my Windows account** on remote targets.
 
 On workgroup gateways, installation and reruns merge and verify explicit FQDNs for modeled DCs, Windows servers, and Windows clients in WinRM TrustedHosts, including declared retained VMs. Existing specific entries are preserved. A pre-existing `*` allow-all entry is removed and replaced by the explicit target list because WinRM cannot combine `*` with other host patterns. AMRL does not introduce wildcard trust. TrustedHosts relaxes server-identity verification for those names. This does not register WAC connections or store target credentials; add connections and supply credentials in WAC. Domain-joined gateways retain the existing WAC configuration path.
 
@@ -57,7 +57,7 @@ For domain-joined workloads, use an authorized domain account for routine admini
 
 ## Linux
 
-Linux administration uses SSH key authentication with the local account configured by `serverAdminUsername` for Linux servers (`srvlin`) or `clientAdminUsername` for Linux clients (`clilin`). When Linux VMs are requested during an active compute or identity stage, SSH-key deployment targets new and retained jumpboxes from the final placement model at:
+Linux administration uses SSH key authentication with the shared non-jumpbox local account configured by `labAdminUsername` for both Linux servers (`srvlin`) and clients (`clilin`). When Linux VMs are requested during an active compute or identity stage, SSH-key deployment targets new and retained jumpboxes from the final placement model at:
 
 ```text
 C:\ProgramData\ssh\ssh-key
@@ -134,6 +134,6 @@ Retained jumpboxes keep their existing Public IP configuration: missing IPs are 
 
 ## Credentials and Keys
 
-Subscription-level credential, Key Vault, and SSH-key provisioning are covered in the [Bootstrapper Guide](bootstrapper.md) and [Manual Preparation](manual-preparation.md#subscription-level-setup). Bicep setup references those credentials through the parameter file. Updating a Key Vault secret does not by itself rotate credentials already installed on retained VMs.
+Subscription-level credential, Key Vault, and SSH-key provisioning are covered in the [Bootstrapper Guide](bootstrapper.md) and [Manual Preparation](manual-preparation.md#subscription-level-setup). Bicep resolves those credentials from Key Vault using `getSecret()` and the top-level vault parameters. Updating a Key Vault secret does not by itself rotate credentials already installed on retained VMs.
 
 [Back to README](../README.md)

@@ -22,7 +22,7 @@ Choose a deployment method, whether your subscription is new or already in use:
 | **Bootstrapper (recommended)** | [Bootstrapper Guide](docs/bootstrapper.md): create or reuse prerequisites, configure Bicep, review `what-if`, and deploy. |
 | **Manual** | [Manual Preparation](docs/manual-preparation.md): subscription-level setup, then Bicep setup. Continue with [Bicep Deployment](docs/deployment.md). |
 
-The bootstrapper covers both setup areas below. You do not need to create the Key Vault, secrets, or deployment identity beforehand; existing resources can be reused through reviewed parameter-file references. The default foundation resource location is the first `regionIndexMap` entry; this is separate from the VM regions the lab deploys into. Azure's listed regions may still be restricted for new resources in a particular subscription.
+The bootstrapper covers both setup areas below. You do not need to create the Key Vault, secrets, or deployment identity beforehand; existing resources can be reused through the parameter file's foundation resource group, Key Vault name, and managed-identity resource ID. The default foundation resource location is the first `regionIndexMap` entry; this is separate from the VM regions the lab deploys into. Azure's listed regions may still be restricted for new resources in a particular subscription.
 
 With the [prerequisites](#prerequisites) installed, sign Azure CLI into the intended subscription, then run Prepare mode from the repository root in Windows PowerShell 5.1:
 
@@ -53,7 +53,7 @@ Run the bootstrapper from Windows PowerShell 5.1 with Azure CLI, Bicep, and `ssh
 
 ### Bicep Setup
 
-- A configured parameter file using the resolved identity and Key Vault references; the wizard can prepare this for a new lab.
+- A configured parameter file using the foundation resource group, Key Vault name, and resolved managed-identity resource ID; the wizard can prepare this for a new lab.
 - Valid VM sizes and images for the target regions.
 - Sufficient regional vCPU quota.
 - At least one domain controller requested with `vmCounts.dc >= 1`; AD is the lab's control plane, even when identity setup is deferred to a later stage.
@@ -68,14 +68,14 @@ Use this direct Azure CLI path after [Manual Preparation](docs/manual-preparatio
 
 ### Subscription-Level Setup Check
 
-- The Key Vault and referenced administrator-password/SSH-key secrets must exist.
+- The Key Vault and required administrator-password/SSH-key secrets must exist.
 - The deployment managed identity must exist and have Network Contributor at subscription scope.
 
 ### Bicep Setup And Deployment
 
 1. Copy `main.parameters.demo.json` to `main.parameters.local.json` for the new lab; do not overwrite an existing lab's parameter file.
-2. Replace `<YOUR_PUBLIC_IP>` with your public IPv4 address (the demo adds `/32`), `<KEYVAULT_ID>` with your Key Vault resource ID, and `<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>` with your User Assigned Managed Identity resource ID.
-3. Keep Key Vault references in the file; do not paste SSH keys or passwords into it. For a new lab, set `existingRegions` and `existingVmPlacements` to empty arrays; for an existing lab, maintain [reviewed inventory](#existing-lab-configuration).
+2. Replace `<YOUR_PUBLIC_IP>` with your public IPv4 address (the demo adds `/32`), `<KEYVAULT_NAME>` with your Key Vault name, and `<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>` with your User Assigned Managed Identity resource ID. Set `foundationResourceGroup` to the resource group containing the Key Vault.
+3. Keep passwords and SSH keys out of the parameter file; Bicep retrieves the required secrets from Key Vault. For a new lab, set `existingRegions` and `existingVmPlacements` to empty arrays; for an existing lab, maintain [reviewed inventory](#existing-lab-configuration).
 4. Keep at least one DC and one jumpbox, then choose workload counts, topology, and the intended deployment stage.
 5. Complete [Local Validation](docs/ci-cd-validation.md#local-validation), including what-if review, then deploy:
 

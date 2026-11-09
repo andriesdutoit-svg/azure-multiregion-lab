@@ -19,7 +19,6 @@
           "azureTenantId": "<AZURE_TENANT_ID>",
           "azureSubscriptionId": "<AZURE_SUBSCRIPTION_ID>",
           "deploymentLocation": "westeurope",
-          "foundationResourceGroup": "amrl-foundation-rg",
           "automationManagedIdentityName": "amrl-deployment-mi",
           "githubRepository": "andriesdutoit-svg/azure-multiregion-lab",
           "githubAppDisplayName": "AMRL-github-actions",
@@ -96,6 +95,14 @@
 
     "automationManagedIdentityResourceId": {
       "value": "/subscriptions/<AZURE_SUBSCRIPTION_ID>/resourceGroups/amrl-foundation-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/amrl-deployment-mi"
+    },
+
+    "foundationResourceGroup": {
+      "value": "amrl-foundation-rg"
+    },
+
+    "keyVaultName": {
+      "value": "<KEYVAULT_NAME>"
     },
 
     "subnetIndexMap": {
@@ -202,64 +209,6 @@
       }
     },
 
-    "jumpboxAdminUsername": {
-      "value": "azureadmin"
-    },
-
-    "jumpboxAdminPassword": {
-      "reference": {
-        "keyVault": {
-          "id": "/subscriptions/<AZURE_SUBSCRIPTION_ID>/resourceGroups/amrl-foundation-rg/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
-        },
-        "secretName": "jumpboxAdminPassword"
-      }
-    },
-
-    "serverAdminUsername": {
-      "value": "azureadmin"
-    },
-
-    "serverAdminPassword": {
-      "reference": {
-        "keyVault": {
-          "id": "/subscriptions/<AZURE_SUBSCRIPTION_ID>/resourceGroups/amrl-foundation-rg/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
-        },
-        "secretName": "serverAdminPassword"
-      }
-    },
-
-    "clientAdminUsername": {
-      "value": "azureadmin"
-    },
-
-    "clientAdminPassword": {
-      "reference": {
-        "keyVault": {
-          "id": "/subscriptions/<AZURE_SUBSCRIPTION_ID>/resourceGroups/amrl-foundation-rg/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
-        },
-        "secretName": "clientAdminPassword"
-      }
-    },
-
-    "sshPublicKey": {
-      "reference": {
-        "keyVault": {
-          "id": "/subscriptions/<AZURE_SUBSCRIPTION_ID>/resourceGroups/amrl-foundation-rg/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
-        },
-        "secretName": "<sshPublicKey>"
-      }
-    },
-
-    "sshPrivateKey": {
-      "reference": {
-        "keyVault": {
-          "id": "/subscriptions/<AZURE_SUBSCRIPTION_ID>/resourceGroups/amrl-foundation-rg/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
-        },
-        "secretName": "<sshPrivateKey>"
-      }
-    },
-
-
     "enableWindowsAdminCenter": {
       "value": false
     },
@@ -299,10 +248,6 @@
 
     "usersPerDepartment": {
       "value": 10
-    },
-
-    "enableFileServices": {
-      "value": false
     },
 
     "useDedicatedFileServer": {

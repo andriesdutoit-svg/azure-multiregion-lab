@@ -87,7 +87,7 @@ The linked Windows LAPS GPO supplies the policy side of this setup: it backs pas
 
 ## Departmental File Services
 
-When `enableFileServices=true`, directory population creates each department's `Share_RW` and `Share_RO` domain-local groups and nests the manager and user groups into them. Share provisioning is handled separately on the selected file server.
+Directory population creates each department's `Share_RW` and `Share_RO` domain-local groups and nests the manager and user groups into them as part of every identity-stage run. Share provisioning is handled separately on the selected file server.
 
 Directory population and share provisioning embed the same `Get-SelectedDepartments.ps1` helper in their Run Command payloads. All mandatory system-administration departments are retained in input order; additional departments fill the remaining slots in their JSON-property order. Requests smaller than the mandatory set are rejected, keeping directory groups and shares aligned without duplicate selection implementations.
 

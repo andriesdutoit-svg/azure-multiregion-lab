@@ -2,8 +2,8 @@ targetScope = 'subscription'
 
 // Identity stage overview
 // Responsibilities:
-// - Bootstrap the primary forest, promote replicas, populate AD, and provision Group Policy.
-// - Join Windows/Linux workloads, configure Linux client desktops, and provision optional shares.
+// - Bootstrap the primary forest, promote replicas, populate AD, and provision Group Policy and file services.
+// - Join Windows/Linux workloads and configure Linux client desktops.
 // - Install optional Windows Admin Center after AD DNS is available.
 // Consumes:
 // - The root's primary/replica/file-server targets and combined retained/new VM placement model.
@@ -21,9 +21,8 @@ targetScope = 'subscription'
 param prefix string
 param reconciliationToken string
 
-// Stage and optional service activation
+// Stage and optional WAC activation
 param deployIdentity bool
-param enableFileServices bool
 param enableWindowsAdminCenter bool
 
 // Targets from the combined retained/new placement model
@@ -52,10 +51,10 @@ param usersPerDepartment int
 
 // Domain administrator credentials
 
-param serverAdminUsername string
+param labAdminUsername string
 
 @secure()
-param serverAdminPassword string
+param labAdminPassword string
 
 // 2. Shared directory model
 // Serialized for every identity script to keep OU, group, GPO, and share configuration aligned.
@@ -97,11 +96,11 @@ var directoryModel = {
   platformAdminGroups: {
     windowsAdmins: 'Windows_Admins'
     linuxAdmins: 'Linux_Admins'
-    sourceDepartmentCode: first(items(sysAdminDepartment))!.value
+    sourceDepartmentCode: empty(items(sysAdminDepartment)) ? '' : first(items(sysAdminDepartment))!.value
   }
 
   gpoNames: {
-    serverAdministration: gpoNames.serverAdministration
+    labAdministration: gpoNames.labAdministration
     clientAdministration: gpoNames.clientAdministration
     windowsLaps: gpoNames.windowsLaps
     domainControllerWinRM: gpoNames.domainControllerWinRM
@@ -135,7 +134,7 @@ module adForest '../identity/ad-forest.bicep' = if (deployIdentity) {
   params: {
     dcVmName: primaryDc!.name
     domainName: domainName
-    serverAdminPassword: serverAdminPassword
+    labAdminPassword: labAdminPassword
     reconciliationToken: reconciliationToken
   }
 }
@@ -153,8 +152,8 @@ module replicaDcs '../identity/ad-replicadc.bicep' = [
     params: {
       dcVmName: dc.name
       domainName: domainName
-      serverAdminUsername: serverAdminUsername
-      serverAdminPassword: serverAdminPassword
+      labAdminUsername: labAdminUsername
+      labAdminPassword: labAdminPassword
       reconciliationToken: reconciliationToken
     }
   }
@@ -183,7 +182,6 @@ module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
     additionalDepartments: additionalDepartments
     departmentCount: departmentCount
     usersPerDepartment: usersPerDepartment
-    enableFileServices: enableFileServices
     reconciliationToken: reconciliationToken
   }
 }
@@ -204,9 +202,9 @@ module adGpo '../identity/ad-gpo.bicep' = if (deployIdentity) {
   }
 }
 
-// 3.3 Optional file services
+// 3.3 File services are part of the identity platform.
 // The forward domainJoinWindows dependency ensures a dedicated server joins before share ACL setup.
-module fileServices '../identity/file-services.bicep' = if (deployIdentity && enableFileServices) {
+module fileServices '../identity/file-services.bicep' = if (deployIdentity) {
   name: '${prefix}-file-services'
 
   scope: resourceGroup('${prefix}-rg-${fileServerVm.regionKey}')
@@ -243,8 +241,8 @@ module domainJoinWindows '../identity/domain-join.bicep' = [
       domainName: domainName
       directoryModel: string(directoryModel)
       vmType: vm.type
-      serverAdminUsername: serverAdminUsername
-      serverAdminPassword: serverAdminPassword
+      labAdminUsername: labAdminUsername
+      labAdminPassword: labAdminPassword
       reconciliationToken: reconciliationToken
     }
   }
@@ -311,8 +309,8 @@ module domainJoinLinux '../identity/domain-join-linux.bicep' = [
       domainName: domainName
       directoryModel: string(directoryModel)
       vmType: vm.type
-      serverAdminUsername: serverAdminUsername
-      serverAdminPassword: serverAdminPassword
+      labAdminUsername: labAdminUsername
+      labAdminPassword: labAdminPassword
       reconciliationToken: reconciliationToken
     }
   }

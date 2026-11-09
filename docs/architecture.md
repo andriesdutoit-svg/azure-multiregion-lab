@@ -31,7 +31,7 @@ Network outputs supply subnet IDs to compute. Compute creates missing VMs; ident
 | Jumpboxes | Provide the administration hop to private workload VMs; Bastion is an optional additional access path. |
 | Windows/Linux servers and clients | Exercise domain membership, administration policy, applications, and optional desktop access. |
 | Windows Admin Center | Optional gateway installation and configuration repair during identity-stage after AD/GPO and Windows domain joins, on the primary jumpbox or first modeled Windows server. The gateway UI uses HTTPS; current managed-server WinRM uses HTTP. AMRL does not configure inbound web access or automatically populate Shared Connections. |
-| Directory and file services | Provide the departmental user/group model, GPOs, and optional group-based share permissions. |
+| Directory and file services | Provide the departmental user/group model, GPOs, and group-based share permissions. |
 
 Region and VM counts, role-specific images/sizes/disks, and optional services are data-driven. New-VM creation uses missing identities only; identity automation can also target retained VMs. Detailed placement rules belong in [Placement and Reconciliation](placement-and-reconciliation.md), and guest configuration in [Identity and Domain Join](identity-and-domain-join.md).
 
@@ -58,7 +58,7 @@ Region and VM counts, role-specific images/sizes/disks, and optional services ar
 
 The deployment is declarative. Bicep describes the desired resources, their configuration, scopes, and dependencies. Parameters provide the environment-specific inputs, including regions, VM counts, VM sizes, images, credentials references, and deployment stage.
 
-The root [main.bicep](../main.bicep) orchestrates the deployment. Reusable modules own specific resource types:
+The root [main.bicep](../main.bicep) orchestrates the deployment and resolves administrator passwords and SSH keys from Key Vault with `getSecret()`. The top-level `foundationResourceGroup` and `keyVaultName` parameters identify that vault; secret values are not stored in deployment parameter files. Reusable modules own specific resource types:
 
 - `modules/networking` owns VNets, role subnets, NSGs, firewalls, and route tables.
 - `modules/networking/peering.bicep` owns mode-specific hub-spoke or full-mesh peering.
@@ -189,7 +189,7 @@ The template does not discover live Azure VM inventory. Brownfield users must ma
 
 ## File Services
 
-File services are part of the identity workflow and are controlled independently by `enableFileServices`. Directory population runs on the primary DC and, when file services are enabled, creates the domain-local share groups and nests department manager/user groups into them. The separate `file-services.bicep` module then runs `Set-Shares.ps1` on the selected host to create `C:\Shares`, one SMB share per selected department, and the corresponding NTFS access rules.
+File services are a standard part of the identity workflow. Directory population runs on the primary DC and creates the domain-local share groups and nests department manager/user groups into them. The separate `file-services.bicep` module then runs `Set-Shares.ps1` on the selected host to create `C:\Shares`, one SMB share per selected department, and the corresponding NTFS access rules.
 
 By default, the selected host is the primary DC. When `useDedicatedFileServer=true`, the first `srvwin` entry in `finalVmPlacements` is selected. The file-services module is scoped to that VM's resource group and depends on both AD population and Windows domain join, ensuring a dedicated server joins the domain before its AD-backed ACLs are applied.
 

@@ -164,6 +164,7 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 
 - `hasRegionOverflow`: A region, including the hub, exceeds `maxVmsPerRegion`.
 - `invalidCapacity`: The total requested VM count exceeds `regionCount * maxVmsPerRegion`.
+- `invalidMinimumDepartments` (blocking): `departmentCount` is less than the number of mandatory system-administration departments. At least one department must be selected for file-service groups and shares.
 - `hasNoDomainControllers`: The final placement model contains no DC, so the AD control plane will be unavailable. A jumpbox may still be present and accessible.
 - `hasNoJumpboxes`: The final placement model contains no jumpbox, so the supported remote-access path into the environment is unavailable.
 - `hasNonControlInHub`: A workload VM was placed in the hub.
@@ -171,12 +172,11 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 - `hasMissingNetworkPrerequisites`: Compute/identity is selected while networking is skipped and one or more selected regions are absent from `existingRegions`. Review `networkRegionsMissingFromInventory`; run `stage=network` first, or list a region only if its networking already exists.
 - `hasUncoveredNewVmNetworks`: A compute or identity deployment would create VMs in regions not declared as having existing networking. Run `stage=network` or `stage=all`, or correct `existingRegions` if that networking already exists.
 - `missingDedicatedFileServer`: `useDedicatedFileServer` is `true` but no `srvwin` VM exists. Target selection falls back to the primary DC so template evaluation can continue, but the configuration is invalid and should be corrected.
-- `invalidDedicatedFileServerConfiguration`: `useDedicatedFileServer` is `true` while `enableFileServices` is `false`.
 - `invalidDedicatedWacHostConfiguration`: blocking; `useDedicatedWacHost` is `true` while `enableWindowsAdminCenter` is `false`.
 - `missingDedicatedWacHost`: advisory; WAC and dedicated-host mode are enabled, but the final placement model has no `srvwin`. WAC falls back to the primary jumpbox; add or retain a Windows server, or disable dedicated-host preference.
 - `windowsAdminCenterSkippedForStage`: advisory; WAC and identity are enabled, but the selected stage is not `identity` or `all`, so WAC will not be installed in this deployment. Run `stage=identity` or `stage=all` when ready.
 - `hasMalformedDomainName`: `domainName` is blank, single-label, or contains a space, backslash, forward slash, or `@`. Group Policy provisioning builds the domain DN and SYSVOL path to `Groups.xml` from this value. AD configuration checks remain active for every stage; findings do not by themselves block deployment.
-- `hasEmptySysAdminDepartmentCode`: `sysAdminDepartment` is empty or its department code is blank. Group Policy provisioning resolves the Windows admins group created by directory population from this code.
+- `hasEmptySysAdminDepartmentCode` (blocking): `sysAdminDepartment` is empty or its department code is blank. The directory model requires this code for the platform administrator groups.
 - `hasNoGpoTargetDc`: `dc01` is not pinned to the primary region. Correct placement before running Group Policy provisioning on the primary domain controller.
 - `hasInvalidGpoNames`: one or more of `serverAdministration`, `clientAdministration`, `windowsLaps`, or `domainControllerWinRM` is empty. These names are used to create and link the four GPOs.
 

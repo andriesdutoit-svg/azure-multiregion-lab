@@ -66,7 +66,7 @@ The workflow requires the OIDC IDs configured as GitHub secrets and Bicep deploy
 | `AZURE_TENANT_ID` | Secret | Microsoft Entra tenant ID. |
 | `AZURE_SUBSCRIPTION_ID` | Secret | Azure subscription ID used by the workflow. |
 | `YOUR_PUBLIC_IP` | Variable | Public IP address allowed to access jumpboxes. |
-| `KEYVAULT_ID` | Variable | Resource ID of the Key Vault referenced by the demo parameter file. |
+| `KEYVAULT_NAME` | Variable | Name of the Key Vault used by the demo parameter file. |
 | `AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID` | Variable | Resource ID of the User Assigned Managed Identity used by Deployment Scripts. The identity must have the Network Contributor role at subscription scope. |
 
 When creating a new branch, make sure the matching GitHub Actions federated credential is created in Azure so OIDC authentication remains valid for that branch. This also applies to fix branches that should trigger validation automatically.
@@ -216,15 +216,14 @@ gh secret set AZURE_TENANT_ID -b $azureContext.tenantId -R $githubRepository
 gh secret set AZURE_SUBSCRIPTION_ID -b $azureContext.id -R $githubRepository
 ```
 
-Retrieve the resource IDs rather than typing them. Public-IP discovery belongs to deployment parameter setup, not GitHub authentication; reuse that value here:
+Resolve the managed-identity resource ID from Azure rather than typing it. The Key Vault repository variable stores the vault name, while `foundationResourceGroup` in the demo parameter file stores its resource group. Public-IP discovery belongs to deployment parameter setup, not GitHub authentication; reuse that value here:
 
 ```powershell
 if ([string]::IsNullOrWhiteSpace($publicIp)) { throw 'Complete public-IP setup before setting GitHub variables.' }
-$kvId = az keyvault show --name $vaultName --resource-group $foundationRg --query id -o tsv
 $automationIdentityResourceId = az identity show --name $automationIdentityName --resource-group $foundationRg --query id -o tsv
 
 gh variable set YOUR_PUBLIC_IP -b $publicIp -R $githubRepository
-gh variable set KEYVAULT_ID -b $kvId -R $githubRepository
+gh variable set KEYVAULT_NAME -b $vaultName -R $githubRepository
 gh variable set AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID -b $automationIdentityResourceId -R $githubRepository
 gh secret list -R $githubRepository
 gh variable list -R $githubRepository

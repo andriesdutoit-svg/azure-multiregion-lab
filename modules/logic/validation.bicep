@@ -63,8 +63,7 @@ param additionalDepartments object
 param departmentCount int
 param usersPerDepartment int
 
-// Optional file services and target availability
-param enableFileServices bool
+// Dedicated file-server target availability
 param useDedicatedFileServer bool
 param fileServerVmAvailable bool
 
@@ -260,10 +259,9 @@ var spokeRegionsCovered = empty(spokesNotCovered)
 
 var hasMixedCreationMode = deployNetwork && length(existingRegions) > 0 && length(existingRegions) < regionCount
 
-// Optional services must have consistent feature settings and available targets.
+// Dedicated file-server selection requires an available Windows server target.
 var missingDedicatedFileServer = useDedicatedFileServer && !fileServerVmAvailable
 
-var invalidDedicatedFileServerConfiguration = !enableFileServices && useDedicatedFileServer
 var hasWindowsServerVm = !empty(filter(vmPlacements, vm => vm.type == 'srvwin'))
 var invalidDedicatedWacHostConfiguration = useDedicatedWacHost && !enableWindowsAdminCenter
 var missingDedicatedWacHost = enableWindowsAdminCenter && useDedicatedWacHost && !hasWindowsServerVm
@@ -568,14 +566,6 @@ var blockingValidationFindings = [
   }
 
   {
-    flag: 'invalidDedicatedFileServerConfiguration'
-    active: invalidDedicatedFileServerConfiguration
-    severity: 'block'
-    category: 'FileServices'
-    message: 'useDedicatedFileServer cannot be true when enableFileServices is false.'
-    remediation: 'Enable file services or set useDedicatedFileServer to false.'
-  }
-  {
     flag: 'invalidDedicatedWacHostConfiguration'
     active: invalidDedicatedWacHostConfiguration
     severity: 'block'
@@ -616,7 +606,7 @@ var advisoryValidationFindings = [
   {
     flag: 'invalidMinimumDepartments'
     active: invalidMinimumDepartments
-    severity: 'advisory'
+    severity: 'block'
     category: 'Identity'
     message: 'At least one department is required.'
     remediation: 'Set departmentCount to include every required system-administration department.'
@@ -712,7 +702,7 @@ var advisoryValidationFindings = [
   {
     flag: 'hasEmptySysAdminDepartmentCode'
     active: hasEmptySysAdminDepartmentCode
-    severity: 'advisory'
+    severity: 'block'
     category: 'GroupPolicy'
     message: 'sysAdminDepartment must define a non-empty department code. Group Policy provisioning resolves the Windows admins group that directory population creates from this code.'
     remediation: 'Add a non-empty department code to sysAdminDepartment.'

@@ -58,7 +58,7 @@ In interactive mode, answer the lab-setting prompts; Enter accepts each displaye
 2. Confirms the Azure account, tenant, and subscription to use.
 3. Checks and prepares foundation prerequisites: registers required resource providers; creates or reuses the foundation resource group, managed identity, RBAC assignments, and Key Vault; and applies protection locks.
 4. Reuses existing Key Vault passwords and the local SSH key pair. For missing administrator passwords, asks whether to generate them or securely enter them; generates a missing Ed25519 key pair and stores the required passwords and keys in Key Vault.
-5. Saves the resolved identity, vault, and access-source references to the parameter file. With `-IncludeGitHub`, it also configures the requested GitHub OIDC settings.
+5. Saves the resolved managed-identity resource ID, top-level foundation resource group and Key Vault name, and access source to the parameter file. Parameter files using retired metadata fields or per-secret Key Vault references are rejected; update them to the current example schema. With `-IncludeGitHub`, it also configures the requested GitHub OIDC settings.
 6. If the required foundation resources are available, runs Bicep build and lint, Azure deployment validation, and `what-if`. Review the preview and resolve errors or unexpected changes before deploying.
 
 For GitHub Actions, add `-IncludeGitHub` to Prepare and subsequent Plan/Deploy runs. Interactive Prepare asks for the repository and Entra app name. Omit the switch for local-only deployment. With `-ParameterFile`, supply the GitHub values listed under [Using `-ParameterFile`](#using-parameterfile).
@@ -102,7 +102,7 @@ Pass `-ParameterFile <path>` to use a complete, reviewed parameter file without 
 .\scripts\Initialize-Lab.ps1 -ParameterFile .\main.parameters.local.json -Deploy
 ```
 
-Both parameter templates include `prefix.metadata.bootstrap.azureTenantId`, `azureSubscriptionId`, `deploymentLocation`, `foundationResourceGroup`, and `automationManagedIdentityName`. With `-ParameterFile`, tenant and subscription IDs must be filled in, and the active Azure CLI context must match; the bootstrapper does not ask or switch context. Set `deploymentLocation` to a subscription deployment location supported by the selected subscription. Explicit files are checked for every required Bicep parameter and fail before subscription setup if any are missing; use `main.parameters.example.json` as the complete schema.
+Both parameter templates include `prefix.metadata.bootstrap.azureTenantId`, `azureSubscriptionId`, `deploymentLocation`, and `automationManagedIdentityName`, plus top-level `foundationResourceGroup` and `keyVaultName` parameters. With `-ParameterFile`, tenant and subscription IDs must be filled in, and the active Azure CLI context must match; the bootstrapper does not ask or switch context. Set `deploymentLocation` to a subscription deployment location supported by the selected subscription. Explicit files are checked for every required Bicep parameter and fail before subscription setup if any are missing; use `main.parameters.example.json` as the complete schema.
 
 With `-IncludeGitHub`, explicit files must set `prefix.metadata.bootstrap.githubRepository` and `prefix.metadata.bootstrap.githubAppDisplayName`; the bootstrapper does not prompt. The file must also contain exactly one approved IPv4 `/32` in `jumpboxAllowedSources` for the `YOUR_PUBLIC_IP` repository variable. An unresolved jumpbox IP placeholder is rejected rather than prompting.
 
@@ -117,7 +117,8 @@ Follow the [brownfield checklist](deployment.md#brownfield-deployment), run `-Pl
 | Values | Source |
 |---|---|
 | Azure account, tenant, subscription | Interactive runs confirm the Azure CLI context and save tenant/subscription IDs. Explicit parameter files supply tenant/subscription IDs and must match the active Azure CLI context. |
-| Deployment location, foundation resource group, managed identity default name | `prefix.metadata.bootstrap` in the parameter file; template defaults are used by the wizard. |
+| Deployment location and managed identity default name | `prefix.metadata.bootstrap` in the parameter file; template defaults are used by the wizard. |
+| Foundation resource group and Key Vault name | Top-level `foundationResourceGroup` and `keyVaultName` parameters; the bootstrapper resolves and saves them there. |
 | Foundation resource location | Without `-ParameterFile`, defaults to the first `regionIndexMap` entry by numeric index; when new foundation resources need a location, the wizard asks for an Azure region name without printing a region list. With `-ParameterFile`, no location prompt is shown: `prefix.metadata.bootstrap.foundationLocationSource: "regionIndexMap"` means recalculate from the first mapped region, even if `foundationLocation` has a value; `"explicit"` means use the saved `foundationLocation`. If the source is omitted, a non-empty location is treated as explicit, while an empty location defaults to the first mapped region. This location is for prerequisite resources, not lab VM placement. |
 | Foundation groups, identity, and vault | Interactive wizard runs always prompt for the foundation resource-group name, defaulting to the configured value. Keeping it reuses its resources; choosing another group switches bootstrap-managed identity and vault setup to that group and updates their parameter references. If the configured vault is soft-deleted and recovery is declined, the wizard prompts again for a different group name before creating resources. With `-ParameterFile`, the configured group and resource IDs are used without a name prompt. New vault names are checked for availability. |
 | Administrator passwords and SSH keys | Existing credentials are reused; missing credentials are prompted/generated and stored securely. |
@@ -131,7 +132,7 @@ Follow the [brownfield checklist](deployment.md#brownfield-deployment), run `-Pl
 | Lab prefix, `regionCount`, `maxVmsPerRegion`, `validationMode`, individual `vmCounts` | Shared wizard prompts; current local-file values, or demo values on first run, are defaults. Bicep configuration constraints are evaluated by the AMRL validation engine. |
 | `networkMode` | Prompted for `network`/`all`; otherwise preserved. |
 | `departmentCount`, `usersPerDepartment` | Prompted for `identity`/`all`; otherwise preserved. |
-| `enableFileServices`, `useDedicatedFileServer`, `enableWindowsAdminCenter`, `useDedicatedWacHost` | Yes/no questions for `identity`/`all`; otherwise preserved. |
+| `useDedicatedFileServer`, `enableWindowsAdminCenter`, `useDedicatedWacHost` | Yes/no questions for `identity`/`all`; otherwise preserved. File services always run with the identity stage. |
 | Region map and remaining Bicep values | Current parameter file or demo template; preserved. The wizard uses the first `regionCount` regions without renumbering address indexes. |
 | Managed identity and Key Vault parameter references | Resource IDs resolved during subscription-level setup; secret values remain in Key Vault. |
 | Jumpbox source CIDRs | Existing ranges are preserved; an unresolved placeholder uses an approved public IPv4 `/32`. |

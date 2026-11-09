@@ -22,7 +22,7 @@ Use [Bicep Setup](manual-preparation.md#bicep-setup) to prepare the parameter fi
 
 ## Deployment Workflow
 
-1. Choose regions, topology, VM counts, and optional file services/WAC in the [parameter file](configuration-parameters-reference.md).
+1. Choose regions, topology, VM counts, the file-server target, and optional WAC settings in the [parameter file](configuration-parameters-reference.md).
 2. Check [regional availability and quota](#preflight-checks), then [build, validate, and preview](ci-cd-validation.md#local-validation).
 3. Use the greenfield or brownfield path below and select the appropriate stage.
 4. Review [deployment outputs and guest results](validation-and-troubleshooting.md#post-deployment-review).
@@ -54,9 +54,9 @@ Use a new deployment name when rerunning identity automation so Azure reapplies 
 
 The engine completes before the gate, so its nested deployment retains diagnostics after enforcement failure. See [Deployment Results and Troubleshooting](validation-and-troubleshooting.md#post-deployment-review).
 
-### Optional File Services
+### File Services
 
-Set `enableFileServices=true` and run `identity` or `all`. Shares use the primary DC unless `useDedicatedFileServer=true`, which selects the first `srvwin` VM in the final model. Request or inventory that server before enabling dedicated mode; [target reassignment is not data migration](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
+File services are provisioned whenever `identity` or `all` runs. Shares use the primary DC unless `useDedicatedFileServer=true`, which selects the first `srvwin` VM in the final model. Request or inventory that server before selecting dedicated mode; [target reassignment is not data migration](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
 
 ### Optional Windows Admin Center
 

@@ -18,14 +18,14 @@ Replica DC promotion logic.
 # Requires a provisioned target VM with working domain networking/DNS and an available forest.
 # A successful Get-ADDomain query exits early; this is not a complete directory health check.
 #
-# NOTE: ServerAdminPassword is received as a string because Azure VM Run Command
+# NOTE: labAdminPassword is received as a string because Azure VM Run Command
 # passes parameter values as strings. Converted to SecureString immediately.
 # ============================================================================
 
 param(
     [string]$DomainName,
-    [string]$ServerAdminUsername,
-    [string]$ServerAdminPassword,
+    [string]$labAdminUsername,
+    [string]$labAdminPassword,
     [string]$ReconciliationToken
 )
 
@@ -38,7 +38,7 @@ Write-Host "[Info] Preparing replica domain controller promotion for $DomainName
 # Convert plain-text password parameter to SecureString immediately.
 # VM Run Command passes all parameters as strings; password is not logged to output.
 $SecurePassword = ConvertTo-SecureString `
-    $ServerAdminPassword `
+    $labAdminPassword `
     -AsPlainText `
     -Force
 
@@ -49,7 +49,7 @@ $NetBiosName = $DomainName.Split('.')[0].ToUpper()
 # Build domain credential using NETBIOS\username format for authentication context.
 # Required for Install-ADDSDomainController -Credential to work correctly.
 $DomainCredential = New-Object System.Management.Automation.PSCredential(
-    "$NetBiosName\$ServerAdminUsername",
+    "$NetBiosName\$labAdminUsername",
     $SecurePassword
 )
 

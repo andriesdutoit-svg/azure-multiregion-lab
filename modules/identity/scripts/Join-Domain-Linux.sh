@@ -23,8 +23,8 @@ DIRECTORY_MODEL="${DirectoryModel}"
 LINUX_ADMINS_GROUP=""
 VM_TYPE="${VmType}"
 
-SERVER_ADMIN_USERNAME="${ServerAdminUsername}"
-SERVER_ADMIN_PASSWORD="${ServerAdminPassword}"
+SERVER_ADMIN_USERNAME="${labAdminUsername}"
+SERVER_ADMIN_PASSWORD="${labAdminPassword}"
 RECONCILIATION_TOKEN="${ReconciliationToken}"
 
 log_info() {
@@ -55,12 +55,12 @@ if [[ -z "${DOMAIN_NAME}" ]]; then
 fi
 
 if [[ -z "${SERVER_ADMIN_USERNAME}" ]]; then
-    log_error "ServerAdminUsername was not supplied"
+    log_error "labAdminUsername was not supplied"
     exit 1
 fi
 
 if [[ -z "${SERVER_ADMIN_PASSWORD}" ]]; then
-    log_error "ServerAdminPassword was not supplied"
+    log_error "labAdminPassword was not supplied"
     exit 1
 fi
 
