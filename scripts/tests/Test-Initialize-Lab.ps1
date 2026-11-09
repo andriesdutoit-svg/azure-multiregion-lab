@@ -545,6 +545,26 @@ Set-AMRLRoleAssignmentIfMissing `
     -Scope '/subscriptions/test' | Out-Null
 Assert-Test ($script:cliCalls.Count -eq 0) 'An existing role assignment was duplicated.'
 
+& {
+    $script:roleAssignmentMessages = New-Object 'System.Collections.Generic.List[string]'
+    function Write-Host {
+        param([object]$Object, [switch]$NoNewline, [ConsoleColor]$ForegroundColor)
+        $script:roleAssignmentMessages.Add([string]$Object)
+    }
+    Set-AMRLRoleAssignmentIfMissing `
+        -AssigneeObjectId '11111111-1111-1111-1111-111111111111' `
+        -PrincipalType ServicePrincipal `
+        -Role 'Contributor' `
+        -Scope '/subscriptions/test' | Out-Null
+    Assert-Test ($script:roleAssignmentMessages[-1] -eq 'Role assignment exists: Contributor on subscription') 'Subscription-level role output exposed the full subscription ID.'
+    Set-AMRLRoleAssignmentIfMissing `
+        -AssigneeObjectId '11111111-1111-1111-1111-111111111111' `
+        -PrincipalType ServicePrincipal `
+        -Role 'Key Vault Secrets User' `
+        -Scope '/subscriptions/test/resourceGroups/foundation/providers/Microsoft.KeyVault/vaults/test-vault' | Out-Null
+    Assert-Test ($script:roleAssignmentMessages[-1] -eq "Role assignment exists: Key Vault Secrets User on Key Vault 'test-vault'") 'Key Vault role output exposed the subscription path instead of the vault name.'
+}
+
 $script:roleAssignmentState = 'missing'
 $createdFederatedCredential = New-AMRLFederatedCredentialIfMissing `
     -AppObjectId '22222222-2222-2222-2222-222222222222' `
@@ -1133,6 +1153,7 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         Assert-Test (@($script:setupCalls | Where-Object { $_ -contains 'what-if' }).Count -eq 1) 'Normal setup did not reach what-if with explicit foundation references.'
         Assert-Test (-not $script:BootstrapperReport.Sources.Contains('Capacity availability')) 'Report still includes the removed capacity availability source.'
         Assert-Test ($script:BootstrapperReport.FoundationConfiguration.ResourceGroup -eq 'vault-rg' -and $script:BootstrapperReport.FoundationConfiguration.IdentityResourceGroup -eq 'custom-rg' -and $script:BootstrapperReport.FoundationConfiguration.VaultName -eq 'custom-vault' -and $script:BootstrapperReport.FoundationConfiguration.VaultResourceGroup -eq 'vault-rg') 'Preparation did not capture resolved foundation configuration.'
+        Assert-Test (@($script:setupHostMessages | Where-Object { $_ -eq 'Key Vault secrets exist; keeping them unchanged: sshPublicKey, sshPrivateKey' }).Count -eq 1) 'Existing SSH key secrets were not identified by name.'
         Assert-Test (@($script:setupCalls | Where-Object { $_[0] -eq 'vm' -and $_[1] -in @('list-skus', 'list-sizes', 'list-usage') }).Count -eq 0) 'Bootstrapper queried or displayed VM SKU/quota availability.'
         Assert-Test (@($script:setupCalls | Where-Object { $_[0] -eq 'vm' -or ($_[0] -eq 'vm' -and $_[1] -eq 'image') }).Count -eq 0) 'Bootstrapper queried regional VM or image availability.'
         Assert-Test (@($script:setupPromptMessages | Where-Object { $_ -like 'Azure deployment name*' }).Count -eq 0) 'Non-deploy preparation unexpectedly prompted for a deployment name.'
@@ -1800,6 +1821,7 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     $script:passwordChoiceAnswer = ''
     $script:securePasswordPromptCount = 0
     $script:passwordSecretWrites = 0
+    $script:passwordSecretMessages = New-Object 'System.Collections.Generic.List[string]'
     function Get-AzTsv {
         param([string[]]$Arguments)
         if ($script:passwordSecretsExist) { return 'existing-secret' }
@@ -1823,6 +1845,10 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         $script:passwordChoicePrompts.Add($Prompt)
         return $script:passwordChoiceAnswer
     }
+    function Write-Host {
+        param([object]$Object, [switch]$NoNewline, [ConsoleColor]$ForegroundColor)
+        $script:passwordSecretMessages.Add([string]$Object)
+    }
     try {
         $script:InteractiveConfiguration = $true
         $script:PasswordChoiceMade = $false
@@ -1831,14 +1857,17 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
             Set-AMRLSecretIfMissing -VaultName 'test-vault' -SecretName $secretName -Password
         }
         Assert-Test ($script:passwordChoicePrompts.Count -eq 0 -and $script:passwordSecretWrites -eq 0) 'Existing administrator passwords triggered a generation question or secret write.'
+        Assert-Test (@($script:passwordSecretMessages | Where-Object { $_ -eq 'Key Vault secret exists; keeping it unchanged: jumpboxAdminPassword' }).Count -eq 1 -and @($script:passwordSecretMessages | Where-Object { $_ -eq 'Key Vault secret exists; keeping it unchanged: labAdminPassword' }).Count -eq 1) 'Existing administrator secrets were not identified by name.'
 
         $script:passwordSecretsExist = $false
+        $script:passwordSecretMessages.Clear()
         foreach ($secretName in @('jumpboxAdminPassword', 'labAdminPassword')) {
             Set-AMRLSecretIfMissing -VaultName 'test-vault' -SecretName $secretName -Password -Prompt:$script:PromptForPasswords
         }
         Assert-Test ($script:passwordChoicePrompts.Count -eq 1) 'Missing passwords did not trigger exactly one generation question.'
         Assert-Test ($script:passwordChoicePrompts[0] -eq 'Randomly generate missing administrator passwords? (Allowed: y/N) [yes]') 'Password generation question did not default to Yes.'
         Assert-Test ($script:passwordSecretWrites -eq 2 -and $script:securePasswordPromptCount -eq 0) 'Default password handling did not generate missing passwords without secure prompts.'
+        Assert-Test (@($script:passwordSecretMessages | Where-Object { $_ -eq 'Key Vault secret created: jumpboxAdminPassword' }).Count -eq 1 -and @($script:passwordSecretMessages | Where-Object { $_ -eq 'Key Vault secret created: labAdminPassword' }).Count -eq 1) 'Created administrator secrets were not identified by name.'
 
         $script:PasswordChoiceMade = $false
         $script:passwordChoiceAnswer = 'no'

@@ -1666,7 +1666,10 @@ function Set-AMRLRoleAssignmentIfMissing {
         '--query', "[?roleDefinitionName=='$Role' && scope=='$Scope'].id"
     )
     if (-not [string]::IsNullOrWhiteSpace($existingId)) {
-        Write-Host "Role assignment exists: $Role on $Scope"
+        $scopeLabel = if ($Scope -match '^/subscriptions/[^/]+$') { 'subscription' }
+        elseif ($Scope -match '(?i)/providers/Microsoft\.KeyVault/vaults/([^/]+)$') { "Key Vault '$($Matches[1])'" }
+        else { $Scope }
+        Write-Host "Role assignment exists: $Role on $scopeLabel"
         return
     }
 
@@ -1740,6 +1743,7 @@ function Set-AMRLSecretIfMissing {
             if ($null -ne $secureValue) { $secureValue.Dispose() }
         }
     })
+    Write-Host "Key Vault secret created: $SecretName"
 }
 
 # Reuse the dedicated local/vault pair; mismatches require intentional operator repair.
@@ -1779,12 +1783,17 @@ function Set-AMRLKeySecretsIfMissing {
             Invoke-AzCli -Arguments @('keyvault', 'secret', 'set', '--vault-name', $VaultName, '--name', 'sshPublicKey', '--value', $publicKey, '--output', 'none') | Out-Null
             Invoke-AzCli -Arguments @('keyvault', 'secret', 'set', '--vault-name', $VaultName, '--name', 'sshPrivateKey', '--file', $keyPath, '--output', 'none') | Out-Null
         })
+        Write-Host 'Key Vault secret created: sshPublicKey'
+        Write-Host 'Key Vault secret created: sshPrivateKey'
     }
     elseif (-not $hasPublicKey -or -not $hasPrivateKey) {
         throw 'Only one SSH key secret exists in Key Vault. Resolve the pair manually; the script will not rotate or replace it.'
     }
     elseif ((Get-AzTsv -Arguments @('keyvault', 'secret', 'show', '--vault-name', $VaultName, '--name', 'sshPublicKey', '--query', 'value')).Trim() -ne $publicKey) {
         throw 'The Key Vault SSH public key differs from the local key pair. Resolve key rotation manually.'
+    }
+    else {
+        Write-Host 'Key Vault secrets exist; keeping them unchanged: sshPublicKey, sshPrivateKey'
     }
 }
 

@@ -100,7 +100,7 @@ var directoryModel = {
   }
 
   gpoNames: {
-    labAdministration: gpoNames.labAdministration
+    serverAdministration: gpoNames.serverAdministration
     clientAdministration: gpoNames.clientAdministration
     windowsLaps: gpoNames.windowsLaps
     domainControllerWinRM: gpoNames.domainControllerWinRM
