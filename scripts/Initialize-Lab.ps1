@@ -15,6 +15,8 @@ Configures subscription-level items and checks Bicep values with preflight and w
 .PARAMETER IncludeGitHub
 Configures optional Entra OIDC identity/access and GitHub Actions deployment values.
 In Plan mode, inspects those settings without changing them.
+.PARAMETER ReportPath
+Optional path for writing the final bootstrapper report as UTF-8 plain text.
 .PARAMETER Deploy
 Deploys main.bicep after preparation, what-if, and explicit DEPLOY confirmation.
 .NOTES
@@ -26,6 +28,7 @@ declared by the operator; deployment success does not prove guest readiness.
 [CmdletBinding()]
 param(
     [string]$ParameterFile,
+    [string]$ReportPath,
     [switch]$Plan,
     [switch]$Prepare,
     [switch]$IncludeGitHub,
@@ -1832,7 +1835,7 @@ function New-AMRLFederatedCredentialIfMissing {
             throw "Federated credential for '$Subject' has conflicting issuer/audience settings. Resolve it manually."
         }
         Write-Host "Federated credential exists: $Subject"
-        return
+        return [pscustomobject]@{ Status = 'Already existed'; Name = $bySubject[0].name; Subject = $Subject }
     }
 
     $byName = @($credentials | Where-Object { $_.name -eq $Name })
@@ -1854,6 +1857,8 @@ function New-AMRLFederatedCredentialIfMissing {
         [void](Invoke-AMRLChange -Target "Federated credential $Name on app $AppObjectId" -Action 'Create GitHub OIDC credential' -Operation {
             Invoke-AzCli -Arguments @('ad', 'app', 'federated-credential', 'create', '--id', $AppObjectId, '--parameters', $path, '--output', 'none') | Out-Null
         })
+        Write-Host "Federated credential created: $Subject"
+        return [pscustomobject]@{ Status = 'Created'; Name = $Name; Subject = $Subject }
     }
     finally {
         if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
@@ -1904,14 +1909,15 @@ function Set-AMRLGitHubConfiguration {
     Set-AMRLRoleAssignmentIfMissing -AssigneeObjectId $servicePrincipal.id -PrincipalType ServicePrincipal -Role 'Contributor' -Scope "/subscriptions/$SubscriptionId"
     Set-AMRLRoleAssignmentIfMissing -AssigneeObjectId $servicePrincipal.id -PrincipalType ServicePrincipal -Role 'Key Vault Secrets User' -Scope $VaultId
 
-    New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name 'github-actions-main' -Subject (Get-GitHubSubject -Repository $Repository -Branch 'main') -Description 'GitHub Actions - main branch'
+    $federatedCredentialResults = New-Object 'System.Collections.Generic.List[object]'
+    $federatedCredentialResults.Add((New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name 'github-actions-main' -Subject (Get-GitHubSubject -Repository $Repository -Branch 'main') -Description 'GitHub Actions - main branch'))
     $branch = Get-AMRLGitBranch
     if ($branch -cne 'main') {
         $branchSuffix = ($branch -replace '[^A-Za-z0-9_-]', '-')
         if ($branchSuffix.Length -gt 75) { $branchSuffix = $branchSuffix.Substring(0, 75) }
-        New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name "github-actions-$branchSuffix" -Subject (Get-GitHubSubject -Repository $Repository -Branch $branch) -Description "GitHub Actions - $branch"
+        $federatedCredentialResults.Add((New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name "github-actions-$branchSuffix" -Subject (Get-GitHubSubject -Repository $Repository -Branch $branch) -Description "GitHub Actions - $branch"))
     }
-    New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name 'github-actions-pull-request' -Subject "repo:${Repository}:pull_request" -Description 'GitHub Actions - pull requests'
+    $federatedCredentialResults.Add((New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name 'github-actions-pull-request' -Subject "repo:${Repository}:pull_request" -Description 'GitHub Actions - pull requests'))
 
     [void](Invoke-AMRLChange -Target "GitHub Actions secrets in $Repository" -Action 'Set Azure OIDC repository secrets' -Operation {
         Invoke-GhCli -Arguments @('secret', 'set', 'AZURE_CLIENT_ID', '--body', $app.appId, '--repo', $Repository) | Out-Null
@@ -1931,6 +1937,7 @@ function Set-AMRLGitHubConfiguration {
         throw "GitHub setup read-back found unresolved settings:`n$((@($readiness.Actions) + @($readiness.Blockers)) -join "`n")"
     }
     Write-Host 'GitHub OIDC, role assignments, Actions variables, and secret names verified. Secret values cannot be read back.'
+    return [pscustomobject]@{ FederatedCredentials = @($federatedCredentialResults.ToArray()) }
 }
 
 # 7. Read-only readiness and template preflight; no saved engine findings are produced
@@ -2797,8 +2804,12 @@ function Invoke-AMRLSubscriptionSetup {
 
     if ($IncludeGitHub -and $githubRepositoryReady) {
         try {
-            Set-AMRLGitHubConfiguration -TenantId $context.tenantId -SubscriptionId $context.id -VaultId $vaultId -IdentityId $identity.id -Repository $updatedParameters.parameters.prefix.metadata.bootstrap.githubRepository -AppDisplayName $updatedParameters.parameters.prefix.metadata.bootstrap.githubAppDisplayName -PublicIp $PublicIp
-            Set-AMRLReportSource -Name 'GitHub OIDC setup' -Status 'Succeeded' -Summary 'Repository secrets, variables, and trust were verified.'
+            $githubSetupResult = Set-AMRLGitHubConfiguration -TenantId $context.tenantId -SubscriptionId $context.id -VaultId $vaultId -IdentityId $identity.id -Repository $updatedParameters.parameters.prefix.metadata.bootstrap.githubRepository -AppDisplayName $updatedParameters.parameters.prefix.metadata.bootstrap.githubAppDisplayName -PublicIp $PublicIp
+            $createdCredentials = @($githubSetupResult.FederatedCredentials | Where-Object { $_.Status -eq 'Created' })
+            $existingCredentials = @($githubSetupResult.FederatedCredentials | Where-Object { $_.Status -eq 'Already existed' })
+            $credentialDetails = @($githubSetupResult.FederatedCredentials | ForEach-Object { "$($_.Status): $($_.Subject)" }) -join [Environment]::NewLine
+            $githubSummary = "Repository secrets and variables verified; federated credentials: $($createdCredentials.Count) created, $($existingCredentials.Count) already existed."
+            Set-AMRLReportSource -Name 'GitHub OIDC setup' -Status 'Succeeded' -Summary $githubSummary -Details $credentialDetails
         }
         catch {
             $message = $_.Exception.Message
@@ -3098,6 +3109,9 @@ function Write-AMRLBootstrapperReport {
         foreach ($sourceName in $supportingSources) {
             $source = $script:BootstrapperReport.Sources[$sourceName]
             Write-Host "  [$($source.Status)] $($sourceName): $($source.Summary)"
+            if ($sourceName -eq 'GitHub OIDC setup' -and -not [string]::IsNullOrWhiteSpace($source.Details)) {
+                foreach ($line in ($source.Details -split "`r?`n")) { Write-Host "    $line" }
+            }
         }
     }
 
@@ -3369,7 +3383,8 @@ function Invoke-AMRLBootstrapper {
     param(
         [switch]$Plan,
         [switch]$Prepare,
-        [switch]$Deploy
+        [switch]$Deploy,
+        [string]$ReportPath
     )
 
     $selectedModeCount = @(@($Plan, $Prepare, $Deploy) | Where-Object { $_ }).Count
@@ -3383,6 +3398,7 @@ function Invoke-AMRLBootstrapper {
     $mode = if ($Plan) { 'Plan' } elseif ($Prepare) { 'Prepare' } else { 'Deploy' }
     Initialize-AMRLBootstrapperReport -Mode $mode
     $failure = $null
+    $reportOutputFailed = $false
     try {
         Invoke-AMRLSubscriptionSetup -Plan:$Plan -Configure:$Prepare -Deploy:$Deploy
     }
@@ -3443,10 +3459,34 @@ function Invoke-AMRLBootstrapper {
         }
     }
     finally {
-        try { Write-AMRLBootstrapperReport }
-        catch { Write-Warning "Could not complete the bootstrapper report: $($_.Exception.Message)" }
+        try {
+            if ([string]::IsNullOrWhiteSpace($ReportPath)) {
+                Write-AMRLBootstrapperReport
+            }
+            else {
+                $reportOutput = @(Write-AMRLBootstrapperReport 6>&1)
+                $reportLines = @($reportOutput | ForEach-Object {
+                    if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData }
+                    else { [string]$_ }
+                })
+                foreach ($line in $reportLines) { Write-Host $line }
+                try {
+                    $resolvedReportPath = [System.IO.Path]::GetFullPath($ReportPath)
+                    [System.IO.File]::WriteAllLines($resolvedReportPath, $reportLines, [System.Text.UTF8Encoding]::new($false))
+                    Write-Host "Report saved to: $resolvedReportPath"
+                }
+                catch {
+                    $reportOutputFailed = $true
+                    Write-Warning "Could not write the bootstrapper report to '$ReportPath': $($_.Exception.Message)"
+                }
+            }
+        }
+        catch {
+            $reportOutputFailed = $true
+            Write-Warning "Could not complete the bootstrapper report: $($_.Exception.Message)"
+        }
     }
-    if ($null -ne $failure -or $script:BootstrapperReport.Status -eq 'Failed') {
+    if ($null -ne $failure -or $script:BootstrapperReport.Status -eq 'Failed' -or $reportOutputFailed) {
         $global:LASTEXITCODE = 1
         Write-Warning 'Bootstrapper finished with errors; see the completed report above.'
         return
@@ -3455,5 +3495,5 @@ function Invoke-AMRLBootstrapper {
 
 # Dot-sourcing loads helpers for local tests without starting setup.
 if ($MyInvocation.InvocationName -ne '.') {
-    Invoke-AMRLBootstrapper -Plan:$Plan -Prepare:$Prepare -Deploy:$Deploy
+    Invoke-AMRLBootstrapper -Plan:$Plan -Prepare:$Prepare -Deploy:$Deploy -ReportPath $ReportPath
 }

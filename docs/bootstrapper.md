@@ -85,6 +85,7 @@ Deploy then prompts for a deployment name, defaulting to `amrl-<prefix>-<timesta
 | `-Prepare` | Required mode | Creates or reuses subscription-level items and checks Bicep values with preflight and `what-if`; does not deploy lab resources. |
 | `-Deploy` | Required mode | Creates or reuses subscription-level items, checks Bicep values, then deploys after you type `DEPLOY`. |
 | `-IncludeGitHub` | Off | Configures GitHub OIDC, including missing credentials for `main`, the active branch, and pull requests. In Plan mode, inspects settings without changing them. |
+| `-ReportPath <path>` | Omit to disable | Saves the final report as a UTF-8 text file and still prints it to the console. Relative paths resolve from the current working directory; the parent directory must exist. A file-write failure is reported and returns a failing exit code. |
 
 ### Configuration Parameters
 
@@ -181,7 +182,7 @@ Settings outside the selected stage are preserved from the parameter file or dem
 
 ### Results
 
-The final report summarizes the effective configuration, foundation checks and changes, Bicep validation findings, Azure `what-if` predictions, deployment operations, and VM guest checks when available. Validation findings and the full VM setup-check table appear only in this report. Post-deployment collection displays progress messages, including after failure, without repeating result details; live Azure resource progress remains visible during deployment. The report distinguishes failed, skipped, unavailable, and not-requested results. Foundation setup can occur during Prepare even when lab resources are not deployed; secret values are never printed.
+The final report summarizes the effective configuration, foundation checks and changes, Bicep validation findings, Azure `what-if` predictions, deployment operations, and VM guest checks when available. Pass `-ReportPath <path>` to save this report as plain text in addition to console output. Validation findings and the full VM setup-check table appear only in this report. Post-deployment collection displays progress messages, including after failure, without repeating result details; live Azure resource progress remains visible during deployment. The report distinguishes failed, skipped, unavailable, and not-requested results. Foundation setup can occur during Prepare even when lab resources are not deployed; secret values are never printed.
 
 `what-if` predicts changes against current Azure resources; it is not a comparison with the previous parameter file or wizard run. A predicted `Create` does not mean this run created the resource. For validation findings, deployment failures, guest-check limits, and follow-up steps, see [Deployment Results and Troubleshooting](validation-and-troubleshooting.md).
 

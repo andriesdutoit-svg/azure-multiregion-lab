@@ -74,6 +74,7 @@ var directoryModel = {
     'Groups/DLGS'
     'Users'
     'Users/Disabled'
+    'ServiceAccounts'
   ]
 
   computerOuMapping: {

@@ -79,6 +79,7 @@ function Assert-Test {
 
 Assert-Test ($publicParameters -contains 'Plan') 'Plan switch is missing from the public interface.'
 Assert-Test ($publicParameters -contains 'Prepare') 'Prepare switch is missing from the public interface.'
+Assert-Test ($publicParameters -contains 'ReportPath') 'ReportPath is missing from the public interface.'
 Assert-Test ('Configure' -notin $publicParameters) 'The old Configure switch remains in the public interface.'
 Assert-Test ($publicParameters -contains 'Deploy') 'Deploy switch is missing from the public interface.'
 Assert-Test ('Stage' -notin $publicParameters) 'Stage should be a wizard question, not a command-line parameter.'
@@ -165,6 +166,23 @@ $conflictingModesRejected = $false
 try { Invoke-AMRLBootstrapper -Prepare -Deploy }
 catch { $conflictingModesRejected = $_.Exception.Message -like '*mutually exclusive*' }
 Assert-Test ($conflictingModesRejected -and $null -eq $script:BootstrapperReport) 'Bootstrapper accepted multiple modes or initialized a report before rejecting them.'
+
+& {
+    $reportPath = Join-Path $env:TEMP ('amrl-report-' + [guid]::NewGuid().ToString('N') + '.txt')
+    function Invoke-AMRLSubscriptionSetup {
+        param([switch]$Plan, [switch]$Configure, [switch]$Deploy)
+        Set-AMRLReportPhase -Name 'Parameter configuration' -Status 'Succeeded' -Summary 'Report-file test completed.'
+    }
+    try {
+        Invoke-AMRLBootstrapper -Prepare -ReportPath $reportPath 6>$null
+        $savedReport = Get-Content -Raw -LiteralPath $reportPath
+        Assert-Test ($savedReport -match 'AMRL BOOTSTRAPPER REPORT' -and $savedReport -match 'Overall result: Succeeded') 'ReportPath did not save the final report as plain text.'
+        Assert-Test ($savedReport -match 'Report-file test completed\.') 'ReportPath omitted the completed phase summary.'
+    }
+    finally {
+        if (Test-Path -LiteralPath $reportPath) { Remove-Item -LiteralPath $reportPath -Force }
+    }
+}
 
 for ($iteration = 0; $iteration -lt 100; $iteration++) {
     $password = New-AMRLPassword
@@ -488,11 +506,12 @@ Set-AMRLRoleAssignmentIfMissing `
 Assert-Test ($script:cliCalls.Count -eq 0) 'An existing role assignment was duplicated.'
 
 $script:roleAssignmentState = 'missing'
-New-AMRLFederatedCredentialIfMissing `
+$createdFederatedCredential = New-AMRLFederatedCredentialIfMissing `
     -AppObjectId '22222222-2222-2222-2222-222222222222' `
     -Name 'github-actions-test-branch' `
     -Subject 'repo:owner/repository:ref:refs/heads/feature/test' `
-    -Description 'Test branch' | Out-Null
+    -Description 'Test branch'
+Assert-Test ($createdFederatedCredential.Status -eq 'Created') 'New federated credential did not report that it was created.'
 Assert-Test ($script:cliCalls.Count -eq 1) 'Missing federated credential was not created.'
 Assert-Test ($script:createdCredential.name -eq 'github-actions-test-branch') 'Federated credential name changed.'
 Assert-Test ($script:createdCredential.issuer -eq 'https://token.actions.githubusercontent.com') 'Federated credential issuer is incorrect.'
@@ -501,11 +520,12 @@ Assert-Test ($script:createdCredential.audiences[0] -eq 'api://AzureADTokenExcha
 
 $script:cliCalls.Clear()
 $script:federatedCredentialState = @($script:createdCredential)
-New-AMRLFederatedCredentialIfMissing `
+$existingFederatedCredential = New-AMRLFederatedCredentialIfMissing `
     -AppObjectId '22222222-2222-2222-2222-222222222222' `
     -Name 'github-actions-test-branch' `
     -Subject 'repo:owner/repository:ref:refs/heads/feature/test' `
-    -Description 'Test branch' | Out-Null
+    -Description 'Test branch'
+Assert-Test ($existingFederatedCredential.Status -eq 'Already existed') 'Existing federated credential did not report that it was reused.'
 Assert-Test ($script:cliCalls.Count -eq 0) 'An existing federated credential was duplicated.'
 
 $originalGit = Get-Command git -CommandType Function -ErrorAction SilentlyContinue
@@ -549,7 +569,9 @@ $script:roleAssignmentState = 'present'
 $script:federatedCredentialState = @()
 $script:cliCalls.Clear()
 try {
-    Set-AMRLGitHubConfiguration @githubSetupArguments
+    $githubSetupResult = Set-AMRLGitHubConfiguration @githubSetupArguments
+    Assert-Test (@($githubSetupResult.FederatedCredentials | Where-Object { $_.Status -eq 'Created' }).Count -eq 3) 'GitHub setup did not report all newly created federated credentials.'
+    Assert-Test (@($githubSetupResult.FederatedCredentials | Where-Object { $_.Subject -like '*:refs/heads/feature/test' -and $_.Status -eq 'Created' }).Count -eq 1) 'GitHub setup did not report creation of the active-branch credential.'
     Assert-Test (@($script:githubVariableSetCalls | Where-Object { $_[2] -eq 'YOUR_PUBLIC_IP' -and $_[4] -eq '203.0.113.12' }).Count -eq 1) 'GitHub setup did not set its missing IP variable from the parameter-file /32.'
     $expectedSubjects = @(
         'repo:owner/repository:ref:refs/heads/main'
@@ -565,12 +587,14 @@ try {
     }
 
     $script:cliCalls.Clear()
-    Set-AMRLGitHubConfiguration @githubSetupArguments
+    $githubSetupResult = Set-AMRLGitHubConfiguration @githubSetupArguments
+    Assert-Test (@($githubSetupResult.FederatedCredentials | Where-Object { $_.Status -eq 'Already existed' }).Count -eq 3) 'GitHub setup did not report that existing credentials were reused.'
     Assert-Test ($script:cliCalls.Count -eq 0) 'Repeating GitHub setup recreated existing federated credentials.'
 
     $script:mockGitBranch = 'main'
     $script:federatedCredentialState = @()
-    Set-AMRLGitHubConfiguration @githubSetupArguments
+    $githubSetupResult = Set-AMRLGitHubConfiguration @githubSetupArguments
+    Assert-Test ($githubSetupResult.FederatedCredentials.Count -eq 2 -and @($githubSetupResult.FederatedCredentials | Where-Object { $_.Status -eq 'Created' }).Count -eq 2) 'GitHub setup on main did not report the two credentials it created.'
     Assert-Test ($script:federatedCredentialState.Count -eq 2) 'GitHub setup on main did not create exactly the main and pull-request credentials.'
     Assert-Test (@($script:federatedCredentialState | Where-Object { $_.subject -ceq $expectedSubjects[0] }).Count -eq 1) 'GitHub setup duplicated or omitted the main credential when the active branch was main.'
     Assert-Test (@($script:federatedCredentialState | Where-Object { $_.subject -ceq $expectedSubjects[2] }).Count -eq 1) 'GitHub setup on main omitted the pull-request credential.'
@@ -1869,6 +1893,7 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Set-AMRLReportPhase -Name 'Bicep build and validation' -Status 'Succeeded' -Summary 'Build, lint, and validate passed.'
     Set-AMRLReportSource -Name 'Azure deployment what-if' -Status 'Succeeded' -Summary '2 resource changes (Create: 1, Modify: 1).' -Details "Create: 1 Resource groups [example]: example`nModify: 1 Virtual networks [example]: vnet1"
     Set-AMRLReportSource -Name 'Applied resource changes' -Status 'Available' -Summary '1 resource operation returned.' -Details 'Create [Succeeded]: /subscriptions/test/resourceGroups/example'
+    Set-AMRLReportSource -Name 'GitHub OIDC setup' -Status 'Succeeded' -Summary 'Repository secrets and variables verified; federated credentials: 1 created, 2 already existed.' -Details "Created: repo:owner/repository:ref:refs/heads/feature/test`nAlready existed: repo:owner/repository:ref:refs/heads/main"
     $script:BootstrapperReport.DeploymentState = 'Succeeded'
     $script:BootstrapperReport.DeploymentStages = @([pscustomobject]@{ Stage = 'Network'; Status = 'Succeeded'; Name = 'network-stage' })
     $script:BootstrapperReport.AppliedChanges = @([pscustomobject]@{ Stage = 'Network'; Region = 'example'; ResourceType = 'Resource groups'; Operation = 'Create'; Status = 'Succeeded'; Name = 'example' })
@@ -1888,6 +1913,7 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Assert-Test ($reportText -match 'Bicep deployment results:' -and $reportText -match 'Overall: Succeeded' -and $reportText -match 'Network: Succeeded' -and $reportText -match '1 Resource groups \[example\]: Create \[Succeeded\]') 'Report omitted applied resource changes.'
     Assert-Test ($reportText -notmatch '/subscriptions/|/providers/|Microsoft.Resources/deployments') 'Report displayed technical resource ID prefixes.'
     Assert-Test ($reportText -match '\[PASS\] Bicep build and validation') 'Report did not provide an easy-to-scan check status.'
+    Assert-Test ($reportText -match 'GitHub OIDC setup: Repository secrets and variables verified; federated credentials: 1 created, 2 already existed\.' -and $reportText -match 'Created: repo:owner/repository:ref:refs/heads/feature/test' -and $reportText -match 'Already existed: repo:owner/repository:ref:refs/heads/main') 'Report omitted per-subject federated credential creation/existence results.'
     Assert-Test ($reportText -match 'Bicep validation findings:\r?\n  Mode: enforce; blocking: 1; advisory: 1\r?\n  Deployment gate: blocked') 'Bicep validation section included details beyond mode, counts, and gate status.'
     Assert-Test ([regex]::Matches($reportText, 'BLOCKING \[invalidCapacity\]').Count -eq 1) 'Blocking validation error was duplicated across report sections.'
     Assert-Test ($reportText -match '\[Error\] AMRL validation engine: BLOCKING \[invalidCapacity\] Too many VMs for the allowed capacity per region\.\r?\n    Next step: Reduce VM counts or increase maxVmsPerRegion\.') 'Blocking validation error or its next step was not reader-friendly in Warnings and errors.'
