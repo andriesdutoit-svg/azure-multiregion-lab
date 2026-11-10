@@ -123,12 +123,10 @@ var finalTags = union(tags, {
 
 // A new deployment name supplies a new rerun token to downstream guest automation.
 var reconciliationToken = deployment().name
-var gpoNames = {
-  serverAdministration: 'Server Administration'
-  clientAdministration: 'Client Administration'
-  windowsLaps: 'Windows LAPS'
-  domainControllerWinRM: 'Domain Controller WinRM'
-}
+
+var defaults = loadJsonContent('./config/amrl-defaults.json')
+
+var gpoNames = defaults.directory.gpoNames
 
 var deployNetwork = stage == 'network' || stage == 'all'
 var deployCompute = stage == 'compute' || stage == 'all'
@@ -137,8 +135,6 @@ var deployIdentity = stage == 'identity' || stage == 'all'
 // for domain join, but do not create missing control-plane DCs or jumpboxes.
 var deployControl = deployCompute
 var deployWorkload = deployCompute || deployIdentity
-
-var defaults = loadJsonContent('./config/amrl-defaults.json')
 
 var jumpboxAdminUsername = defaults.jumpboxAdminUsername
 var labAdminUsername = defaults.labAdminUsername
@@ -762,7 +758,6 @@ module identityStage 'modules/stages/identity-stage.bicep' = {
     fileServerName: fileServerName
 
     domainName: domainName
-    gpoNames: gpoNames
 
     sysAdminDepartment: sysAdminDepartment
     additionalDepartments: additionalDepartments

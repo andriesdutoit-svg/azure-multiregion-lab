@@ -721,7 +721,7 @@ var advisoryValidationFindings = [
     severity: 'advisory'
     category: 'GroupPolicy'
     message: 'GPO names must define non-empty serverAdministration, clientAdministration, windowsLaps, and domainControllerWinRM values.'
-    remediation: 'Provide non-empty display names for the Server Administration, Client Administration, Windows LAPS, and Domain Controller WinRM GPOs.'
+    remediation: format('Review config/amrl-defaults.json and provide non-empty GPO display names. Current values: serverAdministration="{0}", clientAdministration="{1}", windowsLaps="{2}", domainControllerWinRM="{3}".', gpoNames.serverAdministration, gpoNames.clientAdministration, gpoNames.windowsLaps, gpoNames.domainControllerWinRM)
   }
   {
     flag: 'hasUnsafeJumpboxAllowedSources'

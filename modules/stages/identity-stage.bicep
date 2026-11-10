@@ -40,8 +40,6 @@ param wacHostVm object
 
 param domainName string
 
-param gpoNames object
-
 param sysAdminDepartment object
 
 param additionalDepartments object
@@ -56,61 +54,39 @@ param labAdminUsername string
 @secure()
 param labAdminPassword string
 
+var defaults = loadJsonContent('../../config/amrl-defaults.json')
+var directoryDefaults = defaults.directory
+
 // 2. Shared directory model
 // Serialized for every identity script to keep OU, group, GPO, and share configuration aligned.
 // Preserve customOus order: parent paths precede their child paths.
 var directoryModel = {
   preventOuDeletion: false
 
-  rootOuName: '_ROOT'
+  rootOuName: directoryDefaults.rootOuName
 
-  customOus: [
-    'Computers'
-    'Computers/Servers'
-    'Computers/Clients'
-    'Groups'
-    'Groups/GGS'
-    'Groups/DLGS'
-    'Users'
-    'Users/Disabled'
-    'ServiceAccounts'
-  ]
+  customOus: directoryDefaults.customOus
 
-  computerOuMapping: {
-    srvwin: 'Computers/Servers'
-    srvlin: 'Computers/Servers'
-    cliwin: 'Computers/Clients'
-    clilin: 'Computers/Clients'
-  }
+  computerOuMapping: directoryDefaults.computerOuMapping
 
-  groupOuMapping: {
-    globalSecurity: 'Groups/GGS'
-    domainLocalSecurity: 'Groups/DLGS'
-  }
+  groupOuMapping: directoryDefaults.groupOuMapping
 
-  groupNaming: {
-    globalSecurityPrefix: 'GGS'
-    domainLocalSecurityPrefix: 'DLGS'
-  }
+  groupNaming: directoryDefaults.groupNaming
 
   platformAdminGroups: {
-    windowsAdmins: 'Windows_Admins'
-    linuxAdmins: 'Linux_Admins'
-    sourceDepartmentCode: empty(items(sysAdminDepartment)) ? '' : first(items(sysAdminDepartment))!.value
+    windowsAdmins: directoryDefaults.platformAdminGroups.windowsAdmins
+    linuxAdmins: directoryDefaults.platformAdminGroups.linuxAdmins
+    sourceDepartmentCode: empty(items(sysAdminDepartment))
+      ? ''
+      : first(items(sysAdminDepartment))!.value
   }
 
-  gpoNames: {
-    serverAdministration: gpoNames.serverAdministration
-    clientAdministration: gpoNames.clientAdministration
-    windowsLaps: gpoNames.windowsLaps
-    domainControllerWinRM: gpoNames.domainControllerWinRM
-  }
-
+  gpoNames: directoryDefaults.gpoNames
 
   shares: {
     root: {
-      name: 'Shares'
-      path: 'C:\\Shares'
+      name: directoryDefaults.shares.root.name
+      path: directoryDefaults.shares.root.path
       host: fileServerName
     }
   }

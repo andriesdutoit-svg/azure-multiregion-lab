@@ -94,7 +94,7 @@ $wacModule = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'modules/identit
 Assert-Test ($wacModule -match '(?m)^\s*treatFailureAsDeploymentFailure:\s*false\s*$') 'WAC Run Command errors must be reported without failing the overall deployment.'
 $identityStageSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'modules/stages/identity-stage.bicep')
 Assert-Test ($identityStageSource -match '(?s)module fileServices.*?= if \(deployIdentity\) \{') 'File services must run whenever the identity stage runs.'
-Assert-Test ($identityStageSource -match "sourceDepartmentCode: empty\(items\(sysAdminDepartment\)\) \? '' : first\(items\(sysAdminDepartment\)\)!.value") 'Empty system-administration departments must reach validation instead of failing directory-model evaluation.'
+Assert-Test ($identityStageSource -match "sourceDepartmentCode:\s*empty\(items\(sysAdminDepartment\)\)\s*\?\s*''\s*:\s*first\(items\(sysAdminDepartment\)\)!\.value") 'Empty system-administration departments must reach validation instead of failing directory-model evaluation.'
 $validationSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'modules/logic/validation.bicep')
 Assert-Test ($validationSource -match "flag: 'invalidMinimumDepartments'\s+active: invalidMinimumDepartments\s+severity: 'block'") 'A department count below the mandatory system-administration departments must block identity deployment.'
 Assert-Test ($validationSource -match "flag: 'hasEmptySysAdminDepartmentCode'\s+active: hasEmptySysAdminDepartmentCode\s+severity: 'block'") 'Missing system-administration department codes must block identity deployment.'
