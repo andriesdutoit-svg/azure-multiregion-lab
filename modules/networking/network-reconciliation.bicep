@@ -30,7 +30,7 @@ resource reconciliationScript 'Microsoft.Resources/deploymentScripts@2023-08-01'
   }
 
   properties: {
-    azPowerShellVersion: '14.0'
+    azPowerShellVersion: '15.0'
     retentionInterval: 'P1D'
 
     environmentVariables: [

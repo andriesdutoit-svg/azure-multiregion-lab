@@ -70,8 +70,6 @@ param bastionSku string
 
 // Reconciliation validates and uses this identity only when cleanup is scheduled;
 // the parameter itself remains required even for deployments that do not run cleanup.
-@description('Resource ID of the User Assigned Managed Identity used by Deployment Scripts.')
-param automationManagedIdentityResourceId string
 
 @description('Maps subnet role names to address indexes within each regional VNet.')
 param subnetIndexMap object
@@ -140,8 +138,15 @@ var deployIdentity = stage == 'identity' || stage == 'all'
 var deployControl = deployCompute
 var deployWorkload = deployCompute || deployIdentity
 
-var jumpboxAdminUsername = 'jmpadmin'
-var labAdminUsername = 'labadmin'
+var defaults = loadJsonContent('./config/amrl-defaults.json')
+
+var jumpboxAdminUsername = defaults.jumpboxAdminUsername
+var labAdminUsername = defaults.labAdminUsername
+var automationManagedIdentityName = defaults.automationManagedIdentityName
+var jumpboxAdminPasswordSecretName = defaults.jumpboxAdminPasswordSecretName
+var labAdminPasswordSecretName = defaults.labAdminPasswordSecretName
+var sshPublicKeySecretName = defaults.sshPublicKeySecretName
+var sshPrivateKeySecretName = defaults.sshPrivateKeySecretName
 
 // 3. Placement model
 // Placement is evaluated in the subscription-scope composition root because its results
@@ -582,6 +587,11 @@ resource adminVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   scope: resourceGroup(foundationResourceGroup)
 }
 
+resource deploymentIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: automationManagedIdentityName
+  scope: resourceGroup(foundationResourceGroup)
+}
+
 // 6. Module orchestration
 // References and dependsOn establish execution dependencies; declaration order alone does not.
 
@@ -621,7 +631,7 @@ module validationEngine 'modules/logic/validation.bicep' = {
 
     networkMode: networkMode
     enableBastion: enableBastion
-    automationManagedIdentityResourceId: automationManagedIdentityResourceId
+    automationManagedIdentityResourceId: deploymentIdentity.id
     subnetIndexMap: subnetIndexMap
     jumpboxAllowedSources: jumpboxAllowedSources
 
@@ -671,7 +681,7 @@ module networkStage 'modules/stages/network-stage.bicep' = {
     networkMode: networkMode
     enableBastion: enableBastion
     bastionSku: bastionSku
-    automationManagedIdentityResourceId: automationManagedIdentityResourceId
+    automationManagedIdentityResourceId: deploymentIdentity.id
 
     addressPrefixes: addressPrefixes
     subnetPrefixesArray: subnetPrefixesArray
@@ -715,13 +725,13 @@ module computeStage 'modules/stages/compute-stage.bicep' = {
     vmAutoDeleteOptions: vmAutoDeleteOptions
 
     jumpboxAdminUsername: jumpboxAdminUsername
-    jumpboxAdminPassword: adminVault.getSecret('jumpboxAdminPassword')
+    jumpboxAdminPassword: adminVault.getSecret(jumpboxAdminPasswordSecretName)
 
     labAdminUsername: labAdminUsername
-    labAdminPassword: adminVault.getSecret('labAdminPassword')
+    labAdminPassword: adminVault.getSecret(labAdminPasswordSecretName)
 
-    sshPublicKey: adminVault.getSecret('sshPublicKey')
-    sshPrivateKey: adminVault.getSecret('sshPrivateKey')
+    sshPublicKey: adminVault.getSecret(sshPublicKeySecretName)
+    sshPrivateKey: adminVault.getSecret(sshPrivateKeySecretName)
   }
 }
 
@@ -760,7 +770,7 @@ module identityStage 'modules/stages/identity-stage.bicep' = {
     usersPerDepartment: usersPerDepartment
 
     labAdminUsername: labAdminUsername
-    labAdminPassword: adminVault.getSecret('labAdminPassword')
+    labAdminPassword: adminVault.getSecret(labAdminPasswordSecretName)
   }
 }
 

@@ -14,14 +14,30 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | `networkMode` | string | Network topology: `hubSpokeFirewall`, `hubSpoke`, or `fullMesh`. See [Network Topology Modes](deployment.md#network-topology-modes). | `"hubSpokeFirewall"` |
 | `enableBastion` | bool | Adds hub-region Bastion alongside public jumpbox access. See [access and retirement behavior](access-and-administration.md#bastion-and-retained-jumpboxes). | `true` |
 | `bastionSku` | string | Azure Bastion SKU: `Basic`, `Standard`, or `Premium`. | `"Standard"` |
-| `automationManagedIdentityResourceId` | string | Required deployment-script identity ID. Applicable brownfield cleanup uses its Network Contributor permissions. See [subscription-level identity setup](manual-preparation.md#managed-identity) and [reconciliation RBAC](deployment.md#rbac-requirements-for-network-reconciliation). | `"/subscriptions/<subscriptionId>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identityName>"` |
-| `foundationResourceGroup` | string | Resource group containing the Key Vault used by the bootstrapper and root Bicep template. | `"amrl-foundation-rg"` |
+| `foundationResourceGroup` | string | Resource group containing the Key Vault and the deployment identity named by the shared defaults, in the deployment subscription. | `"amrl-foundation-rg"` |
 | `keyVaultName` | string | Key Vault name; Bicep resolves required secret values directly with `getSecret()`. | `"amrl-kv-example"` |
 | `tags` | object | Resource tags for organisation and billing | `{"environment": "lab"}` |
 | `regionCount` | integer | Number of regions to deploy across | `2` |
 | `maxVmsPerRegion` | integer | Maximum VMs allowed per region | `2` |
 
-In JSON parameter files, `parameters.prefix.value` supplies the resource naming prefix to Bicep. The sibling `parameters.prefix.metadata.bootstrap` object stores bootstrapper settings for Azure context, foundation location, identity naming, and optional GitHub integration; these are not additional Bicep parameters and do not change the prefix value. Foundation resource group and Key Vault name are top-level Bicep parameters. See [Using `-ParameterFile`](bootstrapper.md#using-parameterfile) and [Subscription-Level Setup Values](bootstrapper.md#subscription-level-setup-values) for field requirements and behavior.
+In JSON parameter files, `parameters.prefix.value` supplies the resource naming prefix to Bicep. The sibling `parameters.prefix.metadata.bootstrap` object stores bootstrapper settings for Azure context and optional GitHub integration; these are not additional Bicep parameters and do not change the prefix value. Foundation resource group and Key Vault name are top-level Bicep parameters. Bootstrapper foundation and subscription deployment locations are derived from `regionIndexMap`, not metadata. See [Using `-ParameterFile`](bootstrapper.md#using-parameterfile) and [Subscription-Level Setup Values](bootstrapper.md#subscription-level-setup-values) for field requirements and behavior.
+
+## Shared AMRL Defaults
+
+[config/amrl-defaults.json](../config/amrl-defaults.json) is the single source of truth for AMRL-owned names. Bicep reads it at compile time with `loadJsonContent()`; the bootstrapper reads it with `ConvertFrom-Json`. These values are not deployment parameters, bootstrap metadata, or GitHub Actions variables.
+
+| Default Key | Value | Purpose |
+|---|---|---|
+| `jumpboxAdminUsername` | `jmpadmin` | Jumpbox administrator username |
+| `labAdminUsername` | `labadmin` | Administrator username for non-jumpbox roles |
+| `automationManagedIdentityName` | `amrl-deployment-mi` | Deployment-script identity in `foundationResourceGroup` |
+| `githubAppDisplayName` | `AMRL-github-actions` | Fixed Entra app display name used by optional GitHub OIDC setup |
+| `jumpboxAdminPasswordSecretName` | `jumpboxAdminPassword` | Jumpbox password secret |
+| `labAdminPasswordSecretName` | `labAdminPassword` | Shared non-jumpbox administrator password secret |
+| `sshPublicKeySecretName` | `sshPublicKey` | Linux public-key secret |
+| `sshPrivateKeySecretName` | `sshPrivateKey` | Jumpbox private-key secret |
+
+Only nonsecret configuration belongs in this file. Changing a name does not rename existing identities or secrets, or rotate credentials on retained VMs. Review existing resources and credentials before changing these repository-owned defaults.
 
 ## Region and Network Configuration
 
@@ -130,32 +146,42 @@ For direct jumpbox access, ensure `jumpboxAllowedSources` includes your approved
 
 ## Credentials and Secrets
 
-All credentials are stored in Azure Key Vault during subscription-level setup and referenced by name during Bicep setup, not embedded in parameter files. See [Key Vault Setup](manual-preparation.md#key-vault-setup) for creating or reusing the vault and secrets.
+Passwords and SSH keys are stored in Azure Key Vault during subscription-level setup. The root Bicep template retrieves them directly using `adminVault.getSecret(...)` and passes them to secure module parameters. Parameter files contain neither secret values nor per-secret Key Vault reference objects. See [Key Vault Setup](manual-preparation.md#key-vault-setup) for creating or reusing the vault and secrets.
 
-| Parameter | Type | Key Vault Secret | Purpose |
-|---|---|---|---|
-| `jumpboxAdminUsername` | string | N/A (local username) | Local admin account on jumpbox VMs |
-| `jumpboxAdminPassword` | reference | `jumpboxAdminPassword` | Password for jumpbox local admin |
-| `labAdminPassword` | reference | `labAdminPassword` | Shared local-admin password for non-jumpbox VMs and the domain-join credential |
-| `sshPublicKey` | reference | `sshPublicKey` | Public key for Linux VM creation |
-| `sshPrivateKey` | reference | `sshPrivateKey` | Private key deployed to jumpboxes |
+AMRL owns the usernames and secret names; they are not configurable deployment parameters.
 
-All non-jumpbox VM roles use the shared local username `labAdminUsername`, currently fixed to `labadmin` in `main.bicep`, and the `labAdminPassword` secret. There are no separate server and client administrator credentials.
+| VM Roles | Fixed Username | Password Secret |
+|---|---|---|
+| Jumpboxes | `jmpadmin` | `jumpboxAdminPassword` |
+| All non-jumpbox roles | `labadmin` | `labAdminPassword` |
 
-Use a matching SSH key pair. See [SSH Key Setup](manual-preparation.md#ssh-key-setup) for subscription-level upload instructions; Bicep parameters reference the stored secrets.
+| Required Key Vault Secret | Purpose |
+|---|---|
+| `jumpboxAdminPassword` | Password for the jumpbox local administrator |
+| `labAdminPassword` | Shared administrator password for non-jumpbox VMs and the domain-join credential |
+| `sshPublicKey` | Public key for Linux VM creation |
+| `sshPrivateKey` | Private key deployed to jumpboxes |
 
-**Example Parameter File Reference**:
+Use a matching SSH key pair. See [SSH Key Setup](manual-preparation.md#ssh-key-setup) for subscription-level upload instructions.
+
+The required top-level `foundationResourceGroup` and `keyVaultName` parameters identify the vault in the target subscription. The vault must enable template deployment, and the deploying identity must have permission to retrieve secrets through template deployment.
+
+**Vault Parameters** (excerpt from the parameter file):
 
 ```json
-"jumpboxAdminPassword": {
-  "reference": {
-    "keyVault": {
-      "id": "/subscriptions/<subscription-id>/resourceGroups/<foundation-rg>/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
+{
+  "parameters": {
+    "foundationResourceGroup": {
+      "value": "amrl-foundation-rg"
     },
-    "secretName": "jumpboxAdminPassword"
+    "keyVaultName": {
+      "value": "<KEYVAULT_NAME>"
+    }
   }
 }
 ```
+
+The bootstrapper persists the resolved vault parameters after preparation or foundation recovery. It derives the deployment identity resource ID from the selected subscription, `foundationResourceGroup`, and shared identity-name default. It rejects retired identity parameters, metadata-based foundation/identity names, and per-secret reference parameters; no backward-compatibility migration is supported. Other bootstrap metadata remains in use for Azure context, locations, and optional GitHub configuration.
 
 ## Identity Configuration
 

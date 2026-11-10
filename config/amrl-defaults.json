@@ -1,0 +1,13 @@
+{
+  "jumpboxAdminUsername": "jmpadmin",
+  "labAdminUsername": "labadmin",
+
+  "automationManagedIdentityName": "amrl-deployment-mi",
+  "githubAppDisplayName": "AMRL-github-actions",
+
+  "jumpboxAdminPasswordSecretName": "jumpboxAdminPassword",
+  "labAdminPasswordSecretName": "labAdminPassword",
+
+  "sshPublicKeySecretName": "sshPublicKey",
+  "sshPrivateKeySecretName": "sshPrivateKey"
+}

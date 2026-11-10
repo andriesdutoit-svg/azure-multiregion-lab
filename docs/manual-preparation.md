@@ -26,7 +26,7 @@ Install Azure CLI with Bicep available and `ssh-keygen`. You need access to the 
 
 | Step | Action | Required State / Result |
 |---|---|---|
-| 1 | [Configure deployment parameters and public IP](#bicep-setup) | Use the resolved resource IDs and verified inventory. |
+| 1 | [Configure deployment parameters and public IP](#bicep-setup) | Use the foundation resource group, vault name, and verified inventory. Identity naming comes from shared defaults. |
 | 2 | Optional: [set GitHub Actions secrets and variables](ci-cd-validation.md#github-actions-secrets-and-variables) | Publish deployment values after OIDC identity/access setup. |
 | 3 | Continue with [Bicep Deployment](deployment.md#deployment-workflow) | Check availability/quota, build/lint, validate, review `what-if`, deploy, and inspect results. |
 
@@ -55,16 +55,17 @@ $azureContext | Select-Object @{Name='Account';Expression={$_.user.name}}, id, t
 
 If the required tenant is unavailable, use `az login --tenant "<target-tenant-id>" --output none`, then repeat selection and verification. The portal also lists IDs under Subscriptions and Microsoft Entra ID Overview.
 
-Initialize subscription-level setup values. The foundation location is independent of lab placement; the vault name must be globally unique:
+Initialize subscription-level setup values. The foundation location is independent of lab placement; the vault name must be globally unique. Manual preparation keeps this explicit location choice. Unlike this manual path, the bootstrapper automatically uses the first `regionIndexMap` entry by numeric index and does not prompt for a foundation location:
 
 ```powershell
 az account list-locations --query "[].{name:name,displayName:displayName}" -o table
 $foundationRg = 'amrl-foundation-rg'
 $foundationLocation = '<foundation-region>'
 $vaultName = '<globally-unique-vault-name>'
-$automationIdentityName = 'amrl-deployment-mi'
+$amrlDefaults = Get-Content -Raw -LiteralPath '.\config\amrl-defaults.json' | ConvertFrom-Json
+$automationIdentityName = $amrlDefaults.automationManagedIdentityName
 $githubRepository = '<GitHub-owner>/<repository-name>'
-$appDisplayName = 'AMRL-github-actions'
+$appDisplayName = $amrlDefaults.githubAppDisplayName
 if (@($foundationLocation, $vaultName) | Where-Object { [string]::IsNullOrWhiteSpace($_) -or $_ -match '[<>]' }) {
   throw 'Choose an actual foundation region and globally unique vault name before continuing.'
 }
@@ -121,11 +122,20 @@ az role assignment create `
   --scope "/subscriptions/$($azureContext.id)" --output none
 ```
 
-Use `$automationIdentity.id` in the deployment parameter file. The identity is used when network reconciliation runs, not for every VM guest operation. See [Reconciliation RBAC](deployment.md#rbac-requirements-for-network-reconciliation) for its operational scope.
+Create or reuse the identity with the shared default name in `$foundationRg`. Bicep derives its resource ID from the selected subscription, `foundationResourceGroup`, and that name; do not put the name or ID in deployment parameters or bootstrap metadata. The identity is used when network reconciliation runs, not for every VM guest operation. See [Reconciliation RBAC](deployment.md#rbac-requirements-for-network-reconciliation) for its operational scope.
 
 ### Key Vault Setup
 
-Parameter files contain the top-level `foundationResourceGroup` and `keyVaultName`, not secret values or per-secret Key Vault references. Bicep retrieves the required secrets directly from Key Vault; the vault must allow template deployment. Required secret names are `sshPublicKey`, `sshPrivateKey`, `jumpboxAdminPassword`, and `labAdminPassword`. The shared `labAdminPassword` is used with the template-defined `labAdminUsername` for all non-jumpbox VM roles and for domain join.
+Parameter files contain the top-level `foundationResourceGroup` and `keyVaultName`, not secret values or per-secret Key Vault references. Bicep retrieves the required secrets directly using `adminVault.getSecret(...)` and passes them to secure module parameters; the vault must allow template deployment.
+
+AMRL owns these usernames and secret names in [shared defaults](configuration-parameters-reference.md#shared-amrl-defaults); they are not configurable deployment parameters. The table shows the repository defaults; the commands below read the actual names from `$amrlDefaults` loaded earlier:
+
+| Required Key Vault Secret | Purpose |
+|---|---|
+| `jumpboxAdminPassword` | Password for the fixed jumpbox administrator `jmpadmin` |
+| `labAdminPassword` | Shared password for the fixed administrator `labadmin` on all non-jumpbox VM roles and for domain join |
+| `sshPublicKey` | Public key for Linux VM creation |
+| `sshPrivateKey` | Matching private key deployed to jumpboxes |
 
 #### Create Or Reuse Key Vault
 
@@ -151,7 +161,7 @@ az role assignment create --assignee-object-id $userObjectId `
   --assignee-principal-type User --role "Key Vault Secrets Officer" --scope $kvId --output none
 ```
 
-Allow time for RBAC propagation before writing secrets; do not recreate the vault or broaden permissions merely to bypass propagation delays.
+Allow time for RBAC propagation before writing secrets; do not recreate the vault or broaden permissions merely to bypass propagation delays. `$kvId` is used for role-assignment scopes, not as a deployment parameter. The deploying identity also needs `Microsoft.KeyVault/vaults/deploy/action` on the vault or a parent scope for template secret retrieval; Key Vault data-plane secret access alone does not grant that permission.
 
 #### SSH Key Setup
 
@@ -164,9 +174,9 @@ if (-not (Test-Path -LiteralPath $sshKeyPath)) {
   ssh-keygen -t ed25519 -f $sshKeyPath
   if ($LASTEXITCODE -ne 0) { throw 'SSH key generation failed.' }
 }
-az keyvault secret set --vault-name $vaultName --name sshPublicKey `
+az keyvault secret set --vault-name $vaultName --name $amrlDefaults.sshPublicKeySecretName `
   --value ((Get-Content "$sshKeyPath.pub" -Raw).Trim()) --output none
-az keyvault secret set --vault-name $vaultName --name sshPrivateKey --file $sshKeyPath --output none
+az keyvault secret set --vault-name $vaultName --name $amrlDefaults.sshPrivateKeySecretName --file $sshKeyPath --output none
 ```
 
 Keep passphrases out of scripts and chat; a protected key must be unlocked when SSH uses it, and AMRL does not distribute the passphrase. Keep `--output none` on secret-writing commands so the response does not print the private key.
@@ -176,7 +186,7 @@ Keep passphrases out of scripts and chat; a protected key must be unlocked when 
 Set distinct, strong passwords using masked prompts. Run interactively on a protected workstation without transcripts or diagnostic tracing; the CLI receives temporary plaintext in process memory/arguments:
 
 ```powershell
-foreach ($secretName in @('jumpboxAdminPassword', 'labAdminPassword')) {
+foreach ($secretName in @($amrlDefaults.jumpboxAdminPasswordSecretName, $amrlDefaults.labAdminPasswordSecretName)) {
   $securePassword = Read-Host "Password for $secretName" -AsSecureString
   try {
     $passwordValue = [System.Net.NetworkCredential]::new('', $securePassword).Password
@@ -232,7 +242,7 @@ $deploymentLocation = 'westeurope'
 
 ### Configure Deployment Parameters
 
-Before this step, `$kvId` must identify the configured vault and `$automationIdentity.id` must identify the configured managed identity. Both are produced by earlier steps.
+Before this step, `$foundationRg` and `$vaultName` must identify the configured vault in the selected subscription. The identity named by `$amrlDefaults.automationManagedIdentityName` must also exist in `$foundationRg`. These prerequisites come from the earlier setup steps. Resource IDs are used for RBAC and derived by Bicep, not supplied as identity or secret-reference parameters.
 
 #### Public IPv4 Address
 
@@ -259,11 +269,12 @@ if (-not (Test-Path -LiteralPath $parameterFile)) {
 $parameters = Get-Content -Raw -LiteralPath $parameterFile | ConvertFrom-Json
 $parameters.parameters.foundationResourceGroup.value = $foundationRg
 $parameters.parameters.keyVaultName.value = $vaultName
-$parameters.parameters.automationManagedIdentityResourceId.value = $automationIdentity.id
 $parameters.parameters.jumpboxAllowedSources.value = @("$publicIp/32")
 $parameters | ConvertTo-Json -Depth 30 |
   Set-Content -LiteralPath $parameterFile -Encoding UTF8
 ```
+
+Use the current parameter-file schema. Do not add identity-name/ID parameters, password/SSH-key parameters, `reference` objects, or foundation/identity names in bootstrap metadata. The foundation group belongs in the top-level `foundationResourceGroup` parameter; the identity name comes from shared defaults. The bootstrapper rejects retired inputs without migrating them. Other bootstrap metadata remains in use for Azure context, locations, and GitHub configuration.
 
 For a fresh lab, set `existingRegions` and `existingVmPlacements` to empty arrays and choose the lab prefix, regions, and VM counts. Do not carry another subscription's inventory into the new one. Keep at least one DC and jumpbox; dedicated file services need a Windows server target. Review images, sizes, and capacity in [Configuration Parameters Reference](configuration-parameters-reference.md). Secret values stay in Key Vault and are resolved by Bicep; do not add them to the parameter file.
 
@@ -276,7 +287,7 @@ For GitHub Actions, publish the [deployment secrets and variables](ci-cd-validat
 | Value | Retrieval |
 |---|---|
 | Subscription / tenant | `$azureContext.id` / `$azureContext.tenantId` after account selection |
-| Vault resource ID | `az keyvault show --name $vaultName --resource-group $foundationRg --query id -o tsv` |
+| Vault resource ID (RBAC scope only) | `az keyvault show --name $vaultName --resource-group $foundationRg --query id -o tsv` |
 | User object ID | `az ad signed-in-user show --query id -o tsv` |
 | Identity resource / principal IDs | `$automationIdentity.id` / `$automationIdentity.principalId` from identity create/show |
 | App client / registration object IDs | `$app.appId` / `$app.id` from app create/show; these are different IDs |
@@ -287,5 +298,7 @@ For GitHub Actions, publish the [deployment secrets and variables](ci-cd-validat
 | Value | Retrieval |
 |---|---|
 | Parameter file / deployment metadata location | `$parameterFile` / `$deploymentLocation` from [Bicep Setup](#bicep-setup) |
+| `foundationResourceGroup` / `keyVaultName` | `$foundationRg` / `$vaultName` from [Azure Context And Foundation](#azure-context-and-foundation) |
+| Shared identity, administrator, and secret names | `$amrlDefaults` loaded from [config/amrl-defaults.json](../config/amrl-defaults.json); these are not parameter-file inputs |
 | Git branch for CI deployment | `git branch --show-current` |
 | Public IPv4 | [Public IPv4 Address](#public-ipv4-address) |

@@ -141,13 +141,13 @@ Reconciliation uses `existingRegions` and framework naming conventions to identi
 
 ## RBAC Requirements for Network Reconciliation
 
-AMRL uses an Azure Deployment Script to attempt removal of candidate spoke-to-spoke VNet peerings and disabled framework-owned Bastion resources under the conditions above. The script's identity must be valid and authorized whenever the script is scheduled to run, even if no cleanup targets are found. `automationManagedIdentityResourceId` remains a required template input; its missing/malformed identity finding is active only when reconciliation is scheduled.
+AMRL uses an Azure Deployment Script to attempt removal of candidate spoke-to-spoke VNet peerings and disabled framework-owned Bastion resources under the conditions above. The script's identity must be valid and authorized whenever the script is scheduled to run, even if no cleanup targets are found. Bicep resolves the existing identity using the deployment subscription, `foundationResourceGroup`, and the identity name in [shared defaults](configuration-parameters-reference.md#shared-amrl-defaults); its resource ID is passed internally to the network modules.
 
-Create a User Assigned Managed Identity, grant it the **Network Contributor** role, and supply the identity resource ID through the `automationManagedIdentityResourceId` parameter.
+Create the User Assigned Managed Identity with the shared default name in `foundationResourceGroup` and grant it the **Network Contributor** role. No identity name or resource-ID deployment parameter is required.
 
 ### Managed Identity
 
-Follow [Managed Identity](manual-preparation.md#managed-identity) in subscription-level preparation to create or retrieve the identity. Pass its resource ID through `automationManagedIdentityResourceId` during Bicep setup.
+Follow [Managed Identity](manual-preparation.md#managed-identity) in subscription-level preparation to create or retrieve the identity. The bootstrapper reads the same defaults file as Bicep, so both resolve the same identity without duplicate naming configuration.
 
 ### Required Role Assignment
 

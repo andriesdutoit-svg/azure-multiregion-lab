@@ -16,12 +16,7 @@
         "bootstrap": {
           "azureTenantId": "<AZURE_TENANT_ID>",
           "azureSubscriptionId": "<AZURE_SUBSCRIPTION_ID>",
-          "deploymentLocation": "westeurope",
-          "automationManagedIdentityName": "amrl-deployment-mi",
-          "githubRepository": "andriesdutoit-svg/azure-multiregion-lab",
-          "githubAppDisplayName": "AMRL-github-actions",
-          "foundationLocation": "southafricanorth",
-          "foundationLocationSource": "regionIndexMap"
+          "githubRepository": "andriesdutoit-svg/azure-multiregion-lab"
         }
       }
     },
@@ -89,10 +84,6 @@
 
     "bastionSku": {
       "value": "Standard"
-    },
-
-    "automationManagedIdentityResourceId": {
-      "value": "<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>"
     },
 
     "foundationResourceGroup": {

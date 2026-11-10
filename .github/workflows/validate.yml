@@ -57,7 +57,6 @@ jobs:
           sed -i "s|<AZURE_TENANT_ID>|${{ secrets.AZURE_TENANT_ID }}|g" main.parameters.demo.json
           sed -i "s|<AZURE_SUBSCRIPTION_ID>|${{ secrets.AZURE_SUBSCRIPTION_ID }}|g" main.parameters.demo.json
           sed -i "s|<KEYVAULT_NAME>|${{ vars.KEYVAULT_NAME }}|g" main.parameters.demo.json
-          sed -i "s|<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>|${{ vars.AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID }}|g" main.parameters.demo.json
           sed -i "s|<YOUR_PUBLIC_IP>|$YOUR_PUBLIC_IP|g" main.parameters.demo.json
     
       - name: Verify Placeholder Replacement
