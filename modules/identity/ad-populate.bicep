@@ -11,9 +11,13 @@ targetScope = 'resourceGroup'
 param dcVmName string
 param domainName string
 param directoryModel string
+@secure()
+param backupServicePassword string
+@secure()
+param monitoringServicePassword string
 param domainControllerNames array
 
-// Population settings and optional file-service groups
+// Department/user settings; share-permission groups are part of the directory model and are always created.
 param sysAdminDepartment object
 param additionalDepartments object
 param departmentCount int
@@ -87,6 +91,18 @@ resource populateDirectory 'Microsoft.Compute/virtualMachines/runCommands@2023-0
       {
         name: 'ReconciliationToken'
         value: reconciliationToken
+      }
+
+    ]
+  // Keep service-account passwords in Run Command's protected collection rather than ordinary parameters.
+    protectedParameters: [
+      {
+          name: 'BackupServicePassword'
+          value: backupServicePassword
+      }
+      {
+          name: 'MonitoringServicePassword'
+          value: monitoringServicePassword
       }
     ]
   }

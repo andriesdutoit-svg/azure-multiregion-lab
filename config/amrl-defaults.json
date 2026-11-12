@@ -60,7 +60,19 @@
       "clientAdministration": "Client Administration",
       "windowsLaps": "Windows LAPS",
       "domainControllerWinRM": "Domain Controller WinRM"
+    },
+
+    "serviceAccounts": {
+    "backup": {
+        "name": "svc_backup",
+        "group": "Backup_Operators",
+        "passwordSecretName": "svc-backup-password"
+    },
+    "monitoring": {
+        "name": "svc_monitoring",
+        "group": "Monitoring_Operators",
+        "passwordSecretName": "svc-monitoring-password"
     }
   }
-
+  }
 }

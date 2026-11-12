@@ -34,7 +34,7 @@ Use [Bicep Setup](manual-preparation.md#bicep-setup) to prepare the parameter fi
 |---|---|
 | `network` | Creates or reuses regional networking and peerings. |
 | `compute` | Creates missing DCs, jumpboxes, and workload VMs. Target VNets and role subnets must already exist. |
-| `identity` | Configures AD, GPOs, workload domain membership, enabled file/desktop services, and WAC when enabled. Can create missing workloads; control-plane DCs must exist. |
+| `identity` | Configures AD, GPOs, and workload domain membership; always provisions departmental file shares; installs Linux client desktops for modeled Linux clients; and installs WAC when enabled. Can create missing workloads; control-plane DCs must exist. |
 | `all` | Runs the complete workflow. |
 
 Use `stage=all` when both networking and VM creation are needed. For separate runs, use `network -> compute -> identity`, keeping declared inventory current between deployments. Stage flags select resources, but shared placement, validation, and module contracts are still evaluated.

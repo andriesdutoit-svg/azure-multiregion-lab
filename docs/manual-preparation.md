@@ -128,14 +128,25 @@ Create or reuse the identity with the shared default name in `$foundationRg`. Bi
 
 Parameter files contain the top-level `foundationResourceGroup` and `keyVaultName`, not secret values or per-secret Key Vault references. Bicep retrieves the required secrets directly using `adminVault.getSecret(...)` and passes them to secure module parameters; the vault must allow template deployment.
 
+The guest scripts are invoked through Azure VM Run Command. Bicep's `@secure()` marker protects a module input, but it does not automatically protect a value placed in a Run Command's ordinary `parameters` list. The service-account passwords use Run Command's `protectedParameters`; the lab administrator password is currently passed through ordinary `parameters` for forest creation, replica promotion, and Windows/Linux domain joins. The scripts do not log the supplied password, but access to deployments and Run Command configuration should still be restricted accordingly.
+
 AMRL owns these usernames and secret names in [shared defaults](configuration-parameters-reference.md#shared-amrl-defaults); they are not configurable deployment parameters. The table shows the repository defaults; the commands below read the actual names from `$amrlDefaults` loaded earlier:
 
 | Required Key Vault Secret | Purpose |
 |---|---|
 | `jumpboxAdminPassword` | Password for the fixed jumpbox administrator `jmpadmin` |
-| `labAdminPassword` | Shared password for the fixed administrator `labadmin` on all non-jumpbox VM roles and for domain join |
+| `labAdminPassword` | Local password for the fixed Windows administrator `labadmin` on non-jumpbox VMs; also used for forest DSRM, replica promotion, and Windows/Linux domain-join operations |
+| `svc-backup-password` | Password supplied when creating the backup AD service account if it is absent |
+| `svc-monitoring-password` | Password supplied when creating the monitoring AD service account if it is absent |
 | `sshPublicKey` | Public key for Linux VM creation |
 | `sshPrivateKey` | Matching private key deployed to jumpboxes |
+
+The bootstrapper checks for and recovers soft-deleted versions of managed password and SSH key secrets. Manual preparation does not; before setting any of these managed secret names, check for and recover a soft-deleted value explicitly:
+
+```powershell
+az keyvault secret list-deleted --vault-name $vaultName --query "[].name" -o table
+az keyvault secret recover --vault-name $vaultName --name '<secret-name>' --output none
+```
 
 #### Create Or Reuse Key Vault
 
@@ -179,11 +190,11 @@ az keyvault secret set --vault-name $vaultName --name $amrlDefaults.sshPublicKey
 az keyvault secret set --vault-name $vaultName --name $amrlDefaults.sshPrivateKeySecretName --file $sshKeyPath --output none
 ```
 
-Keep passphrases out of scripts and chat; a protected key must be unlocked when SSH uses it, and AMRL does not distribute the passphrase. Keep `--output none` on secret-writing commands so the response does not print the private key.
+Keep passphrases out of scripts and chat; a protected key must be unlocked when SSH uses it, and AMRL does not distribute the passphrase. Keep `--output none` on secret-writing commands so the response does not print the private key. The bootstrapper preserves a complete active Key Vault pair even if the local copy is missing, recovers soft-deleted SSH secrets when both pair members are available, and creates a new pair only when neither active nor recoverable Key Vault secrets exist. It stops rather than replace an incomplete Key Vault pair or a local pair whose public key differs from Key Vault. When local key files are absent or incomplete but Key Vault has both secrets, Key Vault is kept unchanged; the private-key secret itself is not downloaded to validate its correspondence with the public key.
 
 #### Admin Password Setup
 
-Set distinct, strong passwords using masked prompts. Run interactively on a protected workstation without transcripts or diagnostic tracing; the CLI receives temporary plaintext in process memory/arguments:
+Set distinct, strong passwords of at least 16 characters using masked prompts, matching the bootstrapper's interactive validation. Run interactively on a protected workstation without transcripts or diagnostic tracing; the CLI receives temporary plaintext in process memory/arguments:
 
 ```powershell
 foreach ($secretName in @($amrlDefaults.jumpboxAdminPasswordSecretName, $amrlDefaults.labAdminPasswordSecretName)) {
@@ -200,7 +211,29 @@ foreach ($secretName in @($amrlDefaults.jumpboxAdminPasswordSecretName, $amrlDef
 az keyvault secret list --vault-name $vaultName --query "[].{name:name,enabled:attributes.enabled}" -o table
 ```
 
-These secrets initialize local VM accounts, not generated AD users. Generated users receive independent random passwords and require a separate secure reset/delivery process. If credentials were exposed, rotate both vault secrets and credentials on retained guests; updating the vault alone does not rotate existing VM passwords or authorized SSH keys.
+These secrets initialize local VM accounts, not generated AD users. Generated users receive independent random passwords and require a separate secure reset/delivery process. Creating or recovering a missing admin secret does not reconcile an existing local VM account or AD administrator password to the secret; updating the vault alone does not rotate existing VM passwords or authorized SSH keys. Align existing account credentials separately when required.
+
+#### Service Account Password Setup
+
+Create both service-account secrets before deploying `stage=identity` or `stage=all`. The identity stage uses each value only when its corresponding AD account is missing; existing service-account passwords are not reset to match a new or recovered secret. Enter a distinct strong password of at least 16 characters for each account using the same protected workstation precautions as [Admin Password Setup](#admin-password-setup):
+
+```powershell
+$serviceAccountPasswordSecretNames = @(
+  $amrlDefaults.directory.serviceAccounts.backup.passwordSecretName,
+  $amrlDefaults.directory.serviceAccounts.monitoring.passwordSecretName
+)
+foreach ($secretName in $serviceAccountPasswordSecretNames) {
+  $securePassword = Read-Host "Password for $secretName" -AsSecureString
+  try {
+    $passwordValue = [System.Net.NetworkCredential]::new('', $securePassword).Password
+    az keyvault secret set --vault-name $vaultName --name $secretName --value $passwordValue --output none
+  }
+  finally {
+    $passwordValue = $null
+    $securePassword.Dispose()
+  }
+}
+```
 
 #### GitHub Actions Secret Access
 

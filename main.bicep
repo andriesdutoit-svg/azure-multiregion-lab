@@ -144,6 +144,9 @@ var labAdminPasswordSecretName = defaults.labAdminPasswordSecretName
 var sshPublicKeySecretName = defaults.sshPublicKeySecretName
 var sshPrivateKeySecretName = defaults.sshPrivateKeySecretName
 
+var backupServicePasswordSecretName = defaults.directory.serviceAccounts.backup.passwordSecretName
+var monitoringServicePasswordSecretName = defaults.directory.serviceAccounts.monitoring.passwordSecretName
+
 // 3. Placement model
 // Placement is evaluated in the subscription-scope composition root because its results
 // drive deployment-time loops, scopes, names, and conditions.
@@ -473,7 +476,7 @@ var addressPrefixes = [
 ]
 
 // Each region gets its own /16 (10.<regionIndex>.0.0/16), and each role subnet is a /24 carved
-// out of that /16 using its octet from subnetIndexMap (e.g. subnetIndexMap.dc = 2 -> 10.x.2.0/24).
+// out of that /16 using its octet from subnetIndexMap (the defaults use dc = 3 -> 10.x.3.0/24).
 var subnetPrefixesArray = [
   for region in regionKeys: {
     firewall: '10.${regionIndexMap[region]}.${subnetIndexMap.firewall}.0/24'
@@ -766,6 +769,9 @@ module identityStage 'modules/stages/identity-stage.bicep' = {
 
     labAdminUsername: labAdminUsername
     labAdminPassword: adminVault.getSecret(labAdminPasswordSecretName)
+
+    backupServicePassword: adminVault.getSecret(backupServicePasswordSecretName)
+    monitoringServicePassword: adminVault.getSecret(monitoringServicePasswordSecretName)
   }
 }
 

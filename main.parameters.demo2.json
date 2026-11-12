@@ -1,0 +1,216 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "stage": {
+      "value": "all"
+    },
+    "validationMode": {
+      "value": "enforce"
+    },
+    "prefix": {
+      "value": "DEMO2",
+      "metadata": {
+        "bootstrap": {
+          "azureTenantId": "5f5f1828-e8c1-437e-9da5-9010a795fb05",
+          "azureSubscriptionId": "dbdbac44-21b7-4f4c-9c9d-c5082377d80f",
+          "githubRepository": "andriesdutoit-svg/azure-multiregion-lab"
+        }
+      }
+    },
+    "tags": {
+      "value": {
+        "environment": "lab"
+      }
+    },
+    "regionIndexMap": {
+      "value": {
+        "southindia": 1,
+        "uaenorth": 2,
+        "australiaeast": 3,
+        "australiasoutheast": 4,
+        "japaneast": 5,
+        "spaincentral": 6,
+        "denmarkeast": 7,
+        "swedencentral": 8,
+        "koreacentral": 9,
+        "canadaeast": 10,
+        "southafricanorth": 11,
+        "indonesiacentral": 12,
+        "polandcentral": 13,
+        "mexicocentral": 14,
+        "eastasia": 15,
+        "koreasouth": 16,
+        "austriaeast": 17,
+        "westcentralus": 18,
+        "israelcentral": 19,
+        "newzealandnorth": 20,
+        "chilecentral": 21,
+        "japanwest": 22,
+        "westus2": 23,
+        "centralindia": 24,
+        "malaysiawest": 25,
+        "belgiumcentral": 26
+      }
+    },
+    "regionCount": {
+      "value": 3
+    },
+    "maxVmsPerRegion": {
+      "value": 2
+    },
+    "existingRegions": {
+      "value": []
+    },
+    "existingVmPlacements": {
+      "value": []
+    },
+    "networkMode": {
+      "value": "fullMesh"
+    },
+    "enableBastion": {
+      "value": false
+    },
+    "bastionSku": {
+      "value": "Standard"
+    },
+    "foundationResourceGroup": {
+      "value": "demo-foundation-rg"
+    },
+    "keyVaultName": {
+      "value": "amrl-kv-dbdbac44-3"
+    },
+    "subnetIndexMap": {
+      "value": {
+        "firewall": 0,
+        "bastion": 1,
+        "jumpbox": 2,
+        "dc": 3,
+        "server": 4,
+        "client": 5,
+        "test": 6
+      }
+    },
+    "jumpboxAllowedSources": {
+      "value": [
+        "196.210.54.219/32"
+      ]
+    },
+    "vmCounts": {
+      "value": {
+        "dc": 1,
+        "jumpbox": 1,
+        "windowsServer": 1,
+        "windowsClient": 1,
+        "linuxServer": 1,
+        "linuxClient": 1
+      }
+    },
+    "vmSizes": {
+      "value": {
+        "dc": "Standard_B2ls_v2",
+        "jumpbox": "Standard_B2ls_v2",
+        "windowsServer": "Standard_B2ls_v2",
+        "windowsClient": "Standard_B2ls_v2",
+        "linuxServer": "Standard_B2ls_v2",
+        "linuxClient": "Standard_B2ls_v2"
+      }
+    },
+    "osDisks": {
+      "value": {
+        "dc": {
+          "storageAccountType": "Premium_LRS",
+          "diskSizeGB": 128
+        },
+        "jumpbox": {
+          "storageAccountType": "StandardSSD_LRS",
+          "diskSizeGB": 128
+        },
+        "windowsServer": {
+          "storageAccountType": "Premium_LRS",
+          "diskSizeGB": 128
+        },
+        "windowsClient": {
+          "storageAccountType": "StandardSSD_LRS",
+          "diskSizeGB": 128
+        },
+        "linuxServer": {
+          "storageAccountType": "Premium_LRS",
+          "diskSizeGB": 128
+        },
+        "linuxClient": {
+          "storageAccountType": "StandardSSD_LRS",
+          "diskSizeGB": 128
+        }
+      }
+    },
+    "windowsServerImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsServer",
+        "offer": "WindowsServer",
+        "sku": "2022-datacenter-g2",
+        "version": "latest"
+      }
+    },
+    "windowsClientImage": {
+      "value": {
+        "publisher": "MicrosoftWindowsDesktop",
+        "offer": "windows-10",
+        "sku": "win10-22h2-ent-g2",
+        "version": "latest"
+      }
+    },
+    "ubuntuImage": {
+      "value": {
+        "publisher": "Canonical",
+        "offer": "0001-com-ubuntu-server-jammy",
+        "sku": "22_04-lts-gen2",
+        "version": "latest"
+      }
+    },
+    "vmAutoDeleteOptions": {
+      "value": {
+        "nic": true,
+        "publicIp": true,
+        "osDisk": true
+      }
+    },
+    "enableWindowsAdminCenter": {
+      "value": true
+    },
+    "useDedicatedWacHost": {
+      "value": true
+    },
+    "domainName": {
+      "value": "amrl.lab"
+    },
+    "sysAdminDepartment": {
+      "value": {
+        "Information Technology": "ICT"
+      }
+    },
+    "additionalDepartments": {
+      "value": {
+        "Finance": "FIN",
+        "Human Resources": "HR",
+        "Sales": "SAL",
+        "Engineering": "ENG",
+        "Operations": "OPS",
+        "Marketing": "MAR",
+        "Legal": "LEG",
+        "Procurement": "PRO",
+        "Research": "RES",
+        "Support": "SUP"
+      }
+    },
+    "departmentCount": {
+      "value": 5
+    },
+    "usersPerDepartment": {
+      "value": 10
+    },
+    "useDedicatedFileServer": {
+      "value": true
+    }
+  }
+}

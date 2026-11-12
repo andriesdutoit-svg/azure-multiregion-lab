@@ -34,6 +34,12 @@ In JSON parameter files, `parameters.prefix.value` supplies the resource naming 
 | `githubAppDisplayName` | `AMRL-github-actions` | Fixed Entra app display name used by optional GitHub OIDC setup |
 | `jumpboxAdminPasswordSecretName` | `jumpboxAdminPassword` | Jumpbox password secret |
 | `labAdminPasswordSecretName` | `labAdminPassword` | Shared non-jumpbox administrator password secret |
+| `directory.serviceAccounts.backup.name` | `svc_backup` | Backup service account created in the AD `ServiceAccounts` OU when absent |
+| `directory.serviceAccounts.backup.group` | `Backup_Operators` | Suffix for the global group `GGS_Backup_Operators` |
+| `directory.serviceAccounts.backup.passwordSecretName` | `svc-backup-password` | Key Vault password secret for the backup service account |
+| `directory.serviceAccounts.monitoring.name` | `svc_monitoring` | Monitoring service account created in the AD `ServiceAccounts` OU when absent |
+| `directory.serviceAccounts.monitoring.group` | `Monitoring_Operators` | Suffix for the global group `GGS_Monitoring_Operators` |
+| `directory.serviceAccounts.monitoring.passwordSecretName` | `svc-monitoring-password` | Key Vault password secret for the monitoring service account |
 | `sshPublicKeySecretName` | `sshPublicKey` | Linux public-key secret |
 | `sshPrivateKeySecretName` | `sshPrivateKey` | Jumpbox private-key secret |
 
@@ -150,19 +156,24 @@ Passwords and SSH keys are stored in Azure Key Vault during subscription-level s
 
 AMRL owns the usernames and secret names; they are not configurable deployment parameters.
 
-| VM Roles | Fixed Username | Password Secret |
+| VM Roles | Fixed Username | Guest authentication |
 |---|---|---|
-| Jumpboxes | `jmpadmin` | `jumpboxAdminPassword` |
-| All non-jumpbox roles | `labadmin` | `labAdminPassword` |
+| Windows jumpboxes | `jmpadmin` | `jumpboxAdminPassword` |
+| Windows non-jumpboxes | `labadmin` | `labAdminPassword` |
+| Linux workloads | `labadmin` | `sshPublicKey`; password authentication is disabled |
 
 | Required Key Vault Secret | Purpose |
 |---|---|
 | `jumpboxAdminPassword` | Password for the jumpbox local administrator |
-| `labAdminPassword` | Shared administrator password for non-jumpbox VMs and the domain-join credential |
+| `labAdminPassword` | Local administrator password for non-jumpbox Windows VMs; also used for forest DSRM, replica promotion, and Windows/Linux domain-join operations |
+| `svc-backup-password` | Password supplied when creating the backup AD service account if it is absent |
+| `svc-monitoring-password` | Password supplied when creating the monitoring AD service account if it is absent |
 | `sshPublicKey` | Public key for Linux VM creation |
-| `sshPrivateKey` | Private key deployed to jumpboxes |
+| `sshPrivateKey` | Private key installed on jumpboxes when Linux workloads are modeled |
 
 Use a matching SSH key pair. See [SSH Key Setup](manual-preparation.md#ssh-key-setup) for subscription-level upload instructions.
+
+For existing AD service accounts, a newly created or recovered Key Vault secret does not reset the account password. Existing service-account passwords are retained; only configured group membership is reconciled. Existing VM and AD administrator passwords are likewise not rotated merely by changing or recovering their Key Vault secret.
 
 The required top-level `foundationResourceGroup` and `keyVaultName` parameters identify the vault in the target subscription. The vault must enable template deployment, and the deploying identity must have permission to retrieve secrets through template deployment.
 

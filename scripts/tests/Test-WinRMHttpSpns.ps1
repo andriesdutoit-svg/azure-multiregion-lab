@@ -1,5 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
+# Parse and extract the guest reconciliation function, then replace Windows/AD commands with fakes.
+# These tests verify bounded retries, duplicate-safe SPN creation, and stage dependency wiring without a domain.
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $scriptPath = Join-Path $repoRoot 'modules/identity/scripts/Reconcile-WinRMHttpSpns.ps1'
 $tokens = $null

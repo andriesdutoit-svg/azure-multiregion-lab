@@ -198,8 +198,8 @@ var winRmRules = [
 ]
 
 // 2.2 Role policies
-// DCs combine basic/advanced AD services and RDP rules. Servers combine SSH, RDP, and
-// basic AD rules; clients combine SSH and RDP rules. Jumpboxes receive the approved-source RDP rule.
+// DCs combine basic/advanced AD services and RDP rules. Servers combine SSH, RDP, basic AD,
+// and WinRM rules; clients combine SSH, RDP, and WinRM rules. Jumpboxes receive approved-source RDP.
 // These are managed custom inbound rules, not a complete description of Azure's default NSG rules.
 // Bastion enablement does not replace the jumpbox rule or alter retained jumpbox Public IPs.
 

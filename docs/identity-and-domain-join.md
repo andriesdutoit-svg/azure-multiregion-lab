@@ -6,18 +6,20 @@
 
 The lab always includes Active Directory. Selecting `stage=identity` or `stage=all` runs this sequence; `network` and `compute` postpone AD automation without changing the lab's intended configuration:
 
-```text
-Primary DC forest bootstrap
-        ->
-Replica DC promotion
-        ->
-Directory population
-        ->
-Group Policy provisioning
-        ->
-Windows and Linux domain join
-        ->
-Departmental share provisioning (when enabled)
+```mermaid
+flowchart TD
+  A[Primary DC forest bootstrap] --> B[Replica DC promotion]
+  B --> C[Directory population]
+  C --> D[Group Policy provisioning]
+  D --> E[Windows workload domain join]
+  E --> F[Windows workload SPN reconciliation]
+  D --> G[Linux server domain join]
+  D --> H[Linux client desktop prerequisites, when modeled]
+  H --> I[Linux client domain join]
+  C --> J[Departmental share provisioning]
+  E --> J
+  D --> K[Windows Admin Center, when enabled]
+  F --> K
 ```
 
 | Step | Purpose and result |
@@ -27,25 +29,11 @@ Departmental share provisioning (when enabled)
 | Population | Creates the modeled departmental OUs, users, managers, and security groups. |
 | Group Policy | Establishes Windows administrator and LAPS policies before workload joins. |
 | Domain joins | Places Windows/Linux workloads in their role OUs and enables domain authentication. |
-| Optional services | Provisions departmental shares and Linux client desktops. Desktop prerequisites run before Linux joins. |
+| Departmental shares | Always creates/reconciles share groups and provisions SMB shares during identity setup; share creation waits for Windows workload joins. |
+| Linux client desktops | Installs desktop and RDP prerequisites only for modeled Linux client VMs, before those clients join the domain. |
+| Windows Admin Center | Installs only when enabled; it waits for GPO, Windows join, and Windows HTTP SPN reconciliation. |
 
 The primary DC and replica DCs must already exist before a standalone `identity` stage can complete. Missing workload VMs may be created during the identity stage so they are available for domain joining. Generated user passwords need a separate secure reset/delivery process before interactive user testing.
-
-```mermaid
-flowchart LR
-        A[AD lab] --> B{stage value}
-        B -->|network or compute| L[Defer identity automation]
-        B -->|identity| C[Use existing DCs and create missing workloads]
-  B -->|all| D[Run full deployment with identity]
-  C --> E[dc01 forest bootstrap]
-  D --> E
-  E --> F[Promote replica DCs]
-  F --> G[Populate OU, groups, and users]
-        G --> K[Create or reconcile and link GPOs]
-  K --> H[Domain join Windows and Linux]
-        H --> I[Provision departmental shares when enabled]
-        I --> J[Reruns repair supported existing state]
-```
 
 ## Directory Model
 
@@ -59,6 +47,7 @@ The `directoryModel` object in `modules/stages/identity-stage.bicep` is passed a
 - `groupOuMapping` — OUs for global security groups (`Groups/GGS`) and domain local security groups (`Groups/DLGS`).
 - `groupNaming` — configurable prefixes: `globalSecurityPrefix` (`GGS`) for user-facing department groups, `domainLocalSecurityPrefix` (`DLGS`) for share permission groups.
 - `platformAdminGroups` — names of the Windows/Linux platform admin groups and the department code they're sourced from.
+- `serviceAccounts` — backup and monitoring account names, global security group suffixes, and Key Vault password secret names.
 - `gpoNames` — display names for the Server Administration, Client Administration, Windows LAPS, and Domain Controller WinRM GPOs. The configurator creates and reconciles all four directly in Active Directory.
 - `shares` — root share name/path (`C:\Shares`) and the current file server host (`fileServerName`).
 - `coreOuMapping` — references to the core `Users`/`Groups` OUs used by scripts.
@@ -78,6 +67,12 @@ The directory model is not parameterised; it represents a stable architectural d
 - **Department removal**: removing a department from `additionalDepartments` does not delete its OU or users; the OU becomes unmanaged rather than deleted.
 
 Reruns preserve object identities while repairing the selected attributes and memberships above. They are not a general directory teardown or exact-state replacement.
+
+## Backup and Monitoring Service Accounts
+
+The backup and monitoring accounts and their group suffixes are defined under `directory.serviceAccounts` in `config/amrl-defaults.json`. The bootstrapper keeps active Key Vault secrets unchanged and attempts to recover soft-deleted values for all managed password secrets, including these service-account secrets. If no active or recoverable value exists, it creates a replacement using the normal password generation or secure-entry flow. It does not check whether the corresponding AD account already exists or reconcile that account's password to a newly created or recovered secret.
+
+During directory population, missing accounts are created with their Key Vault password. Existing accounts keep their current passwords, while membership in the configured backup or monitoring group is reconciled on every run. If a secret had to be replaced while its AD account already existed, the Key Vault and AD passwords may differ; align them separately if the service requires matching credentials.
 
 ## Windows LAPS Active Directory Configuration
 

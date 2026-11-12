@@ -11,7 +11,8 @@ targetScope = 'subscription'
 // Prerequisites and workflow:
 // - main.bicep orders this stage after compute completion; identity-only runs require existing DCs.
 // - Forest/replicas precede population; population precedes GPO; GPO precedes domain joins.
-// - Linux joins also wait for desktop prerequisites; file services wait for Windows joins.
+// - Linux joins depend on the Linux-client desktop module collection; only modeled clients get desktops.
+// - File services wait for directory population and Windows workload joins.
 // Boundaries:
 // - deployIdentity gates guest-automation modules. Scripts own supported existing-state repair.
 // - No VMs are recreated here and no output values are exposed to downstream stages.
@@ -54,6 +55,12 @@ param labAdminUsername string
 @secure()
 param labAdminPassword string
 
+@secure()
+param backupServicePassword string
+
+@secure()
+param monitoringServicePassword string
+
 var defaults = loadJsonContent('../../config/amrl-defaults.json')
 var directoryDefaults = defaults.directory
 
@@ -80,6 +87,8 @@ var directoryModel = {
       ? ''
       : first(items(sysAdminDepartment))!.value
   }
+
+  serviceAccounts: directoryDefaults.serviceAccounts
 
   gpoNames: directoryDefaults.gpoNames
 
@@ -153,6 +162,8 @@ module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
     dcVmName: primaryDc!.name
     domainName: domainName
     directoryModel: string(directoryModel)
+    backupServicePassword: backupServicePassword
+    monitoringServicePassword: monitoringServicePassword
     domainControllerNames: map(filter(finalVmPlacements, vm => vm.type == 'dc'), dc => dc.name)
     sysAdminDepartment: sysAdminDepartment
     additionalDepartments: additionalDepartments
@@ -265,7 +276,7 @@ module windowsAdminCenter '../identity/wac.bicep' = if (deployIdentity && enable
   }
 }
 
-// 3.6 Linux domain membership and supported guest repair
+// 3.7 Linux domain membership and supported guest repair
 // Both GPO and Linux desktop prerequisites complete before these commands; the script
 // owns realm detection and selected configuration repair on retained endpoints.
 
@@ -292,7 +303,7 @@ module domainJoinLinux '../identity/domain-join-linux.bicep' = [
   }
 ]
 
-// 3.7 Linux client desktop prerequisites
+// 3.8 Linux client desktop prerequisites
 // DomainJoinLinux references this collection even though it is declared later in the file.
 module linuxDesktop '../compute/linux-desktop.bicep' = [
   for vm in filter(finalVmPlacements, vm => vm.type == 'clilin'): if (deployIdentity) {

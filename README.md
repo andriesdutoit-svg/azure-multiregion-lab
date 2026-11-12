@@ -6,8 +6,8 @@ AMRL deploys a multi-region Active Directory lab of Windows and Linux machines a
 
 - Regional VNets, role subnets, and NSGs, with full-mesh or hub-spoke connectivity and optional Azure Firewall routing.
 - Domain-controller and jumpbox VMs in the primary region, with additional DCs, jumpboxes, and Windows/Linux workloads placed according to capacity.
-- AD forest and replica promotion, departmental OUs/groups/users, Group Policy, and workload domain joining in the identity stage.
-- Jumpbox-based administration, optional Azure Bastion, departmental file shares, and Linux client desktops.
+- AD forest and replica promotion, directory population, Group Policy, workload domain joining, and departmental file services in the identity stage.
+- Jumpbox-based administration, optional Azure Bastion, departmental file shares during identity setup, and Linux client desktops for modeled Linux clients.
 
 The project demonstrates modular Infrastructure as Code, staged deployment, declared-inventory reconciliation, and configuration validation. See [Architecture](docs/architecture.md) for how these parts fit together.
 
@@ -68,7 +68,7 @@ Use this direct Azure CLI path after [Manual Preparation](docs/manual-preparatio
 
 ### Subscription-Level Setup Check
 
-- The Key Vault and required administrator-password/SSH-key secrets must exist.
+- The Key Vault and required administrator, service-account, and SSH-key secrets must exist.
 - The deployment managed identity must exist and have Network Contributor at subscription scope.
 
 ### Bicep Setup And Deployment
@@ -124,14 +124,14 @@ Confirm candidate peerings are obsolete before enabling destructive network reco
 |---|---|
 | `network` | Creates or reuses regional networking and peerings. |
 | `compute` | Creates missing domain controllers, jumpboxes, and workload VMs. |
-| `identity` | Runs AD bootstrap, replica promotion, directory population, and domain joins. Missing workload VMs needed by the identity flow may also be created. Existing control-plane DCs are required. |
+| `identity` | Runs AD bootstrap, replica promotion, directory and Group Policy provisioning, workload domain joins, and departmental file services. It may create missing workload VMs; existing control-plane DCs are required. Linux client desktops are installed when modeled; Windows Admin Center is optional. |
 | `all` | Runs the complete workflow. |
 
 Stages are dependency layers rather than isolated products: compute requires networking to exist, and identity may create missing workload VMs. See the [Deployment Guide](docs/deployment.md#stages) for sequencing, prerequisites, brownfield examples, and readiness checks.
 
 ## Identity and Domain Join
 
-Azure VM Run Commands configure AD, Group Policy, domain membership, and optional departmental shares. The identity stage creates or reconciles modeled GPO settings and can run after network and compute stages. See [Identity and Domain Join](docs/identity-and-domain-join.md) for the workflow and [Access and Administration](docs/access-and-administration.md) to connect to the lab.
+Azure VM Run Commands configure AD, Group Policy, and domain membership. The identity stage also provisions departmental file shares; Linux client desktops are installed when those VMs are modeled, and Windows Admin Center can be enabled optionally. Identity can run after network and compute stages. See [Identity and Domain Join](docs/identity-and-domain-join.md) for the workflow and [Access and Administration](docs/access-and-administration.md) to connect to the lab.
 
 ## Validation
 

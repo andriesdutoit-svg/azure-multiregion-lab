@@ -64,6 +64,7 @@ else {
 $script:AMRLDefaultsPath = Join-Path $PSScriptRoot '..\config\amrl-defaults.json'
 $script:AMRLDefaults = Get-Content -Raw -LiteralPath $script:AMRLDefaultsPath | ConvertFrom-Json
 
+# Reject missing or placeholder values at the point a shared repository default is consumed.
 function Get-AMRLDefault {
     param(
         [Parameter(Mandatory = $true)]
@@ -81,6 +82,8 @@ function Get-AMRLManagedSecretNames {
     return @(
         (Get-AMRLDefault 'jumpboxAdminPasswordSecretName')
         (Get-AMRLDefault 'labAdminPasswordSecretName')
+        [string]$script:AMRLDefaults.directory.serviceAccounts.backup.passwordSecretName
+        [string]$script:AMRLDefaults.directory.serviceAccounts.monitoring.passwordSecretName
         (Get-AMRLDefault 'sshPublicKeySecretName')
         (Get-AMRLDefault 'sshPrivateKeySecretName')
     )
@@ -90,9 +93,13 @@ function Get-AMRLPasswordSecretNames {
     return @(
         (Get-AMRLDefault 'jumpboxAdminPasswordSecretName')
         (Get-AMRLDefault 'labAdminPasswordSecretName')
+        [string]$script:AMRLDefaults.directory.serviceAccounts.backup.passwordSecretName
+        [string]$script:AMRLDefaults.directory.serviceAccounts.monitoring.passwordSecretName
     )
 }
 
+# Windows MSI installs expose Azure CLI through az.cmd; invoke its bundled Python directly
+# so JSON output can be decoded as UTF-8 rather than the active Windows code page.
 function Get-AMRLAzCliInvocation {
     $command = Get-Command az -ErrorAction Stop
     if ($command.CommandType -eq 'Application' -and [System.IO.Path]::GetFileName($command.Source) -ieq 'az.cmd') {
@@ -150,6 +157,8 @@ function Invoke-AMRLTimedProcess {
     finally { $process.Dispose() }
 }
 
+# Centralize Azure CLI invocation, exit-code handling, text decoding, and narrowly scoped
+# retries so callers receive either complete output or a terminating, actionable error.
 function Invoke-AzCli {
     param(
         [Parameter(Mandatory = $true)]
@@ -197,7 +206,7 @@ function Invoke-AzCli {
 
     # Retry only eligible setup calls; Plan uses single-attempt, read-only checks.
     $commandPath = ($Arguments | Select-Object -First 3) -join ' '
-    if (-not $script:PlanMode -and ($commandPath -like 'keyvault secret *' -or $commandPath -eq 'role assignment create')) {
+    if (-not $script:PlanMode -and ($commandPath -like 'keyvault secret *' -or $commandPath -eq 'role assignment create' -or $commandPath -eq 'role assignment list')) {
         return Invoke-AMRLRbacRetry -Operation $operation
     }
     return (& $operation)
@@ -215,7 +224,7 @@ function Invoke-AMRLRbacRetry {
         catch {
             $message = $_.Exception.Message
             if ($message -match 'ForbiddenByFirewall|ForbiddenByConnection|DenyAssignment' -or
-                $message -notmatch 'ForbiddenByRbac|PrincipalNotFound|RBAC.*propagat' -or
+                $message -notmatch 'ForbiddenByRbac|PrincipalNotFound|Cannot find user or service principal in graph database|RBAC.*propagat' -or
                 $attempt -eq $MaximumAttempts) {
                 throw
             }
@@ -234,6 +243,8 @@ function Get-AMRLGitBranch {
     return $branch
 }
 
+# Foundation resources and the subscription-scope deployment use the lowest-index mapped region;
+# this is separate from the operator's Azure CLI subscription context.
 function Get-AMRLFoundationLocation {
     param([Parameter(Mandatory = $true)][object]$Parameters)
 
@@ -268,6 +279,8 @@ function Assert-AMRLPrerequisites {
     if ($issues.Count -gt 0) { throw "Bootstrap prerequisites are not ready:`n- $($issues -join "`n- ")" }
 }
 
+# Explicit parameter files must match the active CLI context; the interactive path lets the
+# operator confirm, choose a saved subscription, or sign in before continuing.
 function Get-AMRLAzureContext {
     param(
         [string]$ExpectedSubscriptionId,
@@ -403,6 +416,8 @@ function Get-AzJson {
     return ($json | ConvertFrom-Json)
 }
 
+# Keep Azure CLI response formats explicit: use JSON for structured objects and TSV only for
+# simple scalar checks such as existence and resource IDs.
 function Get-AzTsv {
     param(
         [Parameter(Mandatory = $true)]
@@ -413,6 +428,8 @@ function Get-AzTsv {
 }
 
 # 3. Saved Bicep findings and guest execution reporting
+# These functions only shape and save results returned by Azure. They do not rerun VM scripts
+# or infer success when deployment outputs or Run Command instance views are missing.
 function Initialize-AMRLBootstrapperReport {
     param([string]$Mode)
 
@@ -1025,6 +1042,8 @@ function Show-AMRLGuestCommandResults {
 }
 
 # 4. Input, credential generation, and Bicep reference resolution helpers
+# Keep wizard validation and parameter-file edits separate from Azure writes. Foundation writes
+# are routed through Invoke-AMRLChange so Plan mode can remain read-only and report completed changes.
 function Invoke-AMRLChange {
     param(
         [Parameter(Mandatory = $true)]
@@ -1195,6 +1214,8 @@ function Get-SecureRandomIndex {
     }
 }
 
+# Generate passwords locally with a cryptographic random source; secret values are sent to Key Vault
+# but are never added to the parameter file or bootstrapper report.
 function New-AMRLPassword {
     param([int]$Length = 28)
 
@@ -1275,6 +1296,8 @@ function Get-AMRLParameterFilePublicIp {
     param([Parameter(Mandatory = $true)][object]$Parameters)
 
     $singleHostSources = @($Parameters.parameters.jumpboxAllowedSources.value | Where-Object { [string]$_ -match '^\d{1,3}(?:\.\d{1,3}){3}/32$' })
+# Read the configured top-level foundation names, then verify or derive the exact Azure resource
+# identities used later by Bicep. This is targeted lookup, not subscription-wide discovery.
     $parsedSources = @($singleHostSources | Where-Object {
         $candidateAddress = $null
         [System.Net.IPAddress]::TryParse(([string]$_ -replace '/32$', ''), [ref]$candidateAddress) -and $candidateAddress.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork
@@ -1285,7 +1308,9 @@ function Get-AMRLParameterFilePublicIp {
     return ([string]$parsedSources[0] -replace '/32$', '')
 }
 
-# Resolve current foundation inputs before normal setup can create resources.
+# Resolve current foundation inputs before normal setup can create resources. Resource IDs are
+# derived from the selected subscription and configured names; missing resources are tolerated
+# only when the caller is explicitly preparing a foundation rebuild.
 function Get-AMRLFoundationConfiguration {
     param(
         [Parameter(Mandatory = $true)][object]$Parameters,
@@ -1462,6 +1487,7 @@ function Get-GitHubSubject {
     return "repo:${Repository}:ref:refs/heads/${Branch}"
 }
 
+# Reject retired parameter names, metadata fields, and secret-reference shapes before Azure writes begin.
 function Assert-AMRLParameterDocumentCurrent {
     param([Parameter(Mandatory = $true)][object]$Parameters)
 
@@ -1513,7 +1539,8 @@ function Assert-AMRLParameterDocumentCurrent {
     }
 }
 
-# GitHub defaults use client metadata, not extra Bicep deployment parameters.
+# Compare the supplied file with the checked-in complete parameter schema; GitHub settings remain
+# client metadata and are not extra Bicep parameters.
 function Assert-AMRLParameterDocumentComplete {
     param([Parameter(Mandatory = $true)][object]$Parameters)
 
@@ -1532,6 +1559,8 @@ function Assert-AMRLParameterDocumentComplete {
     Assert-AMRLParameterDocumentCurrent -Parameters $Parameters
 }
 
+# Load an explicit file or local/demo defaults, apply only the prompts relevant to the selected
+# stage, and save wizard changes unless this is the read-only Plan mode.
 function Get-ParameterDocument {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -1666,6 +1695,10 @@ function Get-ParameterDocument {
 }
 
 # 5. Subscription-level setup: role assignments and Key Vault credentials
+# These operations prepare resources outside the Bicep lab deployment. Existing settings are
+# preserved where possible; replacing a missing secret does not rotate a password on an existing guest.
+# Query the exact principal/role/scope tuple before creating a role assignment. Filtering by object ID
+# avoids Azure CLI's Entra Graph lookup for newly created service principals.
 function Set-AMRLRoleAssignmentIfMissing {
     param(
         [Parameter(Mandatory = $true)][string]$AssigneeObjectId,
@@ -1676,8 +1709,7 @@ function Set-AMRLRoleAssignmentIfMissing {
 
     $existingId = Get-AzTsv -Arguments @(
         'role', 'assignment', 'list', '--scope', $Scope,
-        '--assignee', $AssigneeObjectId,
-        '--query', "[?roleDefinitionName=='$Role' && scope=='$Scope'].id"
+        '--query', "[?principalId=='$AssigneeObjectId' && roleDefinitionName=='$Role' && scope=='$Scope'].id"
     )
     if (-not [string]::IsNullOrWhiteSpace($existingId)) {
         $scopeLabel = if ($Scope -match '^/subscriptions/[^/]+$') { 'subscription' }
@@ -1696,6 +1728,8 @@ function Set-AMRLRoleAssignmentIfMissing {
     })
 }
 
+# Password-secret lifecycle: preserve active values, recover a soft-deleted value when present,
+# and otherwise create a replacement. This manages Key Vault only; it does not rotate guest accounts.
 function Set-AMRLSecretIfMissing {
     param(
         [Parameter(Mandatory = $true)][string]$VaultName,
@@ -1714,8 +1748,22 @@ function Set-AMRLSecretIfMissing {
         return
     }
 
+    # A soft-deleted password name must be recovered before the bootstrapper can reuse it.
+    if ($Password) {
+        $deletedSecret = Get-AzTsv -Arguments @(
+            'keyvault', 'secret', 'list-deleted', '--vault-name', $VaultName,
+            '--query', "[?name=='$SecretName'].name"
+        )
+        if (-not [string]::IsNullOrWhiteSpace($deletedSecret)) {
+            [void](Invoke-AMRLChange -Target "Deleted Key Vault secret $SecretName in $VaultName" -Action 'Recover deleted password secret' -Operation {
+                Invoke-AzCli -Arguments @('keyvault', 'secret', 'recover', '--vault-name', $VaultName, '--name', $SecretName, '--output', 'none') | Out-Null
+            })
+            return
+        }
+    }
+
     if ($Password -and $script:InteractiveConfiguration -and -not $script:PasswordChoiceMade) {
-        $passwordGenerationChoice = Read-RequiredValue -Prompt 'Randomly generate missing administrator passwords?' -Hint 'y/N' -DefaultValue 'yes' -Validator {
+        $passwordGenerationChoice = Read-RequiredValue -Prompt 'Randomly generate missing passwords?' -Hint 'y/N' -DefaultValue 'yes' -Validator {
             param($Value) $Value -in @('yes', 'no', 'y', 'n')
         }
         $script:PromptForPasswords = $passwordGenerationChoice -in @('no', 'n')
@@ -1763,6 +1811,19 @@ function Set-AMRLSecretIfMissing {
 }
 
 # Reuse the dedicated local/vault pair; mismatches require intentional operator repair.
+# Keep the public/private SSH keys as a matched pair; do not silently replace one half of an existing pair.
+function Invoke-AMRLSSHKeygen {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Arguments)
+
+    $command = Get-Command 'ssh-keygen' -CommandType Application -ErrorAction Stop
+    $result = Invoke-AMRLTimedProcess -Command $command.Source -Arguments $Arguments -TimeoutSeconds 30
+    if ($result.ExitCode -ne 0) {
+        $details = if ([string]::IsNullOrWhiteSpace($result.ErrorOutput)) { $result.Output.Trim() } else { $result.ErrorOutput.Trim() }
+        throw "SSH key generation failed (exit $($result.ExitCode)): $details"
+    }
+    return $result.Output.Trim()
+}
+
 function Set-AMRLKeySecretsIfMissing {
     param([Parameter(Mandatory = $true)][string]$VaultName)
 
@@ -1773,14 +1834,72 @@ function Set-AMRLKeySecretsIfMissing {
     $privateExists = Test-Path -LiteralPath $keyPath
     $publicExists = Test-Path -LiteralPath $publicPath
 
+    Write-Host "Checking Key Vault SSH secrets: $publicKeySecretName, $privateKeySecretName"
+    $secretNames = @(Get-AzJson -Arguments @('keyvault', 'secret', 'list', '--vault-name', $VaultName, '--query', '[].name') | ForEach-Object {
+        if ($_ -is [string]) { $_ } elseif ($null -ne $_.PSObject.Properties['name']) { [string]$_.name }
+    } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    $hasPublicKey = $publicKeySecretName -in $secretNames
+    $hasPrivateKey = $privateKeySecretName -in $secretNames
+    $hasVaultPair = $hasPublicKey -and $hasPrivateKey
+
+    if (-not $hasVaultPair) {
+        $deletedSecretNames = @(Get-AzJson -Arguments @('keyvault', 'secret', 'list-deleted', '--vault-name', $VaultName, '--query', '[].name') | ForEach-Object {
+            if ($_ -is [string]) { $_ } elseif ($null -ne $_.PSObject.Properties['name']) { [string]$_.name }
+        } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        $hasDeletedPublicKey = $publicKeySecretName -in $deletedSecretNames
+        $hasDeletedPrivateKey = $privateKeySecretName -in $deletedSecretNames
+        $publicAvailable = $hasPublicKey -or $hasDeletedPublicKey
+        $privateAvailable = $hasPrivateKey -or $hasDeletedPrivateKey
+
+        if ($publicAvailable -xor $privateAvailable) {
+            throw 'The SSH key pair in Key Vault is incomplete: only one public/private key secret is active or recoverable. Restore both matching secrets or resolve the pair manually; no key was replaced.'
+        }
+
+        if ($publicAvailable -and $privateAvailable) {
+            foreach ($secretName in @($publicKeySecretName, $privateKeySecretName)) {
+                if ($secretName -notin $secretNames) {
+                    [void](Invoke-AMRLChange -Target "Deleted Key Vault SSH secret $secretName in $VaultName" -Action 'Recover deleted SSH key secret' -Operation {
+                        Invoke-AzCli -Arguments @('keyvault', 'secret', 'recover', '--vault-name', $VaultName, '--name', $secretName, '--output', 'none') | Out-Null
+                    })
+                    $secretNames += $secretName
+                }
+            }
+            $hasVaultPair = $true
+        }
+    }
+
+    if ($hasVaultPair) {
+        if ($privateExists -and $publicExists) {
+            $publicKey = (Get-Content -Raw -LiteralPath $publicPath).Trim()
+            $derivedPublicKey = (& ssh-keygen -y -f $keyPath 2>$null | Out-String).Trim()
+            $localPublicIdentity = @($publicKey -split '\s+' | Select-Object -First 2)
+            $derivedPublicIdentity = @($derivedPublicKey -split '\s+' | Select-Object -First 2)
+            if ($LASTEXITCODE -ne 0 -or $localPublicIdentity.Count -lt 2 -or $derivedPublicIdentity.Count -lt 2 -or
+                (($derivedPublicIdentity -join ' ') -ne ($localPublicIdentity -join ' '))) {
+                throw 'The local public and private SSH keys do not match. The script will not overwrite the valid Key Vault pair.'
+            }
+            $vaultPublicKey = (Get-AzTsv -Arguments @('keyvault', 'secret', 'show', '--vault-name', $VaultName, '--name', $publicKeySecretName, '--query', 'value')).Trim()
+            $vaultPublicIdentity = @($vaultPublicKey -split '\s+' | Select-Object -First 2)
+            if ($vaultPublicIdentity.Count -lt 2 -or (($vaultPublicIdentity -join ' ') -ne ($localPublicIdentity -join ' '))) {
+                throw 'The Key Vault SSH public key differs from the local key pair. Resolve key rotation manually; the script will not overwrite either pair.'
+            }
+        }
+        elseif ($privateExists -xor $publicExists) {
+            Write-Warning "The Key Vault SSH pair is intact, but the local pair at '$keyPath' is incomplete. Keeping Key Vault unchanged; repair the local copy separately if needed."
+        }
+        else {
+            Write-Host 'Key Vault SSH pair exists; keeping it unchanged and not generating a conflicting local pair.'
+        }
+        return
+    }
+
     if ($privateExists -xor $publicExists) {
-        throw "SSH key pair is incomplete at '$keyPath'. Restore both files or resolve the pair manually; the script will not overwrite it."
+        throw "Local SSH key pair is incomplete at '$keyPath' and no complete Key Vault pair is available. Restore the pair or resolve it manually; the script will not overwrite either key."
     }
     if (-not $privateExists) {
         [void](Invoke-AMRLChange -Target $keyPath -Action 'Generate dedicated Ed25519 SSH key pair' -Operation {
             New-Item -ItemType Directory -Path (Split-Path $keyPath -Parent) -Force | Out-Null
-            & ssh-keygen -t ed25519 -f $keyPath -N '' -q
-            if ($LASTEXITCODE -ne 0) { throw 'SSH key generation failed.' }
+            Invoke-AMRLSSHKeygen -Arguments @('-t', 'ed25519', '-f', $keyPath, '-N', '', '-q') | Out-Null
         })
         if (-not (Test-Path -LiteralPath $keyPath) -or -not (Test-Path -LiteralPath $publicPath)) {
             throw 'SSH key generation completed without producing both key files.'
@@ -1789,14 +1908,13 @@ function Set-AMRLKeySecretsIfMissing {
 
     $publicKey = (Get-Content -Raw -LiteralPath $publicPath).Trim()
     $derivedPublicKey = (& ssh-keygen -y -f $keyPath 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or (($derivedPublicKey -split '\s+')[0..1] -join ' ') -ne (($publicKey -split '\s+')[0..1] -join ' ')) {
+    $localPublicIdentity = @($publicKey -split '\s+' | Select-Object -First 2)
+    $derivedPublicIdentity = @($derivedPublicKey -split '\s+' | Select-Object -First 2)
+    if ($LASTEXITCODE -ne 0 -or $localPublicIdentity.Count -lt 2 -or $derivedPublicIdentity.Count -lt 2 -or
+        (($derivedPublicIdentity -join ' ') -ne ($localPublicIdentity -join ' '))) {
         throw 'The public and private SSH keys do not match. The script will not upload either key.'
     }
 
-    Write-Host "Checking Key Vault SSH secrets: $publicKeySecretName, $privateKeySecretName"
-    $secretNames = @(Get-AzJson -Arguments @('keyvault', 'secret', 'list', '--vault-name', $VaultName, '--query', '[].name'))
-    $hasPublicKey = $publicKeySecretName -in $secretNames
-    $hasPrivateKey = $privateKeySecretName -in $secretNames
     if (-not $hasPublicKey -and -not $hasPrivateKey) {
         [void](Invoke-AMRLChange -Target "SSH key secrets in $VaultName" -Action 'Write dedicated SSH key pair to Key Vault' -Operation {
             Write-Host "Creating missing Key Vault secret: $publicKeySecretName"
@@ -1807,18 +1925,11 @@ function Set-AMRLKeySecretsIfMissing {
             Write-Host "Key Vault secret created: $privateKeySecretName"
         })
     }
-    elseif (-not $hasPublicKey -or -not $hasPrivateKey) {
-        throw 'Only one SSH key secret exists in Key Vault. Resolve the pair manually; the script will not rotate or replace it.'
-    }
-    elseif ((Get-AzTsv -Arguments @('keyvault', 'secret', 'show', '--vault-name', $VaultName, '--name', $publicKeySecretName, '--query', 'value')).Trim() -ne $publicKey) {
-        throw 'The Key Vault SSH public key differs from the local key pair. Resolve key rotation manually.'
-    }
-    else {
-        Write-Host "Key Vault secrets exist; keeping them unchanged: $publicKeySecretName, $privateKeySecretName"
-    }
 }
 
 # 6. Optional GitHub setup: OIDC identity/access and Actions deployment values
+# Federated credentials bind repository/branch or pull-request subjects to Entra tokens;
+# readiness checks inspect names and trust configuration without exposing stored secret values.
 function Test-AMRLFederatedCredential {
     param([Parameter(Mandatory = $true)][object]$TrustRecord)
 
@@ -2016,6 +2127,8 @@ function Set-AMRLGitHubConfiguration {
 }
 
 # 7. Read-only readiness and template preflight; no saved engine findings are produced
+# Plan validates tools, prerequisites, Bicep inputs, and the Azure what-if preview. The AMRL
+# validation engine's saved findings are produced only by an actual Bicep deployment.
 function Invoke-AMRLPlan {
     param(
         [Parameter(Mandatory = $true)][object]$Context,
@@ -2272,6 +2385,8 @@ function Invoke-AMRLPlan {
     }
 }
 
+# Submit the subscription deployment asynchronously, poll its ARM state, and retain operation
+# snapshots for readable progress and failure reporting. A terminal ARM state is not guest readiness.
 function Invoke-AMRLDeploymentWithProgress {
     param(
         [Parameter(Mandatory = $true)][string]$DeploymentName,
@@ -2404,6 +2519,8 @@ function Invoke-AMRLDeploymentWithProgress {
 }
 
 # 8. Main workflow: subscription-level prerequisites, then Bicep setup/deployment
+# The entry point validates the selected mode before initializing a report, then sequences
+# parameter loading, Azure setup, preflight, optional deployment, and read-only result collection.
 function Invoke-AMRLSubscriptionSetup {
     param(
         [switch]$Plan,
@@ -2785,41 +2902,46 @@ function Invoke-AMRLSubscriptionSetup {
 
     if ($null -ne $vault) {
         Write-Host 'Azure foundation setup: checking Key Vault permissions and preparing required secrets.'
+        $keyVaultAccessReady = $false
         try {
             $userId = Get-AzTsv -Arguments @('ad', 'signed-in-user', 'show', '--query', 'id')
             if ([string]::IsNullOrWhiteSpace($userId)) { throw 'Could not resolve the signed-in Entra user.' }
             Set-AMRLRoleAssignmentIfMissing -AssigneeObjectId $userId -PrincipalType User -Role 'Key Vault Secrets Officer' -Scope $vaultId
-            Set-AMRLReportSource -Name 'Key Vault access' -Status 'Ready' -Summary 'Signed-in user has Key Vault Secrets Officer access.'
+            [void](Get-AzTsv -Arguments @('keyvault', 'secret', 'list', '--vault-name', $KeyVaultName, '--query', '[].name'))
+            $keyVaultAccessReady = $true
+            Set-AMRLReportSource -Name 'Key Vault access' -Status 'Ready' -Summary 'Signed-in user has Key Vault Secrets Officer access; secret-list access was verified.'
         }
         catch {
-            $message = "Key Vault access setup failed: $($_.Exception.Message)"
+            $message = "Key Vault secret access is not ready: $($_.Exception.Message)"
             $foundationErrors.Add($message)
             Add-AMRLReportIssue -Phase 'Azure readiness and foundation' -Message $message
             Set-AMRLReportSource -Name 'Key Vault access' -Status 'Failed' -Summary $message
-            Write-Warning 'Key Vault access setup failed; continuing with secret checks that may still succeed.'
+            Write-Warning 'Key Vault secret access was not verified; skipping secret setup.'
         }
 
         $secretSetupFailed = $false
-        foreach ($secretName in (Get-AMRLPasswordSecretNames)) {
-            try {
-                Set-AMRLSecretIfMissing -VaultName $KeyVaultName -SecretName $secretName -Password -Prompt:$script:PromptForPasswords
+        if ($keyVaultAccessReady) {
+            foreach ($secretName in (Get-AMRLPasswordSecretNames)) {
+                try {
+                    Set-AMRLSecretIfMissing -VaultName $KeyVaultName -SecretName $secretName -Password -Prompt:$script:PromptForPasswords
+                }
+                catch {
+                    $message = "Key Vault secret '$secretName' setup failed: $($_.Exception.Message)"
+                    $foundationErrors.Add($message)
+                    Add-AMRLReportIssue -Phase 'Azure readiness and foundation' -Message $message
+                    $secretSetupFailed = $true
+                }
             }
+            try { Set-AMRLKeySecretsIfMissing -VaultName $KeyVaultName }
             catch {
-                $message = "Key Vault secret '$secretName' setup failed: $($_.Exception.Message)"
+                $message = "SSH key secrets setup failed: $($_.Exception.Message)"
                 $foundationErrors.Add($message)
                 Add-AMRLReportIssue -Phase 'Azure readiness and foundation' -Message $message
                 $secretSetupFailed = $true
             }
         }
-        try { Set-AMRLKeySecretsIfMissing -VaultName $KeyVaultName }
-        catch {
-            $message = "SSH key secrets setup failed: $($_.Exception.Message)"
-            $foundationErrors.Add($message)
-            Add-AMRLReportIssue -Phase 'Azure readiness and foundation' -Message $message
-            $secretSetupFailed = $true
-        }
-        $secretStatus = if ($secretSetupFailed) { 'Issues found' } else { 'Ready' }
-        $secretSummary = if ($secretSetupFailed) { 'One or more required secrets could not be prepared.' } else { 'Administrator passwords and SSH key secrets are ready.' }
+        $secretStatus = if (-not $keyVaultAccessReady) { 'Skipped' } elseif ($secretSetupFailed) { 'Issues found' } else { 'Ready' }
+        $secretSummary = if (-not $keyVaultAccessReady) { 'Secret setup was skipped because Key Vault data access was not verified.' } elseif ($secretSetupFailed) { 'One or more required secrets could not be prepared.' } else { 'Password and SSH key secrets are ready.' }
         Set-AMRLReportSource -Name 'Key Vault secrets' -Status $secretStatus -Summary $secretSummary
     }
     else {
@@ -3020,6 +3142,7 @@ function Invoke-AMRLSubscriptionSetup {
     Write-Host 'Control-plane completion is not proof of guest readiness; use the documented post-deployment checks.'
 }
 
+# Print the resolved operator-facing configuration, omitting secret values and verbose ARM identifiers.
 function Write-AMRLConfigurationSummary {
     $document = $script:BootstrapperReport.Parameters
     if ($null -eq $document -or $null -eq $document.parameters) {
@@ -3085,6 +3208,8 @@ function Write-AMRLConfigurationSummary {
     Write-Host "  Missing administrator passwords: $(if ($script:PromptForPasswords) { 'prompt securely' } else { 'generate automatically' })"
 }
 
+# Render the accumulated phases, evidence, changes, and warnings once; callers control when this final
+# summary is emitted so progress output does not duplicate detailed results.
 function Write-AMRLBootstrapperReport {
     if ($null -eq $script:BootstrapperReport) { return }
 
@@ -3275,6 +3400,7 @@ function Write-AMRLBootstrapperReport {
     else { Write-Host '  None.' }
 }
 
+# Read nested ARM operation records or captured progress snapshots and reduce them to stage/resource results.
 function Set-AMRLDeploymentOperationReport {
     param(
         [Parameter(Mandatory = $true)][string]$DeploymentName,
@@ -3448,6 +3574,7 @@ function Set-AMRLDeploymentOperationReport {
     }
 }
 
+# Validate mode selection first, then initialize the report and invoke the shared setup/deploy workflow.
 function Invoke-AMRLBootstrapper {
     param(
         [switch]$Plan,
