@@ -1,6 +1,6 @@
 # Azure Multi-Region Lab (AMRL)
 
-AMRL deploys a multi-region Active Directory lab of Windows and Linux machines and connected networks using Bicep. Parameter files control the lab's size, placement, topology, and enabled services, supporting both new environments and expansion of existing AMRL labs.
+AMRL is an educational, hands-on Azure lab for exploring multi-region infrastructure, Active Directory automation, and Bicep-based deployment. It deploys Windows and Linux machines and connected networks; parameter files control the lab's size, placement, topology, and enabled services, supporting both new environments and expansion of existing AMRL labs. It is intended for learning and experimentation, not production deployment.
 
 ## What You Deploy
 
@@ -39,6 +39,8 @@ Confirm the Azure context and answer the wizard questions. Prepare mode sets up 
 The script reruns preflight and `what-if`, then requires you to type `DEPLOY`. See the setup guide for optional read-only `-Plan`, GitHub configuration, and safety details. After deployment, [review the results](docs/validation-and-troubleshooting.md#post-deployment-review) and [connect to the lab](docs/access-and-administration.md).
 
 The manual path is an alternative, not an additional phase after bootstrapper deployment. For an existing lab, review [Existing Lab Configuration](#existing-lab-configuration) before using either method.
+
+> **Cost and cleanup:** This lab provisions billable resources, including virtual machines, managed disks, Azure Firewall, and optional Bastion. Estimate costs for your chosen regions and sizes before deploying, and deallocate or remove resources when they are no longer needed. Network reconciliation is not a full teardown; review the [cleanup boundaries](docs/deployment.md#brownfield-topology-simplification). Verify ownership before deleting the foundation resource group because its Key Vault and managed identity may be shared or reused.
 
 ## Prerequisites
 
@@ -178,3 +180,7 @@ See the [Roadmap](docs/project-history.md#roadmap) for planned capabilities and 
 - [Deployment Results and Troubleshooting](docs/validation-and-troubleshooting.md)
 - [CI/CD Workflow and Local Checks](docs/ci-cd-validation.md)
 - [Project History and Learning Notes](docs/project-history.md)
+
+## License
+
+AMRL's original code and documentation are licensed under the [MIT License](LICENSE). Third-party components retain their own licenses; see the license file in each component directory.
