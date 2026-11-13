@@ -66,9 +66,9 @@ The workflow requires the OIDC IDs configured as GitHub secrets and Bicep deploy
 | `AZURE_TENANT_ID` | Secret | Microsoft Entra tenant ID. |
 | `AZURE_SUBSCRIPTION_ID` | Secret | Azure subscription ID used by the workflow. |
 | `YOUR_PUBLIC_IP` | Variable | Public IP address allowed to access jumpboxes. |
-| `KEYVAULT_NAME` | Variable | Name of the Key Vault used by the demo parameter file. |
+| `KEYVAULT_NAME` | Variable | Name of the Key Vault used by the demo parameter file; the workflow discovers its resource group. |
 
-No managed-identity name or resource-ID repository variable is required. Bicep reads the identity name from [shared defaults](configuration-parameters-reference.md#shared-amrl-defaults) and resolves it in the demo parameter file's `foundationResourceGroup`, in the selected subscription. That identity must exist and have Network Contributor at subscription scope.
+No managed-identity name or resource-ID repository variable is required. The workflow resolves `KEYVAULT_NAME` in the selected subscription and overrides `foundationResourceGroup` with the vault's actual resource group before validation. Bicep reads the identity name from [shared defaults](configuration-parameters-reference.md#shared-amrl-defaults) and resolves it in that same group. The identity must exist there and have Network Contributor at subscription scope. For local deployments, keep `foundationResourceGroup` and `keyVaultName` aligned in the parameter file.
 
 When creating a new branch, make sure the matching GitHub Actions federated credential is created in Azure so OIDC authentication remains valid for that branch. This also applies to fix branches that should trigger validation automatically.
 
@@ -217,7 +217,7 @@ gh secret set AZURE_TENANT_ID -b $azureContext.tenantId -R $githubRepository
 gh secret set AZURE_SUBSCRIPTION_ID -b $azureContext.id -R $githubRepository
 ```
 
-The Key Vault repository variable stores the vault name, while `foundationResourceGroup` in the demo parameter file stores the group containing both the vault and the shared-default deployment identity. Public-IP discovery belongs to deployment parameter setup, not GitHub authentication; reuse that value here:
+The Key Vault repository variable stores the vault name. The validation workflow discovers the vault's resource group in the selected subscription and uses it for both the vault and shared-default deployment identity; the identity must be in the same group. For local deployment, `foundationResourceGroup` in the parameter file must still name that group. Public-IP discovery belongs to deployment parameter setup, not GitHub authentication; reuse that value here:
 
 ```powershell
 if ([string]::IsNullOrWhiteSpace($publicIp)) { throw 'Complete public-IP setup before setting GitHub variables.' }
