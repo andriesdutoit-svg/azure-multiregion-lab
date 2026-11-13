@@ -19,8 +19,8 @@ param(
     [string]$DomainName,
     [string]$DirectoryModel,
     [string]$VMType,
-    [string]$ServerAdminUsername,
-    [string]$ServerAdminPassword,
+    [string]$labAdminUsername,
+    [string]$labAdminPassword,
     [string]$ReconciliationToken
 )
 
@@ -66,8 +66,8 @@ $fullOuPath = "$ouDn,OU=$($model.rootOuName),$domainDn"
 
 Write-Host "[Info] Constructed target OU distinguished name for $VMType."
 
-if ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {
-    throw "ServerAdminPassword was not supplied"
+if ([string]::IsNullOrWhiteSpace($labAdminPassword)) {
+    throw "labAdminPassword was not supplied"
 }
 
 Write-Host '[Info] Domain join inputs were parsed.'
@@ -96,14 +96,14 @@ if ($computerSystem.PartOfDomain) {
 # ============================================================================
 
 $securePassword = ConvertTo-SecureString `
-    $ServerAdminPassword `
+    $labAdminPassword `
     -AsPlainText `
     -Force
 
 $netbiosName = $DomainName.Split('.')[0].ToUpper()
 
 $credential = New-Object System.Management.Automation.PSCredential(
-    "$netbiosName\$ServerAdminUsername",
+    "$netbiosName\$labAdminUsername",
     $securePassword
 )
 

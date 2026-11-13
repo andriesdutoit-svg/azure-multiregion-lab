@@ -1,5 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
+# Extract the TrustedHosts helper from the WAC installer and simulate CIM/WSMan operations.
+# The cases verify explicit-target validation, workgroup updates, domain-joined behavior, and write verification.
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $scriptPath = Join-Path $repoRoot 'modules/identity/scripts/Install-WAC.ps1'
 $tokens = $null

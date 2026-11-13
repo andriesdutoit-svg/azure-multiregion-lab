@@ -3,7 +3,7 @@ Populate AMRL AD objects (OU/group/user) on dc01.
 Derived from Set-DummyAD and adapted for idempotent Run Command execution.
 
 Consumes the serialized directory model, ordered department definitions, CSV name
-content, user targets, and file-service setting. Requires AD administration on the
+content, and user targets. Requires AD administration on the
 primary DC plus the AD/LAPS tooling used below; identity-stage orders population
 after forest and replica provisioning and before GPO configuration.
 
@@ -21,6 +21,22 @@ file is a payload template, not a standalone script with guest-side helper depen
 #>
 
 # 1. Validated caller inputs
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'BackupServicePassword',
+    Justification = 'Azure VM Run Command passes secure parameters as strings. The value is converted to SecureString before use.'
+)]
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'MonitoringServicePassword',
+    Justification = 'Azure VM Run Command passes secure parameters as strings. The value is converted to SecureString before use.'
+)]
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingConvertToSecureStringWithPlainText',
+    '',
+    Justification = 'Azure VM Run Command passes secure Bicep parameters as strings. Service account passwords are converted immediately to SecureString before being supplied to New-ADUser.'
+)]
+
 param(
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
@@ -57,9 +73,19 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$ReconciliationToken,
 
-    [Parameter(Mandatory = $false)]
-    [string]$EnableFileServices
-)
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$BackupServicePassword,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$MonitoringServicePassword
+    )
+
+# ReconciliationToken is intentionally accepted but not directly consumed.
+# The Bicep deployment uses it to force reruns of Run Command resources when
+# reconciliation is requested.
+$null = $ReconciliationToken
 
 # 2. Status logging and AD/transcript initialization
 $script:logCounts = @{
@@ -364,7 +390,8 @@ function Set-AmrlADUser {
         [string]$UserPrincipalName,
         [string]$Department,
         [string]$Title,
-        [string]$Manager
+        [string]$Manager,
+        [SecureString]$Password
     )
     
     $existingUser = Get-ADUser `
@@ -417,12 +444,18 @@ if ($existingUser) {
 
 Write-AmrlLog "[Info] Creating AD user account $SamAccountName."
 
-$generatedPassword = New-RandomPassword
+#Two password modes - if a password is provided, use it; otherwise, generate a random one.
+if ($Password) {
+    $securePassword = $Password
+}
+else {
+    $generatedPassword = New-RandomPassword
 
-$securePassword = ConvertTo-SecureString `
-    $generatedPassword `
-    -AsPlainText `
-    -Force
+    $securePassword = ConvertTo-SecureString `
+        $generatedPassword `
+        -AsPlainText `
+        -Force
+}
 
     $params = @{
         Name                  = $DisplayName
@@ -631,18 +664,11 @@ function Set-AmrlDepartmentOUs {
     return $usersOU
 }
 
-$fileServicesEnabled =
-    [System.Convert]::ToBoolean($EnableFileServices)
-
-Write-AmrlLog "EnableFileServices raw value = [$EnableFileServices]"
-Write-AmrlLog "EnableFileServices converted value = [$fileServicesEnabled]"
-
 function Set-AmrlDepartmentSecurityGroups {
     param(
         [object[]]$SelectedDepartments,
         [string]$RootOuDn,
-        [object]$PopulationModel,
-        [bool]$EnableFileServices
+        [object]$PopulationModel
     )
 
     $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
@@ -674,6 +700,7 @@ function Set-AmrlDepartmentSecurityGroups {
         throw "Unable to resolve group OU: $($PopulationModel.groupOuMapping.domainLocalSecurity)"
     }
 
+    # Platform admin groups
     Set-AmrlADGroup `
         -Name $windowsAdminsGroup `
         -Path $ggsOU.DistinguishedName `
@@ -682,6 +709,19 @@ function Set-AmrlDepartmentSecurityGroups {
 
     Set-AmrlADGroup `
         -Name $linuxAdminsGroup `
+        -Path $ggsOU.DistinguishedName `
+        -GroupCategory Security `
+        -GroupScope Global
+
+    # Service account groups
+    Set-AmrlADGroup `
+        -Name "${ggsPrefix}_$($PopulationModel.serviceAccounts.backup.group)" `
+        -Path $ggsOU.DistinguishedName `
+        -GroupCategory Security `
+        -GroupScope Global
+
+    Set-AmrlADGroup `
+        -Name "${ggsPrefix}_$($PopulationModel.serviceAccounts.monitoring.group)" `
         -Path $ggsOU.DistinguishedName `
         -GroupCategory Security `
         -GroupScope Global
@@ -708,26 +748,18 @@ function Set-AmrlDepartmentSecurityGroups {
             -GroupCategory Security `
             -GroupScope Global
            
-        Write-AmrlLog "Department security group file-service setting = [$EnableFileServices]"
+        # Share_RW/Share_RO are part of the platform directory model; the file server uses them for NTFS ACLs.
+        Set-AmrlADGroup `
+            -Name "${dlgsPrefix}_${code}_Share_RW" `
+            -Path $dlgsOU.DistinguishedName `
+            -GroupCategory Security `
+            -GroupScope DomainLocal
 
-        if ($EnableFileServices) {
-
-            # Share_RW/Share_RO are AD groups only; 
-            # The file server (Set-Shares.ps1) references them by name for NTFS ACLs.
-            
-            Set-AmrlADGroup `
-                -Name "${dlgsPrefix}_${code}_Share_RW" `
-                -Path $dlgsOU.DistinguishedName `
-                -GroupCategory Security `
-                -GroupScope DomainLocal
-
-            Set-AmrlADGroup `
-                -Name "${dlgsPrefix}_${code}_Share_RO" `
-                -Path $dlgsOU.DistinguishedName `
-                -GroupCategory Security `
-                -GroupScope DomainLocal
-
-        }
+        Set-AmrlADGroup `
+            -Name "${dlgsPrefix}_${code}_Share_RO" `
+            -Path $dlgsOU.DistinguishedName `
+            -GroupCategory Security `
+            -GroupScope DomainLocal
     }
 
     Write-AmrlLog "[i] Department security group generation completed"
@@ -736,8 +768,7 @@ function Set-AmrlDepartmentSecurityGroups {
 function Set-AmrlDepartmentGroupNesting {
     param(
         [object[]]$SelectedDepartments,
-        [object]$PopulationModel,
-        [bool]$EnableFileServices
+        [object]$PopulationModel
     )
 
     $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
@@ -782,22 +813,16 @@ function Set-AmrlDepartmentGroupNesting {
         )
     }
 
-    Write-AmrlLog "Department group nesting file-service setting = [$EnableFileServices]"
+    foreach ($department in $SelectedDepartments) {
+        $code = $department.Value
 
-    if ($EnableFileServices) {
+        Set-AmrlADGroupMember `
+            -GroupName "${dlgsPrefix}_${code}_Share_RW" `
+            -MemberName "${ggsPrefix}_${code}_Managers"
 
-        foreach ($department in $SelectedDepartments) {
-
-            $code = $department.Value
-
-            Set-AmrlADGroupMember `
-                -GroupName "${dlgsPrefix}_${code}_Share_RW" `
-                -MemberName "${ggsPrefix}_${code}_Managers"
-
-            Set-AmrlADGroupMember `
-                -GroupName "${dlgsPrefix}_${code}_Share_RO" `
-                -MemberName "${ggsPrefix}_${code}_Users"
-        }
+        Set-AmrlADGroupMember `
+            -GroupName "${dlgsPrefix}_${code}_Share_RO" `
+            -MemberName "${ggsPrefix}_${code}_Users"
     }
 
     Write-AmrlLog "[i] Department group nesting completed"
@@ -1358,6 +1383,80 @@ function Repair-ExistingUsers {
 # - All departments have reached target capacity.
 # - No additional unique usernames are available.
 
+function Initialize-AmrlServiceAccounts {
+    param(
+        [string]$RootOuDn,
+        [object]$ConnectedDomain,
+        [object]$PopulationModel,
+        [string]$BackupServicePassword,
+        [string]$MonitoringServicePassword
+    )
+
+    Write-AmrlLog "[i] Service account provisioning starting"
+
+    $serviceAccountsOu = Get-ManagedOU `
+        -OuPath 'ServiceAccounts' `
+        -RootOuDn $RootOuDn
+
+    if (-not $serviceAccountsOu -or [string]::IsNullOrWhiteSpace($serviceAccountsOu.DistinguishedName)) {
+        throw 'Unable to resolve ServiceAccounts OU.'
+    }
+
+    $ggsPrefix = $PopulationModel.groupNaming.globalSecurityPrefix
+
+    $serviceAccounts = @(
+        @{
+            AccountName = $PopulationModel.serviceAccounts.backup.name
+            GroupName = "${ggsPrefix}_$($PopulationModel.serviceAccounts.backup.group)"
+            Password = $BackupServicePassword
+            DisplayName = 'Backup Service Account'
+        }
+        @{
+            AccountName = $PopulationModel.serviceAccounts.monitoring.name
+            GroupName = "${ggsPrefix}_$($PopulationModel.serviceAccounts.monitoring.group)"
+            Password = $MonitoringServicePassword
+            DisplayName = 'Monitoring Service Account'
+        }
+    )
+
+    foreach ($serviceAccount in $serviceAccounts) {
+
+        $existingUser = Get-ADUser `
+            -LDAPFilter "(sAMAccountName=$($serviceAccount.AccountName))" `
+            -ErrorAction SilentlyContinue
+
+        # Create missing accounts with the supplied secret; existing passwords are not reset.
+        if (-not $existingUser) {
+
+            # Azure VM Run Command delivers secure Bicep parameters to guest scripts as
+            # strings. The value is converted immediately to SecureString so it can be
+            # supplied to New-ADUser AccountPassword. This is a transport limitation,
+            # not interactive plaintext password handling.
+
+            $securePassword = ConvertTo-SecureString `
+                $serviceAccount.Password `
+                -AsPlainText `
+                -Force
+
+            Set-AmrlADUser `
+                -SamAccountName $serviceAccount.AccountName `
+                -Path $serviceAccountsOu.DistinguishedName `
+                -DisplayName $serviceAccount.DisplayName `
+                -GivenName $serviceAccount.AccountName `
+                -Surname 'Service' `
+                -UserPrincipalName "$($serviceAccount.AccountName)@$($ConnectedDomain.DNSRoot)" `
+                -Title 'Service Account' `
+                -Password $securePassword
+        }
+
+        Set-AmrlADPrincipalGroupMembership `
+            -GroupName $serviceAccount.GroupName `
+            -MemberName $serviceAccount.AccountName
+    }
+
+    Write-AmrlLog "[i] Service account provisioning completed"
+}
+
 function Initialize-AmrlDepartmentUsers {
     param(
         [hashtable]$DepartmentTargets,
@@ -1693,17 +1792,15 @@ function Set-AmrlLapsConfiguration {
 }
 
 # 8. Execute the population workflow in dependency order
-# The script is designed to be idempotent and
-# may be executed repeatedly. Existing objects
-# are reconciled where possible and missing
-# objects are created.
+# Reruns create missing modeled objects and repair selected attributes/memberships; they
+# do not delete removed departments or reset existing department/service-account passwords.
 # Execution order:
-# 1. Validate AD connectivity
-# 2. Ensure directory and department OUs
-# 3. Ensure security groups, LAPS directory permissions, and group nesting
-# 4. Reconcile department managers and calculate standard-user targets
-# 5. Repair existing users without regenerating their passwords
-# 6. Populate missing users, remove temporary CSV data, and summarize actions
+# 1. Wait for AD and repair HTTP SPNs on the declared DC accounts.
+# 2. Load population data, select departments, and ensure the modeled OUs and groups.
+# 3. Configure LAPS schema/OU permissions, nest department groups, and create missing service accounts.
+# 4. Reconcile one manager per department and calculate standard-user targets.
+# 5. Repair existing department users, then add missing users without regenerating passwords.
+# 6. Remove the temporary CSV and report the completed actions.
 
 Write-AmrlLog "[INFO] Waiting for Active Directory availability"
 
@@ -1827,16 +1924,21 @@ $usersOU = Set-AmrlDepartmentOUs `
 Set-AmrlDepartmentSecurityGroups `
     -SelectedDepartments $departments `
     -RootOuDn $rootOUdn `
-    -PopulationModel $model `
-    -EnableFileServices $fileServicesEnabled
+    -PopulationModel $model
 
 Set-AmrlLapsConfiguration `
     -DirectoryModel $model
 
 Set-AmrlDepartmentGroupNesting `
     -SelectedDepartments $departments `
+    -PopulationModel $model
+
+Initialize-AmrlServiceAccounts `
+    -RootOuDn $rootOUdn `
+    -ConnectedDomain $currentDomain `
     -PopulationModel $model `
-    -EnableFileServices $fileServicesEnabled
+    -BackupServicePassword $BackupServicePassword `
+    -MonitoringServicePassword $MonitoringServicePassword
 
 Write-AmrlLog "[i] User generation starting"
 

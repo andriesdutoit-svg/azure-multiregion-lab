@@ -6,8 +6,8 @@ AMRL deploys a multi-region Active Directory lab of Windows and Linux machines a
 
 - Regional VNets, role subnets, and NSGs, with full-mesh or hub-spoke connectivity and optional Azure Firewall routing.
 - Domain-controller and jumpbox VMs in the primary region, with additional DCs, jumpboxes, and Windows/Linux workloads placed according to capacity.
-- AD forest and replica promotion, departmental OUs/groups/users, Group Policy, and workload domain joining in the identity stage.
-- Jumpbox-based administration, optional Azure Bastion, departmental file shares, and Linux client desktops.
+- AD forest and replica promotion, directory population, Group Policy, workload domain joining, and departmental file services in the identity stage.
+- Jumpbox-based administration, optional Azure Bastion, departmental file shares during identity setup, and Linux client desktops for modeled Linux clients.
 
 The project demonstrates modular Infrastructure as Code, staged deployment, declared-inventory reconciliation, and configuration validation. See [Architecture](docs/architecture.md) for how these parts fit together.
 
@@ -22,7 +22,7 @@ Choose a deployment method, whether your subscription is new or already in use:
 | **Bootstrapper (recommended)** | [Bootstrapper Guide](docs/bootstrapper.md): create or reuse prerequisites, configure Bicep, review `what-if`, and deploy. |
 | **Manual** | [Manual Preparation](docs/manual-preparation.md): subscription-level setup, then Bicep setup. Continue with [Bicep Deployment](docs/deployment.md). |
 
-The bootstrapper covers both setup areas below. You do not need to create the Key Vault, secrets, or deployment identity beforehand; existing resources can be reused through reviewed parameter-file references. The default foundation resource location is the first `regionIndexMap` entry; this is separate from the VM regions the lab deploys into. Azure's listed regions may still be restricted for new resources in a particular subscription.
+The bootstrapper covers both setup areas below. You do not need to create the Key Vault, secrets, or deployment identity beforehand; existing resources can be reused through the parameter file's foundation resource group and Key Vault name. Bicep and the bootstrapper read the identity name, administrator usernames, and secret names from [shared defaults](config/amrl-defaults.json). The default foundation resource location is the first `regionIndexMap` entry; this is separate from the VM regions the lab deploys into. Azure's listed regions may still be restricted for new resources in a particular subscription.
 
 With the [prerequisites](#prerequisites) installed, sign Azure CLI into the intended subscription, then run Prepare mode from the repository root in Windows PowerShell 5.1:
 
@@ -53,7 +53,7 @@ Run the bootstrapper from Windows PowerShell 5.1 with Azure CLI, Bicep, and `ssh
 
 ### Bicep Setup
 
-- A configured parameter file using the resolved identity and Key Vault references; the wizard can prepare this for a new lab.
+- A configured parameter file using the foundation resource group and Key Vault name; the wizard can prepare this for a new lab. The deployment identity uses the shared default name in that same group.
 - Valid VM sizes and images for the target regions.
 - Sufficient regional vCPU quota.
 - At least one domain controller requested with `vmCounts.dc >= 1`; AD is the lab's control plane, even when identity setup is deferred to a later stage.
@@ -68,14 +68,14 @@ Use this direct Azure CLI path after [Manual Preparation](docs/manual-preparatio
 
 ### Subscription-Level Setup Check
 
-- The Key Vault and referenced administrator-password/SSH-key secrets must exist.
+- The Key Vault and required administrator, service-account, and SSH-key secrets must exist.
 - The deployment managed identity must exist and have Network Contributor at subscription scope.
 
 ### Bicep Setup And Deployment
 
 1. Copy `main.parameters.demo.json` to `main.parameters.local.json` for the new lab; do not overwrite an existing lab's parameter file.
-2. Replace `<YOUR_PUBLIC_IP>` with your public IPv4 address (the demo adds `/32`), `<KEYVAULT_ID>` with your Key Vault resource ID, and `<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>` with your User Assigned Managed Identity resource ID.
-3. Keep Key Vault references in the file; do not paste SSH keys or passwords into it. For a new lab, set `existingRegions` and `existingVmPlacements` to empty arrays; for an existing lab, maintain [reviewed inventory](#existing-lab-configuration).
+2. Replace `<YOUR_PUBLIC_IP>` with your public IPv4 address (the demo adds `/32`) and `<KEYVAULT_NAME>` with your Key Vault name. Set `foundationResourceGroup` to the resource group containing both the Key Vault and the deployment identity named by the shared defaults.
+3. Keep passwords and SSH keys out of the parameter file; Bicep retrieves the required secrets from Key Vault. For a new lab, set `existingRegions` and `existingVmPlacements` to empty arrays; for an existing lab, maintain [reviewed inventory](#existing-lab-configuration).
 4. Keep at least one DC and one jumpbox, then choose workload counts, topology, and the intended deployment stage.
 5. Complete [Local Validation](docs/ci-cd-validation.md#local-validation), including what-if review, then deploy:
 
@@ -124,14 +124,14 @@ Confirm candidate peerings are obsolete before enabling destructive network reco
 |---|---|
 | `network` | Creates or reuses regional networking and peerings. |
 | `compute` | Creates missing domain controllers, jumpboxes, and workload VMs. |
-| `identity` | Runs AD bootstrap, replica promotion, directory population, and domain joins. Missing workload VMs needed by the identity flow may also be created. Existing control-plane DCs are required. |
+| `identity` | Runs AD bootstrap, replica promotion, directory and Group Policy provisioning, workload domain joins, and departmental file services. It may create missing workload VMs; existing control-plane DCs are required. Linux client desktops are installed when modeled; Windows Admin Center is optional. |
 | `all` | Runs the complete workflow. |
 
 Stages are dependency layers rather than isolated products: compute requires networking to exist, and identity may create missing workload VMs. See the [Deployment Guide](docs/deployment.md#stages) for sequencing, prerequisites, brownfield examples, and readiness checks.
 
 ## Identity and Domain Join
 
-Azure VM Run Commands configure AD, Group Policy, domain membership, and optional departmental shares. The identity stage creates or reconciles modeled GPO settings and can run after network and compute stages. See [Identity and Domain Join](docs/identity-and-domain-join.md) for the workflow and [Access and Administration](docs/access-and-administration.md) to connect to the lab.
+Azure VM Run Commands configure AD, Group Policy, and domain membership. The identity stage also provisions departmental file shares; Linux client desktops are installed when those VMs are modeled, and Windows Admin Center can be enabled optionally. Identity can run after network and compute stages. See [Identity and Domain Join](docs/identity-and-domain-join.md) for the workflow and [Access and Administration](docs/access-and-administration.md) to connect to the lab.
 
 ## Validation
 

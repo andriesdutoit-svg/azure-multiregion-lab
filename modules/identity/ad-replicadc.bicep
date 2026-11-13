@@ -9,9 +9,9 @@ param dcVmName string
 param domainName string
 
 // Domain administrator credentials and guest-automation rerun token
-param serverAdminUsername string
+param labAdminUsername string
 @secure()
-param serverAdminPassword string
+param labAdminPassword string
 
 param reconciliationToken string
 
@@ -43,12 +43,12 @@ resource replicaBootstrap 'Microsoft.Compute/virtualMachines/runCommands@2023-09
         value: domainName
       }
       {
-        name: 'ServerAdminUsername'
-        value: serverAdminUsername
+        name: 'labAdminUsername'
+        value: labAdminUsername
       }
       {
-        name: 'ServerAdminPassword'
-        value: serverAdminPassword
+        name: 'labAdminPassword'
+        value: labAdminPassword
       }
       {
         name: 'ReconciliationToken'

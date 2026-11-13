@@ -50,15 +50,30 @@ jobs:
         run: |
           az bicep lint --file main.bicep
 
-      - name: Inject demo values
+      - name: Resolve foundation and inject demo values
         run: |
+          KEYVAULT_NAME='${{ vars.KEYVAULT_NAME }}'
+          if [ -z "$KEYVAULT_NAME" ]; then
+            echo "::error::Set the KEYVAULT_NAME repository variable."
+            exit 1
+          fi
+          if ! FOUNDATION_RESOURCE_GROUP=$(az keyvault show --name "$KEYVAULT_NAME" --query resourceGroup --output tsv); then
+            echo "::error::Key Vault '$KEYVAULT_NAME' was not found in the selected subscription or is not readable by the workflow identity."
+            exit 1
+          fi
+
           YOUR_PUBLIC_IP='${{ vars.YOUR_PUBLIC_IP }}'
           YOUR_PUBLIC_IP="${YOUR_PUBLIC_IP%/32}"
           sed -i "s|<AZURE_TENANT_ID>|${{ secrets.AZURE_TENANT_ID }}|g" main.parameters.demo.json
           sed -i "s|<AZURE_SUBSCRIPTION_ID>|${{ secrets.AZURE_SUBSCRIPTION_ID }}|g" main.parameters.demo.json
-          sed -i "s|<KEYVAULT_ID>|${{ vars.KEYVAULT_ID }}|g" main.parameters.demo.json
-          sed -i "s|<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>|${{ vars.AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID }}|g" main.parameters.demo.json
+          sed -i "s|<KEYVAULT_NAME>|$KEYVAULT_NAME|g" main.parameters.demo.json
           sed -i "s|<YOUR_PUBLIC_IP>|$YOUR_PUBLIC_IP|g" main.parameters.demo.json
+          tmp_file=$(mktemp)
+          jq --arg resourceGroup "$FOUNDATION_RESOURCE_GROUP" \
+            '.parameters.foundationResourceGroup.value = $resourceGroup' \
+            main.parameters.demo.json > "$tmp_file"
+          mv "$tmp_file" main.parameters.demo.json
+          echo "Using Key Vault '$KEYVAULT_NAME' in resource group '$FOUNDATION_RESOURCE_GROUP'."
     
       - name: Verify Placeholder Replacement
         run: |

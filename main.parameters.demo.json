@@ -16,13 +16,7 @@
         "bootstrap": {
           "azureTenantId": "<AZURE_TENANT_ID>",
           "azureSubscriptionId": "<AZURE_SUBSCRIPTION_ID>",
-          "deploymentLocation": "westeurope",
-          "foundationResourceGroup": "amrl-foundation-rg",
-          "automationManagedIdentityName": "amrl-deployment-mi",
-          "githubRepository": "andriesdutoit-svg/azure-multiregion-lab",
-          "githubAppDisplayName": "AMRL-github-actions",
-          "foundationLocation": "southafricanorth",
-          "foundationLocationSource": "regionIndexMap"
+          "githubRepository": "andriesdutoit-svg/azure-multiregion-lab"
         }
       }
     },
@@ -92,8 +86,12 @@
       "value": "Standard"
     },
 
-    "automationManagedIdentityResourceId": {
-      "value": "<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>"
+    "foundationResourceGroup": {
+      "value": "amrl-foundation-rg"
+    },
+
+    "keyVaultName": {
+      "value": "<KEYVAULT_NAME>"
     },
 
     "subnetIndexMap": {
@@ -200,64 +198,6 @@
       }
     },
 
-    "jumpboxAdminUsername": {
-      "value": "azureadmin"
-    },
-
-    "jumpboxAdminPassword": {
-      "reference": {
-        "keyVault": {
-          "id": "<KEYVAULT_ID>"
-        },
-        "secretName": "jumpboxAdminPassword"
-      }
-    },
-
-    "serverAdminUsername": {
-      "value": "azureadmin"
-    },
-
-    "serverAdminPassword": {
-      "reference": {
-        "keyVault": {
-          "id": "<KEYVAULT_ID>"
-        },
-        "secretName": "serverAdminPassword"
-      }
-    },
-
-    "clientAdminUsername": {
-      "value": "azureadmin"
-    },
-
-    "clientAdminPassword": {
-      "reference": {
-        "keyVault": {
-          "id": "<KEYVAULT_ID>"
-        },
-        "secretName": "clientAdminPassword"
-      }
-    },
-
-    "sshPublicKey": {
-      "reference": {
-        "keyVault": {
-          "id": "<KEYVAULT_ID>"
-        },
-        "secretName": "sshPublicKey"
-      }
-    },
-
-    "sshPrivateKey": {
-      "reference": {
-        "keyVault": {
-          "id": "<KEYVAULT_ID>"
-        },
-        "secretName": "sshPrivateKey"
-      }
-    },
-
-
     "enableWindowsAdminCenter": {
       "value": false
     },
@@ -297,10 +237,6 @@
 
     "usersPerDepartment": {
       "value": 10
-    },
-
-    "enableFileServices": {
-      "value": false
     },
 
     "useDedicatedFileServer": {

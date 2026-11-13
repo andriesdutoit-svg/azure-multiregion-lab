@@ -12,9 +12,9 @@ param directoryModel string
 param vmType string
 
 // Domain administrator credentials and rerun token
-param serverAdminUsername string
+param labAdminUsername string
 @secure()
-param serverAdminPassword string
+param labAdminPassword string
 param reconciliationToken string
 
 // 2. Script content
@@ -50,12 +50,12 @@ resource domainJoin 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' =
         value: vmType
       }
       {
-        name: 'ServerAdminUsername'
-        value: serverAdminUsername
+        name: 'labAdminUsername'
+        value: labAdminUsername
       }
       {
-        name: 'ServerAdminPassword'
-        value: serverAdminPassword
+        name: 'labAdminPassword'
+        value: labAdminPassword
       }
       {
         name: 'ReconciliationToken'

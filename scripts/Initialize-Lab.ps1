@@ -1,7 +1,6 @@
 <#
 .SYNOPSIS
 Prepares AMRL prerequisites and Bicep configuration, with optional deployment.
-.DESCRIPTION
 Creates or reuses subscription-level identity/RBAC, Key Vault credentials, and
 protection locks. Configures Bicep parameters and runs template preflight/what-if.
 Normal preparation does not deploy the lab; existing subscriptions are supported.
@@ -15,6 +14,8 @@ Configures subscription-level items and checks Bicep values with preflight and w
 .PARAMETER IncludeGitHub
 Configures optional Entra OIDC identity/access and GitHub Actions deployment values.
 In Plan mode, inspects those settings without changing them.
+.PARAMETER ReportPath
+Optional path for writing the final bootstrapper report as UTF-8 plain text.
 .PARAMETER Deploy
 Deploys main.bicep after preparation, what-if, and explicit DEPLOY confirmation.
 .NOTES
@@ -26,6 +27,7 @@ declared by the operator; deployment success does not prove guest readiness.
 [CmdletBinding()]
 param(
     [string]$ParameterFile,
+    [string]$ReportPath,
     [switch]$Plan,
     [switch]$Prepare,
     [switch]$IncludeGitHub,
@@ -57,6 +59,47 @@ else {
 }
 
 # 2. CLI execution and operational prerequisite checks
+
+# AMRL platform defaults
+$script:AMRLDefaultsPath = Join-Path $PSScriptRoot '..\config\amrl-defaults.json'
+$script:AMRLDefaults = Get-Content -Raw -LiteralPath $script:AMRLDefaultsPath | ConvertFrom-Json
+
+# Reject missing or placeholder values at the point a shared repository default is consumed.
+function Get-AMRLDefault {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $property = $script:AMRLDefaults.PSObject.Properties[$Name]
+    if ($null -eq $property -or $property.Value -isnot [string] -or [string]::IsNullOrWhiteSpace($property.Value) -or $property.Value -match '[<>]') {
+        throw "AMRL defaults must define a concrete non-empty string for '$Name'."
+    }
+    return $property.Value
+}
+
+function Get-AMRLManagedSecretNames {
+    return @(
+        (Get-AMRLDefault 'jumpboxAdminPasswordSecretName')
+        (Get-AMRLDefault 'labAdminPasswordSecretName')
+        [string]$script:AMRLDefaults.directory.serviceAccounts.backup.passwordSecretName
+        [string]$script:AMRLDefaults.directory.serviceAccounts.monitoring.passwordSecretName
+        (Get-AMRLDefault 'sshPublicKeySecretName')
+        (Get-AMRLDefault 'sshPrivateKeySecretName')
+    )
+}
+
+function Get-AMRLPasswordSecretNames {
+    return @(
+        (Get-AMRLDefault 'jumpboxAdminPasswordSecretName')
+        (Get-AMRLDefault 'labAdminPasswordSecretName')
+        [string]$script:AMRLDefaults.directory.serviceAccounts.backup.passwordSecretName
+        [string]$script:AMRLDefaults.directory.serviceAccounts.monitoring.passwordSecretName
+    )
+}
+
+# Windows MSI installs expose Azure CLI through az.cmd; invoke its bundled Python directly
+# so JSON output can be decoded as UTF-8 rather than the active Windows code page.
 function Get-AMRLAzCliInvocation {
     $command = Get-Command az -ErrorAction Stop
     if ($command.CommandType -eq 'Application' -and [System.IO.Path]::GetFileName($command.Source) -ieq 'az.cmd') {
@@ -114,6 +157,8 @@ function Invoke-AMRLTimedProcess {
     finally { $process.Dispose() }
 }
 
+# Centralize Azure CLI invocation, exit-code handling, text decoding, and narrowly scoped
+# retries so callers receive either complete output or a terminating, actionable error.
 function Invoke-AzCli {
     param(
         [Parameter(Mandatory = $true)]
@@ -122,10 +167,12 @@ function Invoke-AzCli {
     )
 
     $operation = {
+        $previousErrorActionPreference = $ErrorActionPreference
         $previousPythonEncoding = [System.Environment]::GetEnvironmentVariable('PYTHONIOENCODING', 'Process')
         $previousInstaller = [System.Environment]::GetEnvironmentVariable('AZ_INSTALLER', 'Process')
         $previousConsoleEncoding = [Console]::OutputEncoding
         try {
+            $ErrorActionPreference = 'Continue'
             [System.Environment]::SetEnvironmentVariable('PYTHONIOENCODING', 'utf-8', 'Process')
             [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
             $invocation = Get-AMRLAzCliInvocation
@@ -150,6 +197,7 @@ function Invoke-AzCli {
             return $text.Trim()
         }
         finally {
+            $ErrorActionPreference = $previousErrorActionPreference
             [Console]::OutputEncoding = $previousConsoleEncoding
             [System.Environment]::SetEnvironmentVariable('PYTHONIOENCODING', $previousPythonEncoding, 'Process')
             [System.Environment]::SetEnvironmentVariable('AZ_INSTALLER', $previousInstaller, 'Process')
@@ -158,7 +206,11 @@ function Invoke-AzCli {
 
     # Retry only eligible setup calls; Plan uses single-attempt, read-only checks.
     $commandPath = ($Arguments | Select-Object -First 3) -join ' '
-    if (-not $script:PlanMode -and ($commandPath -like 'keyvault secret *' -or $commandPath -eq 'role assignment create')) {
+    if (-not $script:PlanMode -and $commandPath -like 'keyvault secret *') {
+        # Key Vault data-plane RBAC can lag management-plane assignment by several minutes.
+        return Invoke-AMRLRbacRetry -Operation $operation -MaximumAttempts 23 -InitialDelaySeconds 5
+    }
+    if (-not $script:PlanMode -and ($commandPath -eq 'role assignment create' -or $commandPath -eq 'role assignment list')) {
         return Invoke-AMRLRbacRetry -Operation $operation
     }
     return (& $operation)
@@ -167,7 +219,7 @@ function Invoke-AzCli {
 function Invoke-AMRLRbacRetry {
     param(
         [Parameter(Mandatory = $true)][scriptblock]$Operation,
-        [ValidateRange(1, 8)][int]$MaximumAttempts = 6,
+        [ValidateRange(1, 32)][int]$MaximumAttempts = 6,
         [ValidateRange(0, 30)][int]$InitialDelaySeconds = 2
     )
 
@@ -175,8 +227,10 @@ function Invoke-AMRLRbacRetry {
         try { return (& $Operation) }
         catch {
             $message = $_.Exception.Message
-            if ($message -match 'ForbiddenByFirewall|ForbiddenByConnection|DenyAssignment' -or
-                $message -notmatch 'ForbiddenByRbac|PrincipalNotFound|RBAC.*propagat' -or
+            $explicitDenyAssignment = $message -match '(?i)\bDenyAssignment(?:AuthorizationFailed|Denied|Blocked)\b' -or
+                $message -match '(?i)\bDenyAssignmentId:\s*(?!null\b)[^\s]+'
+            if ($message -match 'ForbiddenByFirewall|ForbiddenByConnection' -or $explicitDenyAssignment -or
+                $message -notmatch 'ForbiddenByRbac|PrincipalNotFound|Cannot find user or service principal in graph database|RBAC.*propagat' -or
                 $attempt -eq $MaximumAttempts) {
                 throw
             }
@@ -195,13 +249,14 @@ function Get-AMRLGitBranch {
     return $branch
 }
 
-function Get-AMRLFoundationLocationChoices {
-    $locations = @(Get-AzJson -Arguments @('account', 'list-locations', '--query', "[?metadata.regionType=='Physical'].name")) |
-        ForEach-Object { [string]$_ } |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        Sort-Object -Unique
-    if ($locations.Count -eq 0) { throw 'Azure CLI returned no physical locations for the selected subscription.' }
-    return @($locations)
+# Foundation resources and the subscription-scope deployment use the lowest-index mapped region;
+# this is separate from the operator's Azure CLI subscription context.
+function Get-AMRLFoundationLocation {
+    param([Parameter(Mandatory = $true)][object]$Parameters)
+
+    $orderedRegions = @($Parameters.parameters.regionIndexMap.value.PSObject.Properties | Sort-Object { [int]$_.Value })
+    if ($orderedRegions.Count -eq 0) { throw 'regionIndexMap is empty; cannot choose the foundation resource location.' }
+    return [string]$orderedRegions[0].Name
 }
 
 function Assert-AMRLPrerequisites {
@@ -230,6 +285,8 @@ function Assert-AMRLPrerequisites {
     if ($issues.Count -gt 0) { throw "Bootstrap prerequisites are not ready:`n- $($issues -join "`n- ")" }
 }
 
+# Explicit parameter files must match the active CLI context; the interactive path lets the
+# operator confirm, choose a saved subscription, or sign in before continuing.
 function Get-AMRLAzureContext {
     param(
         [string]$ExpectedSubscriptionId,
@@ -365,6 +422,8 @@ function Get-AzJson {
     return ($json | ConvertFrom-Json)
 }
 
+# Keep Azure CLI response formats explicit: use JSON for structured objects and TSV only for
+# simple scalar checks such as existence and resource IDs.
 function Get-AzTsv {
     param(
         [Parameter(Mandatory = $true)]
@@ -375,6 +434,8 @@ function Get-AzTsv {
 }
 
 # 3. Saved Bicep findings and guest execution reporting
+# These functions only shape and save results returned by Azure. They do not rerun VM scripts
+# or infer success when deployment outputs or Run Command instance views are missing.
 function Initialize-AMRLBootstrapperReport {
     param([string]$Mode)
 
@@ -440,6 +501,68 @@ function Set-AMRLReportPhase {
     if ($PSBoundParameters.ContainsKey('Summary')) { $phase[0].Summary = $Summary }
 }
 
+function Get-AMRLErrorSummary {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message)
+
+    if ([string]::IsNullOrWhiteSpace($Message)) { return 'An unspecified error occurred.' }
+
+    $missingSecrets = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($match in [regex]::Matches($Message, "KeyVault parameter '([^']+)' cannot be retrieved", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+        $secretName = $match.Groups[1].Value
+        if ($secretName -notin $missingSecrets) { $missingSecrets.Add($secretName) }
+    }
+    if ($missingSecrets.Count -gt 0) {
+        return "Azure could not resolve Key Vault parameter secrets: $($missingSecrets -join ', ')."
+    }
+
+    if ($Message -match '(?i)ForbiddenByRbac' -and $Message -match '(?i)KeyVault|Microsoft\.KeyVault|keyvault') {
+        $vaultMatch = [regex]::Match($Message, '(?im)^\s*Resource:\s*[^/\r\n]*/vaults/(?<name>[^/''"\s]+)')
+        if (-not $vaultMatch.Success) { $vaultMatch = [regex]::Match($Message, '(?i)--vault-name\s+(?<name>[^\s]+)') }
+        $vaultName = if ($vaultMatch.Success) { " '$($vaultMatch.Groups['name'].Value)'" } else { '' }
+        return "Key Vault$vaultName denied secret access (ForbiddenByRbac). Verify the caller's Secrets Officer assignment at this vault scope; Azure RBAC may still be propagating."
+    }
+
+    if ($Message -match '(?i)QuotaExceeded') {
+        $familyMatch = [regex]::Match($Message, '(?i)approved\s+(?<family>[A-Za-z0-9]+)\s+Cores quota')
+        $locations = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($match in [regex]::Matches($Message, '(?i)Location:\s*(?<location>[^,]+),\s*Current Limit:\s*(?<limit>\d+),\s*Current Usage:\s*(?<usage>\d+),\s*Additional Required:\s*(?<required>\d+)')) {
+            $location = $match.Groups['location'].Value.Trim()
+            if ($location -notin $locations) { $locations.Add($location) }
+        }
+        if ($familyMatch.Success -and $locations.Count -gt 0) {
+            return "VM quota exceeded: $($familyMatch.Groups['family'].Value) family has insufficient cores in $($locations -join ', ')."
+        }
+        return 'Azure VM quota was exceeded. Check the requested VM family and region quota.'
+    }
+
+    if ($Message -match '(?i)BCP091' -and $Message -match '(?i)names\.csv') {
+        return 'Bicep could not read modules/identity/data/names.csv because another process has the file open. Close the process or sync operation and retry.'
+    }
+
+    $cleanLines = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($line in ($Message -split "`r?`n")) {
+        $candidate = ([string]$line).Trim()
+        if ([string]::IsNullOrWhiteSpace($candidate) -or
+            $candidate -match '^(?i:System\.Management\.Automation\.RemoteException|Azure CLI failed \(exit \d+\):|Inner Errors?:|Code:|Vault:|Caller:|Action:|Resource:|Assignment:|DenyAssignmentId:|DecisionReason:)') {
+            continue
+        }
+        if ($candidate -match '^ERROR:\s*(?<error>.+)$') { $candidate = $Matches.error.Trim() }
+        if ($candidate.StartsWith('{')) {
+            try {
+                $payload = $candidate | ConvertFrom-Json -ErrorAction Stop
+                if ($null -ne $payload.error.message) { $candidate = [string]$payload.error.message }
+                elseif ($null -ne $payload.message) { $candidate = [string]$payload.message }
+            }
+            catch { }
+        }
+        if ($candidate -notin $cleanLines) { $cleanLines.Add($candidate) }
+    }
+    if ($cleanLines.Count -eq 0) { return 'The operation failed. See the Azure operation record for details.' }
+    $summary = $cleanLines[0]
+    if ($summary.Length -gt 320) { $summary = $summary.Substring(0, 317) + '...' }
+    return $summary
+}
+
 function Add-AMRLReportIssue {
     param(
         [Parameter(Mandatory = $true)][string]$Phase,
@@ -449,11 +572,21 @@ function Add-AMRLReportIssue {
     )
 
     if ($null -eq $script:BootstrapperReport) { return }
+    $summary = Get-AMRLErrorSummary -Message $Message
+    $duplicate = @($script:BootstrapperReport.Issues | Where-Object {
+        $_.Severity -eq $Severity -and $_.Message -ceq $summary
+    } | Select-Object -First 1)
+    if ($duplicate.Count -gt 0) {
+        if (-not [string]::IsNullOrWhiteSpace($NextStep) -and [string]::IsNullOrWhiteSpace([string]$duplicate[0].NextStep)) {
+            $duplicate[0].NextStep = $NextStep
+        }
+        return
+    }
     $script:BootstrapperReport.Issues.Add([pscustomobject]@{
         Time = Get-Date
         Phase = $Phase
         Severity = $Severity
-        Message = $Message
+        Message = $summary
         NextStep = $NextStep
     })
 }
@@ -610,9 +743,9 @@ function Invoke-AMRLObservedCommand {
     }
     catch {
         $message = $_.Exception.Message
-        Set-AMRLReportSource -Name $Name -Status 'Failed' -Summary 'Azure CLI command failed.' -Details $message
-        Add-AMRLReportIssue -Phase $script:BootstrapperPhase -Message "$Name failed: $message"
-        Write-Warning "$Name failed; continuing with independent checks where possible. Details will appear in the final report."
+        Set-AMRLReportSource -Name $Name -Status 'Failed' -Summary 'Failed; see Warnings and errors below.'
+        Add-AMRLReportIssue -Phase $script:BootstrapperPhase -Message $message
+        Write-Verbose "$Name failed; details are consolidated in the final report."
         return [pscustomobject]@{ Succeeded = $false; Output = ''; Error = $message }
     }
 }
@@ -987,6 +1120,8 @@ function Show-AMRLGuestCommandResults {
 }
 
 # 4. Input, credential generation, and Bicep reference resolution helpers
+# Keep wizard validation and parameter-file edits separate from Azure writes. Foundation writes
+# are routed through Invoke-AMRLChange so Plan mode can remain read-only and report completed changes.
 function Invoke-AMRLChange {
     param(
         [Parameter(Mandatory = $true)]
@@ -1157,6 +1292,8 @@ function Get-SecureRandomIndex {
     }
 }
 
+# Generate passwords locally with a cryptographic random source; secret values are sent to Key Vault
+# but are never added to the parameter file or bootstrapper report.
 function New-AMRLPassword {
     param([int]$Length = 28)
 
@@ -1187,34 +1324,36 @@ function New-AMRLPassword {
     return (-join $characters.ToArray())
 }
 
-function Set-AMRLParameterReferences {
+function Set-AMRLParameterValues {
     param(
         [Parameter(Mandatory = $true)][object]$Parameters,
-        [Parameter(Mandatory = $true)][string]$KeyVaultId,
-        [Parameter(Mandatory = $true)][string]$IdentityId,
+        [Parameter(Mandatory = $true)][string]$FoundationResourceGroup,
+        [Parameter(Mandatory = $true)][string]$KeyVaultName,
         [string]$PublicIp
     )
 
-    foreach ($entry in $Parameters.parameters.PSObject.Properties) {
-        $reference = $entry.Value.PSObject.Properties['reference']
-        if ($null -ne $reference -and $null -ne $entry.Value.reference.keyVault) {
-            $existingId = [string]$entry.Value.reference.keyVault.id
-            if (-not [string]::IsNullOrWhiteSpace($existingId) -and
-                $existingId -notmatch '[<>]' -and
-                $existingId -ne $KeyVaultId) {
-                throw "Parameter '$($entry.Name)' references a different Key Vault. Review the parameter file; it was not overwritten."
-            }
-            $entry.Value.reference.keyVault.id = $KeyVaultId
-        }
+    Assert-AMRLParameterDocumentCurrent -Parameters $Parameters
+    $foundationResourceGroupParameter = $Parameters.parameters.PSObject.Properties['foundationResourceGroup']
+    $keyVaultNameParameter = $Parameters.parameters.PSObject.Properties['keyVaultName']
+    if ($null -eq $foundationResourceGroupParameter -or $null -eq $keyVaultNameParameter) {
+        throw 'The current parameter contract requires top-level foundationResourceGroup and keyVaultName values.'
+    }
+    if ([string]::IsNullOrWhiteSpace($FoundationResourceGroup) -or [string]::IsNullOrWhiteSpace($KeyVaultName)) {
+        throw 'Resolved foundationResourceGroup and keyVaultName values must not be empty.'
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$foundationResourceGroupParameter.Value.value) -and
+        [string]$foundationResourceGroupParameter.Value.value -notmatch '[<>]' -and
+        [string]$foundationResourceGroupParameter.Value.value -ine $FoundationResourceGroup) {
+        throw 'The parameter file foundationResourceGroup differs from the resolved foundation resource group.'
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$keyVaultNameParameter.Value.value) -and
+        [string]$keyVaultNameParameter.Value.value -notmatch '[<>]' -and
+        [string]$keyVaultNameParameter.Value.value -ine $KeyVaultName) {
+        throw 'The parameter file keyVaultName differs from the resolved Key Vault name.'
     }
 
-    $identityValue = [string]$Parameters.parameters.automationManagedIdentityResourceId.value
-    if (-not [string]::IsNullOrWhiteSpace($identityValue) -and
-        $identityValue -notmatch '[<>]' -and
-        $identityValue -ne $IdentityId) {
-        throw 'The parameter file references a different managed identity. Review the file; it was not overwritten.'
-    }
-    $Parameters.parameters.automationManagedIdentityResourceId.value = $IdentityId
+    $foundationResourceGroupParameter.Value.value = $FoundationResourceGroup
+    $keyVaultNameParameter.Value.value = $KeyVaultName
 
     if (-not [string]::IsNullOrWhiteSpace($PublicIp)) {
         $sources = @($Parameters.parameters.jumpboxAllowedSources.value)
@@ -1235,6 +1374,8 @@ function Get-AMRLParameterFilePublicIp {
     param([Parameter(Mandatory = $true)][object]$Parameters)
 
     $singleHostSources = @($Parameters.parameters.jumpboxAllowedSources.value | Where-Object { [string]$_ -match '^\d{1,3}(?:\.\d{1,3}){3}/32$' })
+# Read the configured top-level foundation names, then verify or derive the exact Azure resource
+# identities used later by Bicep. This is targeted lookup, not subscription-wide discovery.
     $parsedSources = @($singleHostSources | Where-Object {
         $candidateAddress = $null
         [System.Net.IPAddress]::TryParse(([string]$_ -replace '/32$', ''), [ref]$candidateAddress) -and $candidateAddress.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork
@@ -1245,7 +1386,9 @@ function Get-AMRLParameterFilePublicIp {
     return ([string]$parsedSources[0] -replace '/32$', '')
 }
 
-# Resolve explicit prerequisite references before normal setup can create resources.
+# Resolve current foundation inputs before normal setup can create resources. Resource IDs are
+# derived from the selected subscription and configured names; missing resources are tolerated
+# only when the caller is explicitly preparing a foundation rebuild.
 function Get-AMRLFoundationConfiguration {
     param(
         [Parameter(Mandatory = $true)][object]$Parameters,
@@ -1253,55 +1396,41 @@ function Get-AMRLFoundationConfiguration {
         [switch]$AllowMissingFoundation
     )
 
-    $bootstrap = $null
-    $prefixMetadataProperty = $Parameters.parameters.prefix.PSObject.Properties['metadata']
-    if ($null -ne $prefixMetadataProperty) {
-        $bootstrapProperty = $prefixMetadataProperty.Value.PSObject.Properties['bootstrap']
-        if ($null -ne $bootstrapProperty) { $bootstrap = $bootstrapProperty.Value }
+    Assert-AMRLParameterDocumentCurrent -Parameters $Parameters
+    $foundationResourceGroupParameter = $Parameters.parameters.PSObject.Properties['foundationResourceGroup']
+    $keyVaultNameParameter = $Parameters.parameters.PSObject.Properties['keyVaultName']
+    if ($null -eq $foundationResourceGroupParameter -or $null -eq $keyVaultNameParameter) {
+        throw 'The current parameter contract requires top-level foundationResourceGroup and keyVaultName values.'
     }
-    $defaultResourceGroup = if ($null -eq $bootstrap) { '' } else { [string]$bootstrap.foundationResourceGroup }
-    if ([string]::IsNullOrWhiteSpace($defaultResourceGroup)) { $defaultResourceGroup = 'amrl-foundation-rg' }
-    $defaultIdentityName = if ($null -eq $bootstrap) { '' } else { [string]$bootstrap.automationManagedIdentityName }
-    if ([string]::IsNullOrWhiteSpace($defaultIdentityName)) { $defaultIdentityName = 'amrl-deployment-mi' }
+    $defaultResourceGroup = [string]$foundationResourceGroupParameter.Value.value
+    $configuredVaultName = [string]$keyVaultNameParameter.Value.value
+    if ([string]::IsNullOrWhiteSpace($defaultResourceGroup) -or $defaultResourceGroup -match '[<>]') {
+        throw 'Set a concrete top-level foundationResourceGroup value in the parameter file.'
+    }
+    if ($configuredVaultName -match '[<>]') { $configuredVaultName = '' }
+    if ($script:ParameterFileWasExplicit -and [string]::IsNullOrWhiteSpace($configuredVaultName)) {
+        throw 'Set a concrete top-level keyVaultName value in the explicit parameter file.'
+    }
+    $defaultIdentityName = Get-AMRLDefault 'automationManagedIdentityName'
     $result = [pscustomobject]@{
         ResourceGroup = $defaultResourceGroup
         IdentityResourceGroup = $defaultResourceGroup
         IdentityName = $defaultIdentityName
         IdentityId = ''
         VaultResourceGroup = $defaultResourceGroup
-        VaultName = ''
+        VaultName = $configuredVaultName
         VaultId = ''
         RebuildFoundation = $false
         RecoveryConfirmed = $false
     }
-    $vaultIds = New-Object 'System.Collections.Generic.List[string]'
-    foreach ($entry in $Parameters.parameters.PSObject.Properties) {
-        $reference = $entry.Value.PSObject.Properties['reference']
-        if ($null -ne $reference) {
-            $vaultId = [string]$reference.Value.keyVault.id
-            if (-not [string]::IsNullOrWhiteSpace($vaultId) -and $vaultId -notmatch '[<>]' -and $vaultId -notin $vaultIds) { $vaultIds.Add($vaultId) }
-        }
+
+    $result.IdentityName = $defaultIdentityName
+    $result.IdentityResourceGroup = $defaultResourceGroup
+    $result.IdentityId = "/subscriptions/$SubscriptionId/resourceGroups/$defaultResourceGroup/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$defaultIdentityName"
+
+    if (-not [string]::IsNullOrWhiteSpace($configuredVaultName)) {
+        $result.VaultId = "/subscriptions/$SubscriptionId/resourceGroups/$defaultResourceGroup/providers/Microsoft.KeyVault/vaults/$configuredVaultName"
     }
-    if ($vaultIds.Count -gt 1) { throw 'Bootstrap setup requires a single referenced Key Vault. Review the supplied vault references before continuing.' }
-    $references = @{
-        Identity = [string]$Parameters.parameters.automationManagedIdentityResourceId.value
-        Vault = if ($vaultIds.Count -eq 1) { $vaultIds[0] } else { '' }
-    }
-    foreach ($kind in @('Vault', 'Identity')) {
-        $resourceId = $references[$kind]
-        if ([string]::IsNullOrWhiteSpace($resourceId) -or $resourceId -match '[<>]') { continue }
-        $resourceType = if ($kind -eq 'Identity') { 'Microsoft.ManagedIdentity/userAssignedIdentities' } else { 'Microsoft.KeyVault/vaults' }
-        $pattern = '^/subscriptions/([^/]+)/resourceGroups/([^/]+)/providers/' + [regex]::Escape($resourceType) + '/([^/]+)$'
-        $match = [regex]::Match($resourceId, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-        if (-not $match.Success) { throw "Invalid $kind resource ID in the parameter file." }
-        if ($match.Groups[1].Value -ne $SubscriptionId) { throw "The referenced $kind belongs to a different subscription. No foundation changes were made." }
-        $result."${kind}Id" = $resourceId
-        $result."${kind}ResourceGroup" = $match.Groups[2].Value
-        $result."${kind}Name" = $match.Groups[3].Value
-        $result.ResourceGroup = $match.Groups[2].Value
-    }
-    if ([string]::IsNullOrWhiteSpace($result.IdentityId)) { $result.IdentityResourceGroup = $result.ResourceGroup }
-    if ([string]::IsNullOrWhiteSpace($result.VaultId)) { $result.VaultResourceGroup = $result.ResourceGroup }
     $canRebuildFoundation = $AllowMissingFoundation -and
         $result.ResourceGroup -eq $defaultResourceGroup -and
         $result.IdentityResourceGroup -eq $defaultResourceGroup -and
@@ -1314,6 +1443,7 @@ function Get-AMRLFoundationConfiguration {
     }
     if (-not [string]::IsNullOrWhiteSpace($result.IdentityId)) {
         $identity = $null
+        Write-Host "Checking managed identity (AMRL default): $defaultIdentityName"
         try { $identity = Get-AzJson -Arguments @('identity', 'show', '--ids', $result.IdentityId) }
         catch {
             if (-not $canRebuildFoundation -or $_.Exception.Message -notmatch '\b(ResourceNotFound|ResourceGroupNotFound)\b') { throw }
@@ -1321,14 +1451,15 @@ function Get-AMRLFoundationConfiguration {
         if ($null -eq $identity -and $canRebuildFoundation) { $result.RebuildFoundation = $true }
         elseif ($null -eq $identity -or $identity.id -ne $result.IdentityId) { throw 'The explicitly referenced managed identity was not found. Restore it or review the parameter file.' }
     }
-    if (-not [string]::IsNullOrWhiteSpace($result.VaultId)) {
+    if (-not [string]::IsNullOrWhiteSpace($result.VaultName)) {
         $vault = $null
         try { $vault = Get-AzJson -Arguments @('keyvault', 'show', '--name', $result.VaultName, '--resource-group', $result.VaultResourceGroup) }
         catch {
-            if (-not $canRebuildFoundation -or $_.Exception.Message -notmatch '\b(ResourceNotFound|ResourceGroupNotFound)\b') { throw }
+            if ($_.Exception.Message -notmatch '\b(ResourceNotFound|ResourceGroupNotFound)\b') { throw }
         }
         if ($null -eq $vault -and $canRebuildFoundation) { $result.RebuildFoundation = $true }
-        elseif ($null -eq $vault -or $vault.id -ne $result.VaultId) { throw 'The explicitly referenced Key Vault was not found. Restore it or review the parameter file.' }
+        elseif ($null -eq $vault) { $result.VaultId = '' }
+        elseif ($vault.id -ne $result.VaultId) { throw 'The Key Vault name resolved to an unexpected resource ID.' }
     }
     return $result
 }
@@ -1341,26 +1472,98 @@ function Set-AMRLFoundationResourceGroup {
         [Parameter(Mandatory = $true)][string]$SubscriptionId
     )
 
+    Assert-AMRLParameterDocumentCurrent -Parameters $Parameters
+    $configuredVaultName = [string]$Parameters.parameters.keyVaultName.value
     $Foundation.ResourceGroup = $ResourceGroupName
     $Foundation.IdentityResourceGroup = $ResourceGroupName
     $Foundation.VaultResourceGroup = $ResourceGroupName
     $Foundation.IdentityId = ''
     $Foundation.VaultId = ''
-    $Foundation.IdentityName = [string]$Parameters.parameters.prefix.metadata.bootstrap.automationManagedIdentityName
-    $Foundation.VaultName = Get-AMRLAvailableVaultName -SubscriptionId $SubscriptionId
+    $Foundation.IdentityName = Get-AMRLDefault 'automationManagedIdentityName'
     $Foundation.RebuildFoundation = $true
     $Foundation.RecoveryConfirmed = $false
 
-    $Parameters.parameters.prefix.metadata.bootstrap.foundationResourceGroup = $ResourceGroupName
-    $Parameters.parameters.automationManagedIdentityResourceId.value = ''
-    foreach ($entry in $Parameters.parameters.PSObject.Properties) {
-        $referenceProperty = $entry.Value.PSObject.Properties['reference']
-        if ($null -eq $referenceProperty) { continue }
-        $keyVaultProperty = $referenceProperty.Value.PSObject.Properties['keyVault']
-        if ($null -eq $keyVaultProperty) { continue }
-        $idProperty = $keyVaultProperty.Value.PSObject.Properties['id']
-        if ($null -ne $idProperty) { $idProperty.Value = '' }
+    $activeVaults = @()
+    if ((Get-AzTsv -Arguments @('group', 'exists', '--name', $ResourceGroupName)) -eq 'true') {
+        $activeVaults = @(Get-AzJson -Arguments @('keyvault', 'list', '--resource-group', $ResourceGroupName) | Where-Object {
+            -not [string]::IsNullOrWhiteSpace([string]$_.name) -and
+            -not [string]::IsNullOrWhiteSpace([string]$_.id)
+        })
     }
+    $selectedVault = $null
+    if ($activeVaults.Count -eq 1) {
+        $candidate = $activeVaults[0]
+        $reuseDefault = if ([string]$candidate.name -ieq $configuredVaultName) { 'yes' } else { 'no' }
+        $reuseAnswer = Read-RequiredValue -Prompt "Reuse existing Key Vault '$($candidate.name)' in '$ResourceGroupName'?" -Hint 'y/N' -DefaultValue $reuseDefault -Validator {
+            param($Value) $Value -in @('yes', 'no', 'y', 'n')
+        }
+        if ($reuseAnswer -in @('yes', 'y')) { $selectedVault = $candidate }
+    }
+    elseif ($activeVaults.Count -gt 1) {
+        $vaultChoices = @($activeVaults | ForEach-Object { [string]$_.name }) + 'Create new Key Vault'
+        $choiceDefault = if ($configuredVaultName -in $vaultChoices) { $configuredVaultName } else { '' }
+        $selectedVaultName = Read-RequiredValue -Prompt "Choose an existing Key Vault in '$ResourceGroupName' or create a new one" -Hint ($vaultChoices -join ', ') -DefaultValue $choiceDefault -Validator {
+            param($Value) $Value -in $vaultChoices
+        }
+        if ($selectedVaultName -ne 'Create new Key Vault') {
+            $selectedVault = $activeVaults | Where-Object { $_.name -ceq $selectedVaultName } | Select-Object -First 1
+        }
+    }
+
+    if ($null -ne $selectedVault) {
+        $Foundation.VaultName = [string]$selectedVault.name
+        $Foundation.VaultId = [string]$selectedVault.id
+        Write-Host "Reusing Key Vault '$($Foundation.VaultName)' in '$ResourceGroupName'."
+    }
+    else {
+        $escapedResourceGroup = [regex]::Escape($ResourceGroupName)
+        $deletedVaults = @(Get-AzJson -Arguments @('keyvault', 'list-deleted', '--resource-type', 'vault', '--subscription', $SubscriptionId) | Where-Object {
+            $deletedVaultId = [string]$_.properties.vaultId
+            -not [string]::IsNullOrWhiteSpace([string]$_.name) -and
+            $deletedVaultId -match "(?i)/resourceGroups/$escapedResourceGroup/providers/Microsoft\.KeyVault/vaults/[^/]+$"
+        })
+        $selectedDeletedVault = $null
+        if ($deletedVaults.Count -eq 1) {
+            $candidate = $deletedVaults[0]
+            $recoverDefault = if ([string]$candidate.name -ieq $configuredVaultName) { 'yes' } else { 'no' }
+            $recoverAnswer = Read-RequiredValue -Prompt "Recover soft-deleted Key Vault '$($candidate.name)' into '$ResourceGroupName' and preserve its secrets?" -Hint 'y/N' -DefaultValue $recoverDefault -Validator {
+                param($Value) $Value -in @('yes', 'no', 'y', 'n')
+            }
+            if ($recoverAnswer -in @('yes', 'y')) { $selectedDeletedVault = $candidate }
+        }
+        elseif ($deletedVaults.Count -gt 1) {
+            $deletedVaultChoices = @($deletedVaults | ForEach-Object { [string]$_.name }) + 'Create new Key Vault'
+            $choiceDefault = if ($configuredVaultName -in $deletedVaultChoices) { $configuredVaultName } else { '' }
+            $selectedDeletedName = Read-RequiredValue -Prompt "Choose a soft-deleted Key Vault in '$ResourceGroupName' or create a new one" -Hint ($deletedVaultChoices -join ', ') -DefaultValue $choiceDefault -Validator {
+                param($Value) $Value -in $deletedVaultChoices
+            }
+            if ($selectedDeletedName -ne 'Create new Key Vault') {
+                $candidate = $deletedVaults | Where-Object { $_.name -ceq $selectedDeletedName } | Select-Object -First 1
+                $recoverAnswer = Read-RequiredValue -Prompt "Recover soft-deleted Key Vault '$selectedDeletedName' into '$ResourceGroupName' and preserve its secrets?" -Hint 'y/N' -DefaultValue 'no' -Validator {
+                    param($Value) $Value -in @('yes', 'no', 'y', 'n')
+                }
+                if ($recoverAnswer -in @('yes', 'y')) { $selectedDeletedVault = $candidate }
+            }
+        }
+
+        if ($null -ne $selectedDeletedVault) {
+            $Foundation.VaultName = [string]$selectedDeletedVault.name
+            $Foundation.VaultId = [string]$selectedDeletedVault.properties.vaultId
+            $Foundation.RecoveryConfirmed = $true
+            Write-Host "Selected soft-deleted Key Vault '$($Foundation.VaultName)' for recovery into '$ResourceGroupName'."
+        }
+        else {
+            $Foundation.VaultName = Get-AMRLAvailableVaultName -SubscriptionId $SubscriptionId
+        }
+    }
+
+    $foundationResourceGroupParameter = $Parameters.parameters.PSObject.Properties['foundationResourceGroup']
+    $keyVaultNameParameter = $Parameters.parameters.PSObject.Properties['keyVaultName']
+    if ($null -eq $foundationResourceGroupParameter -or $null -eq $keyVaultNameParameter) {
+        throw 'Foundation replacement requires top-level foundationResourceGroup and keyVaultName parameters.'
+    }
+    $foundationResourceGroupParameter.Value.value = $ResourceGroupName
+    $keyVaultNameParameter.Value.value = $Foundation.VaultName
 }
 
 function Read-AMRLFoundationResourceGroupName {
@@ -1436,7 +1639,60 @@ function Get-GitHubSubject {
     return "repo:${Repository}:ref:refs/heads/${Branch}"
 }
 
-# GitHub defaults use client metadata, not extra Bicep deployment parameters.
+# Reject retired parameter names, metadata fields, and secret-reference shapes before Azure writes begin.
+function Assert-AMRLParameterDocumentCurrent {
+    param([Parameter(Mandatory = $true)][object]$Parameters)
+
+    $bootstrap = $null
+    $prefixProperty = $Parameters.parameters.PSObject.Properties['prefix']
+    if ($null -ne $prefixProperty) {
+        $metadataProperty = $prefixProperty.Value.PSObject.Properties['metadata']
+        if ($null -ne $metadataProperty) {
+            $bootstrapProperty = $metadataProperty.Value.PSObject.Properties['bootstrap']
+            if ($null -ne $bootstrapProperty) { $bootstrap = $bootstrapProperty.Value }
+        }
+    }
+    if ($null -ne $bootstrap -and $null -ne $bootstrap.PSObject.Properties['foundationResourceGroup']) {
+        throw 'This parameter file uses the retired metadata foundationResourceGroup field. Set top-level foundationResourceGroup and remove the metadata field.'
+    }
+    if ($null -ne $bootstrap -and $null -ne $bootstrap.PSObject.Properties['automationManagedIdentityName']) {
+        throw 'Remove automationManagedIdentityName from bootstrap metadata; its value is owned by config/amrl-defaults.json.'
+    }
+    if ($null -ne $bootstrap -and $null -ne $bootstrap.PSObject.Properties['githubAppDisplayName']) {
+        throw 'Remove githubAppDisplayName from bootstrap metadata; its value is owned by config/amrl-defaults.json.'
+    }
+    if ($null -ne $bootstrap -and $null -ne $bootstrap.PSObject.Properties['deploymentLocation']) {
+        throw 'Remove deploymentLocation from bootstrap metadata; the bootstrapper derives it from the first regionIndexMap entry.'
+    }
+    foreach ($identityParameterName in @('automationManagedIdentityName', 'automationManagedIdentityResourceId')) {
+        if ($null -ne $Parameters.parameters.PSObject.Properties[$identityParameterName]) {
+            throw "Remove retired parameter '$identityParameterName'; identity naming is owned by config/amrl-defaults.json."
+        }
+    }
+    foreach ($obsoleteName in @('jumpboxAdminPassword', 'labAdminPassword', 'sshPublicKey', 'sshPrivateKey')) {
+        if ($null -ne $Parameters.parameters.PSObject.Properties[$obsoleteName]) {
+            throw "This parameter file contains retired per-secret parameter '$obsoleteName'. Use the current parameter templates with top-level Key Vault settings."
+        }
+    }
+    foreach ($entry in $Parameters.parameters.PSObject.Properties) {
+        if ($null -ne $entry.Value.PSObject.Properties['reference']) {
+            throw "Parameter '$($entry.Name)' uses a retired Key Vault reference object. The current contract uses Bicep getSecret() and value parameters only."
+        }
+    }
+    foreach ($parameterName in @('foundationResourceGroup', 'keyVaultName')) {
+        $parameter = $Parameters.parameters.PSObject.Properties[$parameterName]
+        if ($null -eq $parameter -or $null -eq $parameter.Value.PSObject.Properties['value']) {
+            throw "The current parameter contract requires a value for '$parameterName'. Use main.parameters.example.json as the schema."
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Parameters.parameters.foundationResourceGroup.value) -or
+        [string]$Parameters.parameters.foundationResourceGroup.value -match '[<>]') {
+        throw 'Set a concrete top-level foundationResourceGroup value in the parameter file.'
+    }
+}
+
+# Compare the supplied file with the checked-in complete parameter schema; GitHub settings remain
+# client metadata and are not extra Bicep parameters.
 function Assert-AMRLParameterDocumentComplete {
     param([Parameter(Mandatory = $true)][object]$Parameters)
 
@@ -1445,16 +1701,18 @@ function Assert-AMRLParameterDocumentComplete {
     $missing = New-Object 'System.Collections.Generic.List[string]'
     foreach ($entry in $template.parameters.PSObject.Properties) {
         $provided = $Parameters.parameters.PSObject.Properties[$entry.Name]
-        if ($null -eq $provided -or
-            ($null -eq $provided.Value.PSObject.Properties['value'] -and $null -eq $provided.Value.PSObject.Properties['reference'])) {
+        if ($null -eq $provided -or $null -eq $provided.Value.PSObject.Properties['value']) {
             $missing.Add($entry.Name)
         }
     }
     if ($missing.Count -gt 0) {
         throw "The parameter file is missing required Bicep parameter values: $($missing -join ', '). Add them from main.parameters.example.json before running the bootstrapper."
     }
+    Assert-AMRLParameterDocumentCurrent -Parameters $Parameters
 }
 
+# Load an explicit file or local/demo defaults, apply only the prompts relevant to the selected
+# stage, and save wizard changes unless this is the read-only Plan mode.
 function Get-ParameterDocument {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -1489,6 +1747,7 @@ function Get-ParameterDocument {
         $document.parameters.stage.value = $stageAnswer.ToLowerInvariant()
     }
     $selectedStage = [string]$document.parameters.stage.value
+    Assert-AMRLParameterDocumentCurrent -Parameters $document
 
     $templatePath = Join-Path $script:RepositoryRoot 'main.parameters.demo.json'
     $templateDocument = if ($Path -eq $templatePath) {
@@ -1507,14 +1766,14 @@ function Get-ParameterDocument {
         $document.parameters.prefix.metadata | Add-Member -NotePropertyName bootstrap -NotePropertyValue ([pscustomobject]@{})
     }
     if ($IncludeGitHub -and -not $script:InteractiveConfiguration) {
-        foreach ($setting in @('githubRepository', 'githubAppDisplayName')) {
+        foreach ($setting in @('githubRepository')) {
             $settingProperty = $document.parameters.prefix.metadata.bootstrap.PSObject.Properties[$setting]
             if ($null -eq $settingProperty -or [string]::IsNullOrWhiteSpace([string]$settingProperty.Value)) {
                 throw "The explicit parameter file must define prefix.metadata.bootstrap.$setting when -IncludeGitHub is used."
             }
         }
     }
-    $bootstrapSettings = @('githubRepository', 'githubAppDisplayName', 'deploymentLocation', 'foundationResourceGroup', 'automationManagedIdentityName')
+    $bootstrapSettings = @('githubRepository')
     if ($script:InteractiveConfiguration) { $bootstrapSettings += @('azureTenantId', 'azureSubscriptionId') }
     foreach ($setting in $bootstrapSettings) {
         $defaultProperty = $bootstrapDefaults.PSObject.Properties[$setting]
@@ -1527,27 +1786,9 @@ function Get-ParameterDocument {
     }
     if ($IncludeGitHub -and $script:InteractiveConfiguration) {
         $document.parameters.prefix.metadata.bootstrap.githubRepository = Read-RequiredValue -Prompt 'GitHub repository' -Hint 'exact full repository name' -DefaultValue ([string]$document.parameters.prefix.metadata.bootstrap.githubRepository)
-        $document.parameters.prefix.metadata.bootstrap.githubAppDisplayName = Read-RequiredValue -Prompt 'Entra app display name for GitHub OIDC' -Hint 'any non-empty name' -DefaultValue ([string]$document.parameters.prefix.metadata.bootstrap.githubAppDisplayName)
     }
 
-    $orderedRegions = @($document.parameters.regionIndexMap.value.PSObject.Properties | Sort-Object { [int]$_.Value })
-    if ($orderedRegions.Count -eq 0) { throw 'regionIndexMap is empty; cannot choose the default foundation resource location.' }
-    $firstMappedRegion = [string]$orderedRegions[0].Name
-    $foundationMetadata = $document.parameters.prefix.metadata.bootstrap
-    $foundationLocationProperty = $foundationMetadata.PSObject.Properties['foundationLocation']
-    $foundationLocation = if ($null -eq $foundationLocationProperty) { '' } else { [string]$foundationLocationProperty.Value }
-    $foundationLocationSourceProperty = $foundationMetadata.PSObject.Properties['foundationLocationSource']
-    $foundationLocationSource = if ($null -eq $foundationLocationSourceProperty) { '' } else { [string]$foundationLocationSourceProperty.Value }
-    if ($foundationLocationSource -eq 'regionIndexMap' -or [string]::IsNullOrWhiteSpace($foundationLocation)) {
-        $foundationLocation = $firstMappedRegion
-        $foundationLocationSource = 'regionIndexMap'
-    }
-    elseif ([string]::IsNullOrWhiteSpace($foundationLocationSource)) {
-        $foundationLocationSource = 'explicit'
-    }
-
-    $foundationMetadata | Add-Member -NotePropertyName foundationLocation -NotePropertyValue $foundationLocation -Force
-    $foundationMetadata | Add-Member -NotePropertyName foundationLocationSource -NotePropertyValue $foundationLocationSource -Force
+    Get-AMRLFoundationLocation -Parameters $document | Out-Null
 
     if (-not $script:InteractiveConfiguration) {
         return $document
@@ -1569,8 +1810,9 @@ function Get-ParameterDocument {
 
     $document.parameters.maxVmsPerRegion.value = Read-NonNegativeInteger -Prompt 'maxVmsPerRegion' -Minimum 1 -DefaultValue ([string]$document.parameters.maxVmsPerRegion.value)
     if ($selectedStage -in @('all', 'identity')) {
+        $minimumDepartmentCount = @($document.parameters.sysAdminDepartment.value.PSObject.Properties).Count
         $maximumDepartmentCount = @($document.parameters.sysAdminDepartment.value.PSObject.Properties).Count + @($document.parameters.additionalDepartments.value.PSObject.Properties).Count
-        $document.parameters.departmentCount.value = Read-NonNegativeInteger -Prompt 'departmentCount' -Hint "whole number, 0 or greater; maximum $maximumDepartmentCount defined departments" -DefaultValue ([string]$document.parameters.departmentCount.value)
+        $document.parameters.departmentCount.value = Read-NonNegativeInteger -Prompt 'departmentCount' -Minimum $minimumDepartmentCount -Hint "whole number, $minimumDepartmentCount or greater; maximum $maximumDepartmentCount defined departments" -DefaultValue ([string]$document.parameters.departmentCount.value)
         $document.parameters.usersPerDepartment.value = Read-NonNegativeInteger -Prompt 'usersPerDepartment' -Minimum 1 -DefaultValue ([string]$document.parameters.usersPerDepartment.value)
     }
 
@@ -1580,7 +1822,7 @@ function Get-ParameterDocument {
         $document.parameters.vmCounts.value.$countName = Read-NonNegativeInteger -Prompt "VM count for $countName" -Hint $hint -DefaultValue $defaultCount
     }
 
-    $stageFeatureSettings = if ($selectedStage -in @('all', 'identity')) { @('enableFileServices', 'useDedicatedFileServer', 'enableWindowsAdminCenter', 'useDedicatedWacHost') } else { @() }
+    $stageFeatureSettings = if ($selectedStage -in @('all', 'identity')) { @('useDedicatedFileServer', 'enableWindowsAdminCenter', 'useDedicatedWacHost') } else { @() }
     foreach ($setting in $stageFeatureSettings) {
         $defaultAnswer = if ($document.parameters.$setting.value) { 'yes' } else { 'no' }
         $answer = Read-RequiredValue -Prompt $setting -Hint 'y/N' -DefaultValue $defaultAnswer -Validator {
@@ -1605,6 +1847,10 @@ function Get-ParameterDocument {
 }
 
 # 5. Subscription-level setup: role assignments and Key Vault credentials
+# These operations prepare resources outside the Bicep lab deployment. Existing settings are
+# preserved where possible; replacing a missing secret does not rotate a password on an existing guest.
+# Query the exact principal/role/scope tuple before creating a role assignment. Filtering by object ID
+# avoids Azure CLI's Entra Graph lookup for newly created service principals.
 function Set-AMRLRoleAssignmentIfMissing {
     param(
         [Parameter(Mandatory = $true)][string]$AssigneeObjectId,
@@ -1615,11 +1861,13 @@ function Set-AMRLRoleAssignmentIfMissing {
 
     $existingId = Get-AzTsv -Arguments @(
         'role', 'assignment', 'list', '--scope', $Scope,
-        '--assignee', $AssigneeObjectId,
-        '--query', "[?roleDefinitionName=='$Role' && scope=='$Scope'].id"
+        '--query', "[?principalId=='$AssigneeObjectId' && roleDefinitionName=='$Role' && scope=='$Scope'].id"
     )
     if (-not [string]::IsNullOrWhiteSpace($existingId)) {
-        Write-Host "Role assignment exists: $Role on $Scope"
+        $scopeLabel = if ($Scope -match '^/subscriptions/[^/]+$') { 'subscription' }
+        elseif ($Scope -match '(?i)/providers/Microsoft\.KeyVault/vaults/([^/]+)$') { "Key Vault '$($Matches[1])'" }
+        else { $Scope }
+        Write-Host "Role assignment exists: $Role on $scopeLabel"
         return
     }
 
@@ -1632,6 +1880,8 @@ function Set-AMRLRoleAssignmentIfMissing {
     })
 }
 
+# Password-secret lifecycle: preserve active values, recover a soft-deleted value when present,
+# and otherwise create a replacement. This manages Key Vault only; it does not rotate guest accounts.
 function Set-AMRLSecretIfMissing {
     param(
         [Parameter(Mandatory = $true)][string]$VaultName,
@@ -1640,6 +1890,7 @@ function Set-AMRLSecretIfMissing {
         [switch]$Prompt
     )
 
+    Write-Host "Checking Key Vault secret: $SecretName"
     $exists = Get-AzTsv -Arguments @(
         'keyvault', 'secret', 'list', '--vault-name', $VaultName,
         '--query', "[?name=='$SecretName'].name"
@@ -1649,8 +1900,22 @@ function Set-AMRLSecretIfMissing {
         return
     }
 
+    # A soft-deleted password name must be recovered before the bootstrapper can reuse it.
+    if ($Password) {
+        $deletedSecret = Get-AzTsv -Arguments @(
+            'keyvault', 'secret', 'list-deleted', '--vault-name', $VaultName,
+            '--query', "[?name=='$SecretName'].name"
+        )
+        if (-not [string]::IsNullOrWhiteSpace($deletedSecret)) {
+            [void](Invoke-AMRLChange -Target "Deleted Key Vault secret $SecretName in $VaultName" -Action 'Recover deleted password secret' -Operation {
+                Invoke-AzCli -Arguments @('keyvault', 'secret', 'recover', '--vault-name', $VaultName, '--name', $SecretName, '--output', 'none') | Out-Null
+            })
+            return
+        }
+    }
+
     if ($Password -and $script:InteractiveConfiguration -and -not $script:PasswordChoiceMade) {
-        $passwordGenerationChoice = Read-RequiredValue -Prompt 'Randomly generate missing administrator passwords?' -Hint 'y/N' -DefaultValue 'yes' -Validator {
+        $passwordGenerationChoice = Read-RequiredValue -Prompt 'Randomly generate missing passwords?' -Hint 'y/N' -DefaultValue 'yes' -Validator {
             param($Value) $Value -in @('yes', 'no', 'y', 'n')
         }
         $script:PromptForPasswords = $passwordGenerationChoice -in @('no', 'n')
@@ -1658,6 +1923,7 @@ function Set-AMRLSecretIfMissing {
         $Prompt = $script:PromptForPasswords
     }
 
+    Write-Host "Creating missing Key Vault secret: $SecretName"
     [void](Invoke-AMRLChange -Target "Key Vault secret $SecretName in $VaultName" -Action 'Create secret' -Operation {
         $secretValue = $null
         $secureValue = $null
@@ -1693,25 +1959,105 @@ function Set-AMRLSecretIfMissing {
             if ($null -ne $secureValue) { $secureValue.Dispose() }
         }
     })
+    Write-Host "Key Vault secret created: $SecretName"
 }
 
 # Reuse the dedicated local/vault pair; mismatches require intentional operator repair.
+# Keep the public/private SSH keys as a matched pair; do not silently replace one half of an existing pair.
+function Invoke-AMRLSSHKeygen {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Arguments)
+
+    $command = Get-Command 'ssh-keygen' -CommandType Application -ErrorAction Stop
+    $result = Invoke-AMRLTimedProcess -Command $command.Source -Arguments $Arguments -TimeoutSeconds 30
+    if ($result.ExitCode -ne 0) {
+        $details = if ([string]::IsNullOrWhiteSpace($result.ErrorOutput)) { $result.Output.Trim() } else { $result.ErrorOutput.Trim() }
+        throw "SSH key operation failed (exit $($result.ExitCode)): $details"
+    }
+    return $result.Output.Trim()
+}
+
+function Get-AMRLSSHKeyPublicText {
+    param([Parameter(Mandatory = $true)][string]$PrivateKeyPath)
+
+    return Invoke-AMRLSSHKeygen -Arguments @('-y', '-P', '', '-f', $PrivateKeyPath)
+}
+
 function Set-AMRLKeySecretsIfMissing {
     param([Parameter(Mandatory = $true)][string]$VaultName)
 
+    $publicKeySecretName = Get-AMRLDefault 'sshPublicKeySecretName'
+    $privateKeySecretName = Get-AMRLDefault 'sshPrivateKeySecretName'
     $keyPath = Join-Path $HOME '.ssh/amrl_ed25519'
     $publicPath = "$keyPath.pub"
     $privateExists = Test-Path -LiteralPath $keyPath
     $publicExists = Test-Path -LiteralPath $publicPath
 
+    Write-Host "Checking Key Vault SSH secrets: $publicKeySecretName, $privateKeySecretName"
+    $secretNames = @(Get-AzJson -Arguments @('keyvault', 'secret', 'list', '--vault-name', $VaultName, '--query', '[].name') | ForEach-Object {
+        if ($_ -is [string]) { $_ } elseif ($null -ne $_.PSObject.Properties['name']) { [string]$_.name }
+    } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    $hasPublicKey = $publicKeySecretName -in $secretNames
+    $hasPrivateKey = $privateKeySecretName -in $secretNames
+    $hasVaultPair = $hasPublicKey -and $hasPrivateKey
+
+    if (-not $hasVaultPair) {
+        $deletedSecretNames = @(Get-AzJson -Arguments @('keyvault', 'secret', 'list-deleted', '--vault-name', $VaultName, '--query', '[].name') | ForEach-Object {
+            if ($_ -is [string]) { $_ } elseif ($null -ne $_.PSObject.Properties['name']) { [string]$_.name }
+        } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        $hasDeletedPublicKey = $publicKeySecretName -in $deletedSecretNames
+        $hasDeletedPrivateKey = $privateKeySecretName -in $deletedSecretNames
+        $publicAvailable = $hasPublicKey -or $hasDeletedPublicKey
+        $privateAvailable = $hasPrivateKey -or $hasDeletedPrivateKey
+
+        if ($publicAvailable -xor $privateAvailable) {
+            throw 'The SSH key pair in Key Vault is incomplete: only one public/private key secret is active or recoverable. Restore both matching secrets or resolve the pair manually; no key was replaced.'
+        }
+
+        if ($publicAvailable -and $privateAvailable) {
+            foreach ($secretName in @($publicKeySecretName, $privateKeySecretName)) {
+                if ($secretName -notin $secretNames) {
+                    [void](Invoke-AMRLChange -Target "Deleted Key Vault SSH secret $secretName in $VaultName" -Action 'Recover deleted SSH key secret' -Operation {
+                        Invoke-AzCli -Arguments @('keyvault', 'secret', 'recover', '--vault-name', $VaultName, '--name', $secretName, '--output', 'none') | Out-Null
+                    })
+                    $secretNames += $secretName
+                }
+            }
+            $hasVaultPair = $true
+        }
+    }
+
+    if ($hasVaultPair) {
+        if ($privateExists -and $publicExists) {
+            $publicKey = (Get-Content -Raw -LiteralPath $publicPath).Trim()
+            $derivedPublicKey = Get-AMRLSSHKeyPublicText -PrivateKeyPath $keyPath
+            $localPublicIdentity = @($publicKey -split '\s+' | Select-Object -First 2)
+            $derivedPublicIdentity = @($derivedPublicKey -split '\s+' | Select-Object -First 2)
+            if ($localPublicIdentity.Count -lt 2 -or $derivedPublicIdentity.Count -lt 2 -or
+                (($derivedPublicIdentity -join ' ') -ne ($localPublicIdentity -join ' '))) {
+                throw 'The local public and private SSH keys do not match. The script will not overwrite the valid Key Vault pair.'
+            }
+            $vaultPublicKey = (Get-AzTsv -Arguments @('keyvault', 'secret', 'show', '--vault-name', $VaultName, '--name', $publicKeySecretName, '--query', 'value')).Trim()
+            $vaultPublicIdentity = @($vaultPublicKey -split '\s+' | Select-Object -First 2)
+            if ($vaultPublicIdentity.Count -lt 2 -or (($vaultPublicIdentity -join ' ') -ne ($localPublicIdentity -join ' '))) {
+                throw 'The Key Vault SSH public key differs from the local key pair. Resolve key rotation manually; the script will not overwrite either pair.'
+            }
+        }
+        elseif ($privateExists -xor $publicExists) {
+            Write-Warning "The Key Vault SSH pair is intact, but the local pair at '$keyPath' is incomplete. Keeping Key Vault unchanged; repair the local copy separately if needed."
+        }
+        else {
+            Write-Host 'Key Vault SSH pair exists; keeping it unchanged and not generating a conflicting local pair.'
+        }
+        return
+    }
+
     if ($privateExists -xor $publicExists) {
-        throw "SSH key pair is incomplete at '$keyPath'. Restore both files or resolve the pair manually; the script will not overwrite it."
+        throw "Local SSH key pair is incomplete at '$keyPath' and no complete Key Vault pair is available. Restore the pair or resolve it manually; the script will not overwrite either key."
     }
     if (-not $privateExists) {
         [void](Invoke-AMRLChange -Target $keyPath -Action 'Generate dedicated Ed25519 SSH key pair' -Operation {
             New-Item -ItemType Directory -Path (Split-Path $keyPath -Parent) -Force | Out-Null
-            & ssh-keygen -t ed25519 -f $keyPath -N '' -q
-            if ($LASTEXITCODE -ne 0) { throw 'SSH key generation failed.' }
+            Invoke-AMRLSSHKeygen -Arguments @('-t', 'ed25519', '-f', $keyPath, '-N', '', '-q') | Out-Null
         })
         if (-not (Test-Path -LiteralPath $keyPath) -or -not (Test-Path -LiteralPath $publicPath)) {
             throw 'SSH key generation completed without producing both key files.'
@@ -1719,29 +2065,29 @@ function Set-AMRLKeySecretsIfMissing {
     }
 
     $publicKey = (Get-Content -Raw -LiteralPath $publicPath).Trim()
-    $derivedPublicKey = (& ssh-keygen -y -f $keyPath 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or (($derivedPublicKey -split '\s+')[0..1] -join ' ') -ne (($publicKey -split '\s+')[0..1] -join ' ')) {
+    $derivedPublicKey = Get-AMRLSSHKeyPublicText -PrivateKeyPath $keyPath
+    $localPublicIdentity = @($publicKey -split '\s+' | Select-Object -First 2)
+    $derivedPublicIdentity = @($derivedPublicKey -split '\s+' | Select-Object -First 2)
+    if ($localPublicIdentity.Count -lt 2 -or $derivedPublicIdentity.Count -lt 2 -or
+        (($derivedPublicIdentity -join ' ') -ne ($localPublicIdentity -join ' '))) {
         throw 'The public and private SSH keys do not match. The script will not upload either key.'
     }
 
-    $secretNames = @(Get-AzJson -Arguments @('keyvault', 'secret', 'list', '--vault-name', $VaultName, '--query', '[].name'))
-    $hasPublicKey = 'sshPublicKey' -in $secretNames
-    $hasPrivateKey = 'sshPrivateKey' -in $secretNames
     if (-not $hasPublicKey -and -not $hasPrivateKey) {
         [void](Invoke-AMRLChange -Target "SSH key secrets in $VaultName" -Action 'Write dedicated SSH key pair to Key Vault' -Operation {
-            Invoke-AzCli -Arguments @('keyvault', 'secret', 'set', '--vault-name', $VaultName, '--name', 'sshPublicKey', '--value', $publicKey, '--output', 'none') | Out-Null
-            Invoke-AzCli -Arguments @('keyvault', 'secret', 'set', '--vault-name', $VaultName, '--name', 'sshPrivateKey', '--file', $keyPath, '--output', 'none') | Out-Null
+            Write-Host "Creating missing Key Vault secret: $publicKeySecretName"
+            Invoke-AzCli -Arguments @('keyvault', 'secret', 'set', '--vault-name', $VaultName, '--name', $publicKeySecretName, '--value', $publicKey, '--output', 'none') | Out-Null
+            Write-Host "Key Vault secret created: $publicKeySecretName"
+            Write-Host "Creating missing Key Vault secret: $privateKeySecretName"
+            Invoke-AzCli -Arguments @('keyvault', 'secret', 'set', '--vault-name', $VaultName, '--name', $privateKeySecretName, '--file', $keyPath, '--output', 'none') | Out-Null
+            Write-Host "Key Vault secret created: $privateKeySecretName"
         })
-    }
-    elseif (-not $hasPublicKey -or -not $hasPrivateKey) {
-        throw 'Only one SSH key secret exists in Key Vault. Resolve the pair manually; the script will not rotate or replace it.'
-    }
-    elseif ((Get-AzTsv -Arguments @('keyvault', 'secret', 'show', '--vault-name', $VaultName, '--name', 'sshPublicKey', '--query', 'value')).Trim() -ne $publicKey) {
-        throw 'The Key Vault SSH public key differs from the local key pair. Resolve key rotation manually.'
     }
 }
 
 # 6. Optional GitHub setup: OIDC identity/access and Actions deployment values
+# Federated credentials bind repository/branch or pull-request subjects to Entra tokens;
+# readiness checks inspect names and trust configuration without exposing stored secret values.
 function Test-AMRLFederatedCredential {
     param([Parameter(Mandatory = $true)][object]$TrustRecord)
 
@@ -1759,6 +2105,7 @@ function Get-AMRLGitHubReadiness {
         [Parameter(Mandatory = $true)][string]$AppDisplayName,
         [Parameter(Mandatory = $true)][string]$SubscriptionId,
         [string]$VaultId,
+        [string]$VaultName,
         [string]$IdentityId,
         [string]$PublicIp
     )
@@ -1804,7 +2151,7 @@ function Get-AMRLGitHubReadiness {
         }
         $variableJson = Invoke-GhCli -Arguments @('variable', 'list', '--repo', $Repository, '--json', 'name,value')
         $variables = $variableJson | ConvertFrom-Json
-        $expectedVariables = @{ KEYVAULT_ID = $VaultId; AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID = $IdentityId; YOUR_PUBLIC_IP = $PublicIp }
+        $expectedVariables = @{ KEYVAULT_NAME = $VaultName; YOUR_PUBLIC_IP = $PublicIp }
         foreach ($variableName in $expectedVariables.Keys) {
             $matching = @($variables | Where-Object { $_.name -ceq $variableName })
             if ($matching.Count -ne 1 -or
@@ -1832,7 +2179,7 @@ function New-AMRLFederatedCredentialIfMissing {
             throw "Federated credential for '$Subject' has conflicting issuer/audience settings. Resolve it manually."
         }
         Write-Host "Federated credential exists: $Subject"
-        return
+        return [pscustomobject]@{ Status = 'Already existed'; Name = $bySubject[0].name; Subject = $Subject }
     }
 
     $byName = @($credentials | Where-Object { $_.name -eq $Name })
@@ -1854,6 +2201,8 @@ function New-AMRLFederatedCredentialIfMissing {
         [void](Invoke-AMRLChange -Target "Federated credential $Name on app $AppObjectId" -Action 'Create GitHub OIDC credential' -Operation {
             Invoke-AzCli -Arguments @('ad', 'app', 'federated-credential', 'create', '--id', $AppObjectId, '--parameters', $path, '--output', 'none') | Out-Null
         })
+        Write-Host "Federated credential created: $Subject"
+        return [pscustomobject]@{ Status = 'Created'; Name = $Name; Subject = $Subject }
     }
     finally {
         if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
@@ -1865,6 +2214,7 @@ function Set-AMRLGitHubConfiguration {
         [Parameter(Mandatory = $true)][string]$TenantId,
         [Parameter(Mandatory = $true)][string]$SubscriptionId,
         [Parameter(Mandatory = $true)][string]$VaultId,
+        [Parameter(Mandatory = $true)][string]$VaultName,
         [Parameter(Mandatory = $true)][string]$IdentityId,
         [Parameter(Mandatory = $true)][string]$Repository,
         [Parameter(Mandatory = $true)][string]$AppDisplayName,
@@ -1904,14 +2254,15 @@ function Set-AMRLGitHubConfiguration {
     Set-AMRLRoleAssignmentIfMissing -AssigneeObjectId $servicePrincipal.id -PrincipalType ServicePrincipal -Role 'Contributor' -Scope "/subscriptions/$SubscriptionId"
     Set-AMRLRoleAssignmentIfMissing -AssigneeObjectId $servicePrincipal.id -PrincipalType ServicePrincipal -Role 'Key Vault Secrets User' -Scope $VaultId
 
-    New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name 'github-actions-main' -Subject (Get-GitHubSubject -Repository $Repository -Branch 'main') -Description 'GitHub Actions - main branch'
+    $federatedCredentialResults = New-Object 'System.Collections.Generic.List[object]'
+    $federatedCredentialResults.Add((New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name 'github-actions-main' -Subject (Get-GitHubSubject -Repository $Repository -Branch 'main') -Description 'GitHub Actions - main branch'))
     $branch = Get-AMRLGitBranch
     if ($branch -cne 'main') {
         $branchSuffix = ($branch -replace '[^A-Za-z0-9_-]', '-')
         if ($branchSuffix.Length -gt 75) { $branchSuffix = $branchSuffix.Substring(0, 75) }
-        New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name "github-actions-$branchSuffix" -Subject (Get-GitHubSubject -Repository $Repository -Branch $branch) -Description "GitHub Actions - $branch"
+        $federatedCredentialResults.Add((New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name "github-actions-$branchSuffix" -Subject (Get-GitHubSubject -Repository $Repository -Branch $branch) -Description "GitHub Actions - $branch"))
     }
-    New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name 'github-actions-pull-request' -Subject "repo:${Repository}:pull_request" -Description 'GitHub Actions - pull requests'
+    $federatedCredentialResults.Add((New-AMRLFederatedCredentialIfMissing -AppObjectId $app.id -Name 'github-actions-pull-request' -Subject "repo:${Repository}:pull_request" -Description 'GitHub Actions - pull requests'))
 
     [void](Invoke-AMRLChange -Target "GitHub Actions secrets in $Repository" -Action 'Set Azure OIDC repository secrets' -Operation {
         Invoke-GhCli -Arguments @('secret', 'set', 'AZURE_CLIENT_ID', '--body', $app.appId, '--repo', $Repository) | Out-Null
@@ -1920,20 +2271,22 @@ function Set-AMRLGitHubConfiguration {
     })
 
     [void](Invoke-AMRLChange -Target "GitHub Actions variables in $Repository" -Action 'Set AMRL repository variables' -Operation {
-        Invoke-GhCli -Arguments @('variable', 'set', 'KEYVAULT_ID', '--body', $VaultId, '--repo', $Repository) | Out-Null
-        Invoke-GhCli -Arguments @('variable', 'set', 'AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID', '--body', $IdentityId, '--repo', $Repository) | Out-Null
+        Invoke-GhCli -Arguments @('variable', 'set', 'KEYVAULT_NAME', '--body', $VaultName, '--repo', $Repository) | Out-Null
         if (-not [string]::IsNullOrWhiteSpace($PublicIp)) {
             Invoke-GhCli -Arguments @('variable', 'set', 'YOUR_PUBLIC_IP', '--body', $PublicIp, '--repo', $Repository) | Out-Null
         }
     })
-    $readiness = Get-AMRLGitHubReadiness -Repository $Repository -AppDisplayName $AppDisplayName -SubscriptionId $SubscriptionId -VaultId $VaultId -IdentityId $IdentityId -PublicIp $PublicIp
+    $readiness = Get-AMRLGitHubReadiness -Repository $Repository -AppDisplayName $AppDisplayName -SubscriptionId $SubscriptionId -VaultId $VaultId -VaultName $VaultName -IdentityId $IdentityId -PublicIp $PublicIp
     if ($readiness.Actions.Count -gt 0 -or $readiness.Blockers.Count -gt 0) {
         throw "GitHub setup read-back found unresolved settings:`n$((@($readiness.Actions) + @($readiness.Blockers)) -join "`n")"
     }
     Write-Host 'GitHub OIDC, role assignments, Actions variables, and secret names verified. Secret values cannot be read back.'
+    return [pscustomobject]@{ FederatedCredentials = @($federatedCredentialResults.ToArray()) }
 }
 
 # 7. Read-only readiness and template preflight; no saved engine findings are produced
+# Plan validates tools, prerequisites, Bicep inputs, and the Azure what-if preview. The AMRL
+# validation engine's saved findings are produced only by an actual Bicep deployment.
 function Invoke-AMRLPlan {
     param(
         [Parameter(Mandatory = $true)][object]$Context,
@@ -1977,7 +2330,7 @@ function Invoke-AMRLPlan {
     $identity = $null
     $vaults = @()
     $keyVaultWasExplicit = -not [string]::IsNullOrWhiteSpace($VaultName)
-    Write-Host 'Read-only plan: checking the managed identity and Key Vault.'
+    Write-Host "Read-only plan: checking managed identity '$IdentityName' and Key Vault."
     if ((Get-AzTsv -Arguments @('group', 'exists', '--name', $IdentityResourceGroup)) -eq 'true') {
         $identity = Get-AzJson -Arguments @('identity', 'list', '--resource-group', $IdentityResourceGroup, '--query', "[?name=='$IdentityName'] | [0]")
         if ($null -eq $identity) {
@@ -1994,7 +2347,7 @@ function Invoke-AMRLPlan {
             $VaultName = [string]$vaults[0].name
         }
         elseif ($vaults.Count -gt 1) {
-            $blockers.Add('Multiple Key Vaults exist in the foundation group; select the intended vault through the parameter file Key Vault references.')
+            $blockers.Add('Multiple Key Vaults exist in the foundation group; set top-level keyVaultName to select the intended vault.')
         }
         else {
             $VaultName = Get-AMRLAvailableVaultName -SubscriptionId $Context.id
@@ -2051,11 +2404,13 @@ function Invoke-AMRLPlan {
 
         try {
             $existingSecrets = @(Get-AzJson -Arguments @('keyvault', 'secret', 'list', '--vault-name', $VaultName, '--query', '[].name'))
-            foreach ($secretName in @('jumpboxAdminPassword', 'serverAdminPassword', 'clientAdminPassword', 'sshPublicKey', 'sshPrivateKey')) {
+            foreach ($secretName in (Get-AMRLManagedSecretNames)) {
+                Write-Host "Read-only plan: checking Key Vault secret: $secretName"
                 if ($secretName -notin $existingSecrets) {
                     $actions.Add("Create Key Vault secret $secretName")
                     $blockers.Add("Required Key Vault secret '$secretName' is missing.")
                 }
+                else { Write-Host "Key Vault secret exists; keeping it unchanged: $secretName" }
             }
         }
         catch {
@@ -2077,17 +2432,22 @@ function Invoke-AMRLPlan {
     }
     elseif ($null -ne $vault) {
         $localPublicText = (Get-Content -Raw -LiteralPath $localPublicKey).Trim()
-        $derivedPublicText = (& ssh-keygen -y -f $localPrivateKey 2>$null | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or (($derivedPublicText -split '\s+')[0..1] -join ' ') -ne (($localPublicText -split '\s+')[0..1] -join ' ')) {
-            $blockers.Add('The local SSH public/private key files do not match.')
-        }
-        else {
-            if ('sshPublicKey' -in $existingSecrets) {
-                $vaultPublicText = Get-AzTsv -Arguments @('keyvault', 'secret', 'show', '--vault-name', $VaultName, '--name', 'sshPublicKey', '--query', 'value')
-                if (-not [string]::IsNullOrWhiteSpace($vaultPublicText) -and $vaultPublicText.Trim() -ne $localPublicText) {
-                    $blockers.Add('The local SSH public key differs from the Key Vault copy; resolve the mismatch manually.')
+        try {
+            $derivedPublicText = Get-AMRLSSHKeyPublicText -PrivateKeyPath $localPrivateKey
+            if ((@($derivedPublicText -split '\s+' | Select-Object -First 2) -join ' ') -ne (@($localPublicText -split '\s+' | Select-Object -First 2) -join ' ')) {
+                $blockers.Add('The local SSH public/private key files do not match.')
+            }
+            else {
+                if ((Get-AMRLDefault 'sshPublicKeySecretName') -in $existingSecrets) {
+                    $vaultPublicText = Get-AzTsv -Arguments @('keyvault', 'secret', 'show', '--vault-name', $VaultName, '--name', (Get-AMRLDefault 'sshPublicKeySecretName'), '--query', 'value')
+                    if (-not [string]::IsNullOrWhiteSpace($vaultPublicText) -and $vaultPublicText.Trim() -ne $localPublicText) {
+                        $blockers.Add('The local SSH public key differs from the Key Vault copy; resolve the mismatch manually.')
+                    }
                 }
             }
+        }
+        catch {
+            $blockers.Add("The local SSH private key could not be opened with the configured blank passphrase: $($_.Exception.Message)")
         }
     }
 
@@ -2113,7 +2473,7 @@ function Invoke-AMRLPlan {
             catch { $blockers.Add("GitHub CLI is not authenticated: $($_.Exception.Message)") }
             $vaultIdForGitHub = if ($null -eq $vault) { '' } else { [string]$vault.id }
             $identityIdForGitHub = if ($null -eq $identity) { '' } else { [string]$identity.id }
-            $readiness = Get-AMRLGitHubReadiness -Repository $Repository -AppDisplayName $AppDisplayName -SubscriptionId $Context.id -VaultId $vaultIdForGitHub -IdentityId $identityIdForGitHub -PublicIp $PublicIp
+            $readiness = Get-AMRLGitHubReadiness -Repository $Repository -AppDisplayName $AppDisplayName -SubscriptionId $Context.id -VaultId $vaultIdForGitHub -VaultName $VaultName -IdentityId $identityIdForGitHub -PublicIp $PublicIp
             foreach ($action in $readiness.Actions) { $actions.Add($action) }
             foreach ($blocker in $readiness.Blockers) { $blockers.Add($blocker) }
         }
@@ -2154,7 +2514,7 @@ function Invoke-AMRLPlan {
     Complete-AMRLRunPhase -Name 'Plan prerequisite checks' -Summary 'Required foundation and identity checks passed.'
     Set-AMRLReportSource -Name 'Read-only prerequisite plan' -Status 'Ready' -Summary 'No blocking prerequisites found.'
 
-    $updatedParameters = Set-AMRLParameterReferences -Parameters $Parameters -KeyVaultId $vault.id -IdentityId $identity.id -PublicIp $PublicIp
+    $updatedParameters = Set-AMRLParameterValues -Parameters $Parameters -FoundationResourceGroup $ResourceGroup -KeyVaultName $VaultName -PublicIp $PublicIp
     $temporaryParameterFile = Join-Path $env:TEMP ('amrl-plan-parameters-' + [guid]::NewGuid().ToString('N') + '.json')
     $temporaryBicepFile = Join-Path $env:TEMP ('amrl-plan-bicep-' + [guid]::NewGuid().ToString('N') + '.json')
     try {
@@ -2188,6 +2548,8 @@ function Invoke-AMRLPlan {
     }
 }
 
+# Submit the subscription deployment asynchronously, poll its ARM state, and retain operation
+# snapshots for readable progress and failure reporting. A terminal ARM state is not guest readiness.
 function Invoke-AMRLDeploymentWithProgress {
     param(
         [Parameter(Mandatory = $true)][string]$DeploymentName,
@@ -2320,6 +2682,8 @@ function Invoke-AMRLDeploymentWithProgress {
 }
 
 # 8. Main workflow: subscription-level prerequisites, then Bicep setup/deployment
+# The entry point validates the selected mode before initializing a report, then sequences
+# parameter loading, Azure setup, preflight, optional deployment, and read-only result collection.
 function Invoke-AMRLSubscriptionSetup {
     param(
         [switch]$Plan,
@@ -2336,9 +2700,9 @@ function Invoke-AMRLSubscriptionSetup {
     }
     $FoundationResourceGroup = 'amrl-foundation-rg'
     $FoundationLocation = $null
-    $DeploymentLocation = 'westeurope'
+    $DeploymentLocation = ''
     $KeyVaultName = $null
-    $AutomationIdentityName = 'amrl-deployment-mi'
+    $AutomationIdentityName = Get-AMRLDefault 'automationManagedIdentityName'
     $PublicIp = $null
     $githubRepositoryReady = $true
 
@@ -2347,6 +2711,8 @@ function Invoke-AMRLSubscriptionSetup {
     Initialize-AMRLRunPhase -Name 'Parameter configuration'
     $parameterDocument = Get-ParameterDocument -Path $script:ParameterFilePath -IncludeGitHub:$IncludeGitHub
     if (-not $script:InteractiveConfiguration) { Assert-AMRLParameterDocumentComplete -Parameters $parameterDocument }
+    Write-Host "Using AMRL default jumpbox administrator username: $(Get-AMRLDefault 'jumpboxAdminUsername')"
+    Write-Host "Using AMRL default lab administrator username: $(Get-AMRLDefault 'labAdminUsername')"
     if ($null -ne $script:BootstrapperReport) { $script:BootstrapperReport.Parameters = $parameterDocument }
     $parameterSourceSummary = if ($script:InteractiveConfiguration) { 'Interactive wizard; local values or demo defaults were used.' } else { "Explicit parameter file: $script:ParameterFilePath" }
     Set-AMRLReportSource -Name 'Parameter input' -Status 'Loaded' -Summary $parameterSourceSummary
@@ -2368,15 +2734,19 @@ function Invoke-AMRLSubscriptionSetup {
             -ExpectedTenantId $(if ($null -eq $tenantIdProperty) { '' } else { [string]$tenantIdProperty.Value }) `
             -RequireParameterFileContext
     }
-    $FoundationResourceGroup = [string]$bootstrap.foundationResourceGroup
-    $AutomationIdentityName = [string]$bootstrap.automationManagedIdentityName
-    $DeploymentLocation = [string]$bootstrap.deploymentLocation
-    if ([string]::IsNullOrWhiteSpace($FoundationResourceGroup)) { $FoundationResourceGroup = 'amrl-foundation-rg' }
-    if ([string]::IsNullOrWhiteSpace($AutomationIdentityName)) { $AutomationIdentityName = 'amrl-deployment-mi' }
-    if ([string]::IsNullOrWhiteSpace($DeploymentLocation)) { throw 'The parameter template must define prefix.metadata.bootstrap.deploymentLocation.' }
+    $foundationResourceGroupParameter = $parameterDocument.parameters.PSObject.Properties['foundationResourceGroup']
+
+    $FoundationResourceGroup = if ($null -eq $foundationResourceGroupParameter) { '' } else { [string]$foundationResourceGroupParameter.Value.value }
+
+    if ([string]::IsNullOrWhiteSpace($FoundationResourceGroup)) {
+        throw 'Set top-level foundationResourceGroup in the parameter file.'
+    }
+
     # 8.2 Collect Bicep choices and resolve prerequisite IDs before Azure resource writes.
     Initialize-AMRLRunPhase -Name 'Azure readiness and foundation'
-    $FoundationLocation = [string]$parameterDocument.parameters.prefix.metadata.bootstrap.foundationLocation
+    $FoundationLocation = Get-AMRLFoundationLocation -Parameters $parameterDocument
+    $DeploymentLocation = $FoundationLocation
+    Write-Host "Using first regionIndexMap entry by index for foundation resources and subscription deployment: $FoundationLocation"
     if ($null -ne $script:BootstrapperReport) { $script:BootstrapperReport.FoundationLocation = $FoundationLocation }
     if ($IncludeGitHub) {
         try {
@@ -2397,8 +2767,7 @@ function Invoke-AMRLSubscriptionSetup {
     $AutomationIdentityName = $foundation.IdentityName
     $KeyVaultName = $foundation.VaultName
 
-    # Existing resource groups keep their location; only prompt for a location when resources need creation.
-    $foundationGroupExists = (Get-AzTsv -Arguments @('group', 'exists', '--name', $FoundationResourceGroup)) -eq 'true'
+    # Existing resource groups keep their location; new resources use the first mapped region.
     if (-not $script:InteractiveConfiguration -and -not $Plan -and
         $foundation.RebuildFoundation -and -not [string]::IsNullOrWhiteSpace($foundation.VaultId)) {
         $deletedVault = Get-AzJson -Arguments @('keyvault', 'list-deleted', '--resource-type', 'vault', '--subscription', $context.id, '--query', "[?name=='$($foundation.VaultName)'] | [0]")
@@ -2415,7 +2784,6 @@ function Invoke-AMRLSubscriptionSetup {
         $FoundationResourceGroup = Read-AMRLFoundationResourceGroupName -DefaultName $configuredFoundationGroup
         if ($FoundationResourceGroup -ne $configuredFoundationGroup) {
             Set-AMRLFoundationResourceGroup -Parameters $parameterDocument -Foundation $foundation -ResourceGroupName $FoundationResourceGroup -SubscriptionId $context.id
-            $foundationGroupExists = (Get-AzTsv -Arguments @('group', 'exists', '--name', $FoundationResourceGroup)) -eq 'true'
         }
 
         if ($FoundationResourceGroup -eq $configuredFoundationGroup -and $foundation.RebuildFoundation -and -not $Plan -and -not [string]::IsNullOrWhiteSpace($foundation.VaultId)) {
@@ -2433,7 +2801,6 @@ function Invoke-AMRLSubscriptionSetup {
                     if ($newGroupDefault.Length -gt 90) { $newGroupDefault = $newGroupDefault.Substring(0, 90).TrimEnd('.', '-', '_', '(', ')') }
                     $FoundationResourceGroup = Read-AMRLFoundationResourceGroupName -DefaultName $newGroupDefault -NameThatMustDiffer $FoundationResourceGroup
                     Set-AMRLFoundationResourceGroup -Parameters $parameterDocument -Foundation $foundation -ResourceGroupName $FoundationResourceGroup -SubscriptionId $context.id
-                    $foundationGroupExists = $false
                 }
             }
         }
@@ -2459,21 +2826,6 @@ function Invoke-AMRLSubscriptionSetup {
     $needsIdentity = $foundation.RebuildFoundation -or ([string]::IsNullOrWhiteSpace($foundation.IdentityId) -and $null -eq $existingIdentity)
     $needsVault = $foundation.RebuildFoundation -or ([string]::IsNullOrWhiteSpace($foundation.VaultId) -and $existingVaults.Count -eq 0)
     Initialize-AMRLRunPhase -Name 'Azure readiness and foundation'
-    if ($script:InteractiveConfiguration -and (-not $foundationGroupExists -or $needsIdentity -or $needsVault)) {
-        $foundationLocations = @(Get-AMRLFoundationLocationChoices)
-        $locationPrompt = if (-not $foundationGroupExists) { 'Foundation resource-group location' } else { 'Location for new prerequisite resources' }
-        $foundationLocation = Read-RequiredValue -Prompt $locationPrompt -Hint 'Azure region name' -DefaultValue ([string]$parameterDocument.parameters.prefix.metadata.bootstrap.foundationLocation) -Validator {
-            param($Value) $Value -in $foundationLocations
-        }
-        $FoundationLocation = $foundationLocation
-        if ($null -ne $script:BootstrapperReport) { $script:BootstrapperReport.FoundationLocation = $FoundationLocation }
-        $firstMappedRegion = [string](@($parameterDocument.parameters.regionIndexMap.value.PSObject.Properties | Sort-Object { [int]$_.Value })[0].Name)
-        $parameterDocument.parameters.prefix.metadata.bootstrap.foundationLocation = $foundationLocation
-        $parameterDocument.parameters.prefix.metadata.bootstrap.foundationLocationSource = if ($foundationLocation -eq $firstMappedRegion) { 'regionIndexMap' } else { 'explicit' }
-        if (-not $PlanMode) {
-            [System.IO.File]::WriteAllText($script:ParameterFilePath, (ConvertTo-AMRLParameterJson -InputObject $parameterDocument), [System.Text.UTF8Encoding]::new($false))
-        }
-    }
     $needsPublicIp = @($parameterDocument.parameters.jumpboxAllowedSources.value | Where-Object { [string]$_ -match '[<>]' }).Count -gt 0
     if (-not $script:InteractiveConfiguration) {
         if ($needsPublicIp) {
@@ -2529,7 +2881,7 @@ function Invoke-AMRLSubscriptionSetup {
             -VaultName $KeyVaultName `
             -PublicIp $PublicIp `
             -Repository $parameterDocument.parameters.prefix.metadata.bootstrap.githubRepository `
-            -AppDisplayName $parameterDocument.parameters.prefix.metadata.bootstrap.githubAppDisplayName `
+            -AppDisplayName (Get-AMRLDefault 'githubAppDisplayName') `
             -IncludeGitHub:$IncludeGitHub
         return
     }
@@ -2592,22 +2944,26 @@ function Invoke-AMRLSubscriptionSetup {
 
     $identity = $null
     try {
+        Write-Host "Checking managed identity (AMRL default): $AutomationIdentityName"
         $identity = Get-AzJson -Arguments @('identity', 'list', '--resource-group', $foundation.IdentityResourceGroup, '--query', "[?name=='$AutomationIdentityName'] | [0]")
         if ($null -eq $identity) {
             if (-not [string]::IsNullOrWhiteSpace($foundation.IdentityId) -and -not $foundation.RebuildFoundation) { throw 'The referenced managed identity disappeared during setup. No replacement was created.' }
             try {
+                Write-Host "Creating missing managed identity: $AutomationIdentityName"
                 $identity = Invoke-AMRLChange -Target "Managed identity $AutomationIdentityName" -Action 'Create user-assigned managed identity' -Operation {
                     Get-AzJson -Arguments @('identity', 'create', '--name', $AutomationIdentityName, '--resource-group', $foundation.IdentityResourceGroup, '--location', $FoundationLocation)
                 }
             }
             catch {
                 if ($_.Exception.Message -match 'RequestDisallowedByAzure|locationineligible|not accepting new customers') {
-                    throw "Azure rejected managed identity creation in foundation resource location '$FoundationLocation'. Rerun the wizard, choose another Azure-listed foundation location, and retain the existing resource group. Details: $($_.Exception.Message)"
+                    throw "Azure rejected managed identity creation in foundation resource location '$FoundationLocation', derived from regionIndexMap. Verify subscription eligibility for that region. Use manual preparation if prerequisite resources need a different location; retain existing lab region indexes. Details: $($_.Exception.Message)"
                 }
                 throw
             }
             if ($null -eq $identity) { throw 'Managed identity creation returned no result.' }
+            Write-Host "Managed identity created: $AutomationIdentityName"
         }
+        else { Write-Host "Managed identity exists; keeping it unchanged: $AutomationIdentityName" }
         Set-AMRLReportSource -Name 'Managed identity' -Status 'Ready' -Summary "Identity '$AutomationIdentityName' is available in '$($foundation.IdentityResourceGroup)'."
     }
     catch {
@@ -2619,7 +2975,7 @@ function Invoke-AMRLSubscriptionSetup {
         $identity = $null
     }
     if ($null -ne $identity) {
-        Write-Host 'Azure foundation setup: configuring managed-identity permissions.'
+        Write-Host "Azure foundation setup: checking/configuring permissions for managed identity '$AutomationIdentityName'."
         try {
             Set-AMRLRoleAssignmentIfMissing -AssigneeObjectId $identity.principalId -PrincipalType ServicePrincipal -Role 'Network Contributor' -Scope "/subscriptions/$($context.id)"
             Set-AMRLReportSource -Name 'Automation identity RBAC' -Status 'Ready' -Summary 'Network Contributor assignment was confirmed.'
@@ -2680,7 +3036,7 @@ function Invoke-AMRLSubscriptionSetup {
             }
             catch {
                 if ($_.Exception.Message -match 'RequestDisallowedByAzure|locationineligible|not accepting new customers') {
-                    throw "Azure rejected Key Vault creation in foundation resource location '$FoundationLocation'. Rerun the wizard, choose another Azure-listed foundation location, and retain the existing resource group. Details: $($_.Exception.Message)"
+                    throw "Azure rejected Key Vault creation in foundation resource location '$FoundationLocation', derived from regionIndexMap. Verify subscription eligibility for that region. Use manual preparation if prerequisite resources need a different location; retain existing lab region indexes. Details: $($_.Exception.Message)"
                 }
                 throw
             }
@@ -2709,41 +3065,46 @@ function Invoke-AMRLSubscriptionSetup {
 
     if ($null -ne $vault) {
         Write-Host 'Azure foundation setup: checking Key Vault permissions and preparing required secrets.'
+        $keyVaultAccessReady = $false
         try {
             $userId = Get-AzTsv -Arguments @('ad', 'signed-in-user', 'show', '--query', 'id')
             if ([string]::IsNullOrWhiteSpace($userId)) { throw 'Could not resolve the signed-in Entra user.' }
             Set-AMRLRoleAssignmentIfMissing -AssigneeObjectId $userId -PrincipalType User -Role 'Key Vault Secrets Officer' -Scope $vaultId
-            Set-AMRLReportSource -Name 'Key Vault access' -Status 'Ready' -Summary 'Signed-in user has Key Vault Secrets Officer access.'
+            [void](Get-AzTsv -Arguments @('keyvault', 'secret', 'list', '--vault-name', $KeyVaultName, '--query', '[].name'))
+            $keyVaultAccessReady = $true
+            Set-AMRLReportSource -Name 'Key Vault access' -Status 'Ready' -Summary 'Signed-in user has Key Vault Secrets Officer access; secret-list access was verified.'
         }
         catch {
-            $message = "Key Vault access setup failed: $($_.Exception.Message)"
+            $message = "Key Vault secret access is not ready: $($_.Exception.Message)"
             $foundationErrors.Add($message)
             Add-AMRLReportIssue -Phase 'Azure readiness and foundation' -Message $message
-            Set-AMRLReportSource -Name 'Key Vault access' -Status 'Failed' -Summary $message
-            Write-Warning 'Key Vault access setup failed; continuing with secret checks that may still succeed.'
+            Set-AMRLReportSource -Name 'Key Vault access' -Status 'Failed' -Summary 'Secret data-plane access was not verified; see Warnings and errors.'
+            Write-Warning 'Key Vault secret access was not verified; skipping secret setup.'
         }
 
         $secretSetupFailed = $false
-        foreach ($secretName in @('jumpboxAdminPassword', 'serverAdminPassword', 'clientAdminPassword')) {
-            try {
-                Set-AMRLSecretIfMissing -VaultName $KeyVaultName -SecretName $secretName -Password -Prompt:$script:PromptForPasswords
+        if ($keyVaultAccessReady) {
+            foreach ($secretName in (Get-AMRLPasswordSecretNames)) {
+                try {
+                    Set-AMRLSecretIfMissing -VaultName $KeyVaultName -SecretName $secretName -Password -Prompt:$script:PromptForPasswords
+                }
+                catch {
+                    $message = "Key Vault secret '$secretName' setup failed: $($_.Exception.Message)"
+                    $foundationErrors.Add($message)
+                    Add-AMRLReportIssue -Phase 'Azure readiness and foundation' -Message $message
+                    $secretSetupFailed = $true
+                }
             }
+            try { Set-AMRLKeySecretsIfMissing -VaultName $KeyVaultName }
             catch {
-                $message = "Key Vault secret '$secretName' setup failed: $($_.Exception.Message)"
+                $message = "SSH key secrets setup failed: $($_.Exception.Message)"
                 $foundationErrors.Add($message)
                 Add-AMRLReportIssue -Phase 'Azure readiness and foundation' -Message $message
                 $secretSetupFailed = $true
             }
         }
-        try { Set-AMRLKeySecretsIfMissing -VaultName $KeyVaultName }
-        catch {
-            $message = "SSH key secrets setup failed: $($_.Exception.Message)"
-            $foundationErrors.Add($message)
-            Add-AMRLReportIssue -Phase 'Azure readiness and foundation' -Message $message
-            $secretSetupFailed = $true
-        }
-        $secretStatus = if ($secretSetupFailed) { 'Issues found' } else { 'Ready' }
-        $secretSummary = if ($secretSetupFailed) { 'One or more required secrets could not be prepared.' } else { 'Administrator passwords and SSH key secrets are ready.' }
+        $secretStatus = if (-not $keyVaultAccessReady) { 'Skipped' } elseif ($secretSetupFailed) { 'Issues found' } else { 'Ready' }
+        $secretSummary = if (-not $keyVaultAccessReady) { 'Secret setup was skipped because Key Vault data access was not verified.' } elseif ($secretSetupFailed) { 'One or more required secrets could not be prepared.' } else { 'Password and SSH key secrets are ready.' }
         Set-AMRLReportSource -Name 'Key Vault secrets' -Status $secretStatus -Summary $secretSummary
     }
     else {
@@ -2780,7 +3141,7 @@ function Invoke-AMRLSubscriptionSetup {
     }
     if ($script:FoundationSetupFailed) {
         Set-AMRLReportPhase -Name 'Azure readiness and foundation' -Status 'Issues found' -Summary "$($foundationErrors.Count) prerequisite issues recorded; read-only Bicep checks can continue, deployment will be skipped."
-        Set-AMRLReportSource -Name 'Foundation prerequisites' -Status 'Issues found' -Summary "$($foundationErrors.Count) issue(s) found." -Details ($foundationErrors -join [Environment]::NewLine)
+        Set-AMRLReportSource -Name 'Foundation prerequisites' -Status 'Issues found' -Summary "$($foundationErrors.Count) issue(s) found; see Warnings and errors."
     }
     else {
         Complete-AMRLRunPhase -Name 'Azure readiness and foundation' -Summary 'Foundation resources, credentials, RBAC, and locks are ready.'
@@ -2788,7 +3149,7 @@ function Invoke-AMRLSubscriptionSetup {
     }
     # 8.5 Bicep setup: persist resolved references and optionally configure GitHub Actions.
     Initialize-AMRLRunPhase -Name 'Bicep build and validation'
-    $updatedParameters = Set-AMRLParameterReferences -Parameters $parameterDocument -KeyVaultId $vaultId -IdentityId $identity.id -PublicIp $PublicIp
+    $updatedParameters = Set-AMRLParameterValues -Parameters $parameterDocument -FoundationResourceGroup $foundation.ResourceGroup -KeyVaultName $KeyVaultName -PublicIp $PublicIp
     if ($null -ne $script:BootstrapperReport) { $script:BootstrapperReport.Parameters = $updatedParameters }
     $json = ConvertTo-AMRLParameterJson -InputObject $updatedParameters
     [System.IO.File]::WriteAllText($script:ParameterFilePath, $json, [System.Text.UTF8Encoding]::new($false))
@@ -2797,8 +3158,12 @@ function Invoke-AMRLSubscriptionSetup {
 
     if ($IncludeGitHub -and $githubRepositoryReady) {
         try {
-            Set-AMRLGitHubConfiguration -TenantId $context.tenantId -SubscriptionId $context.id -VaultId $vaultId -IdentityId $identity.id -Repository $updatedParameters.parameters.prefix.metadata.bootstrap.githubRepository -AppDisplayName $updatedParameters.parameters.prefix.metadata.bootstrap.githubAppDisplayName -PublicIp $PublicIp
-            Set-AMRLReportSource -Name 'GitHub OIDC setup' -Status 'Succeeded' -Summary 'Repository secrets, variables, and trust were verified.'
+            $githubSetupResult = Set-AMRLGitHubConfiguration -TenantId $context.tenantId -SubscriptionId $context.id -VaultId $vaultId -VaultName $KeyVaultName -IdentityId $identity.id -Repository $updatedParameters.parameters.prefix.metadata.bootstrap.githubRepository -AppDisplayName (Get-AMRLDefault 'githubAppDisplayName') -PublicIp $PublicIp
+            $createdCredentials = @($githubSetupResult.FederatedCredentials | Where-Object { $_.Status -eq 'Created' })
+            $existingCredentials = @($githubSetupResult.FederatedCredentials | Where-Object { $_.Status -eq 'Already existed' })
+            $credentialDetails = @($githubSetupResult.FederatedCredentials | ForEach-Object { "$($_.Status): $($_.Subject)" }) -join [Environment]::NewLine
+            $githubSummary = "Repository secrets and variables verified; federated credentials: $($createdCredentials.Count) created, $($existingCredentials.Count) already existed."
+            Set-AMRLReportSource -Name 'GitHub OIDC setup' -Status 'Succeeded' -Summary $githubSummary -Details $credentialDetails
         }
         catch {
             $message = $_.Exception.Message
@@ -2940,6 +3305,7 @@ function Invoke-AMRLSubscriptionSetup {
     Write-Host 'Control-plane completion is not proof of guest readiness; use the documented post-deployment checks.'
 }
 
+# Print the resolved operator-facing configuration, omitting secret values and verbose ARM identifiers.
 function Write-AMRLConfigurationSummary {
     $document = $script:BootstrapperReport.Parameters
     if ($null -eq $document -or $null -eq $document.parameters) {
@@ -2959,7 +3325,7 @@ function Write-AMRLConfigurationSummary {
         "Linux server $($vmCounts.linuxServer)", "Linux client $($vmCounts.linuxClient)"
     ) -join '; '
     $booleanSummary = @(
-        "File services $(if ($parameters.enableFileServices.value) { 'on' } else { 'off' })",
+        'File services on (identity stage)',
         "Dedicated file server $(if ($parameters.useDedicatedFileServer.value) { 'on' } else { 'off' })",
         "Windows Admin Center $(if ($parameters.enableWindowsAdminCenter.value) { 'on' } else { 'off' })",
         "Dedicated WAC host $(if ($parameters.useDedicatedWacHost.value) { 'on' } else { 'off' })"
@@ -2991,7 +3357,7 @@ function Write-AMRLConfigurationSummary {
     Write-Host "  Jumpbox allowed sources: $(@($parameters.jumpboxAllowedSources.value) -join ', ')"
     if ($IncludeGitHub) {
         Write-Host "  GitHub repository: $($parameters.prefix.metadata.bootstrap.githubRepository)"
-        Write-Host "  GitHub Entra app: $($parameters.prefix.metadata.bootstrap.githubAppDisplayName)"
+        Write-Host "  GitHub Entra app (AMRL default): $(Get-AMRLDefault 'githubAppDisplayName')"
     }
     Write-Host "  Prefix: $($parameters.prefix.value)"
     Write-Host "  Stage: $($parameters.stage.value)"
@@ -3005,6 +3371,8 @@ function Write-AMRLConfigurationSummary {
     Write-Host "  Missing administrator passwords: $(if ($script:PromptForPasswords) { 'prompt securely' } else { 'generate automatically' })"
 }
 
+# Render the accumulated phases, evidence, changes, and warnings once; callers control when this final
+# summary is emitted so progress output does not duplicate detailed results.
 function Write-AMRLBootstrapperReport {
     if ($null -eq $script:BootstrapperReport) { return }
 
@@ -3098,6 +3466,9 @@ function Write-AMRLBootstrapperReport {
         foreach ($sourceName in $supportingSources) {
             $source = $script:BootstrapperReport.Sources[$sourceName]
             Write-Host "  [$($source.Status)] $($sourceName): $($source.Summary)"
+            if ($sourceName -eq 'GitHub OIDC setup' -and -not [string]::IsNullOrWhiteSpace($source.Details)) {
+                foreach ($line in ($source.Details -split "`r?`n")) { Write-Host "    $line" }
+            }
         }
     }
 
@@ -3192,6 +3563,7 @@ function Write-AMRLBootstrapperReport {
     else { Write-Host '  None.' }
 }
 
+# Read nested ARM operation records or captured progress snapshots and reduce them to stage/resource results.
 function Set-AMRLDeploymentOperationReport {
     param(
         [Parameter(Mandatory = $true)][string]$DeploymentName,
@@ -3365,11 +3737,13 @@ function Set-AMRLDeploymentOperationReport {
     }
 }
 
+# Validate mode selection first, then initialize the report and invoke the shared setup/deploy workflow.
 function Invoke-AMRLBootstrapper {
     param(
         [switch]$Plan,
         [switch]$Prepare,
-        [switch]$Deploy
+        [switch]$Deploy,
+        [string]$ReportPath
     )
 
     $selectedModeCount = @(@($Plan, $Prepare, $Deploy) | Where-Object { $_ }).Count
@@ -3383,6 +3757,7 @@ function Invoke-AMRLBootstrapper {
     $mode = if ($Plan) { 'Plan' } elseif ($Prepare) { 'Prepare' } else { 'Deploy' }
     Initialize-AMRLBootstrapperReport -Mode $mode
     $failure = $null
+    $reportOutputFailed = $false
     try {
         Invoke-AMRLSubscriptionSetup -Plan:$Plan -Configure:$Prepare -Deploy:$Deploy
     }
@@ -3410,11 +3785,11 @@ function Invoke-AMRLBootstrapper {
                     -IdentityName $foundation.IdentityName `
                     -IdentityResourceGroup $foundation.IdentityResourceGroup `
                     -VaultResourceGroup $foundation.VaultResourceGroup `
-                    -DeploymentLocation 'westeurope' `
+                    -DeploymentLocation (Get-AMRLFoundationLocation -Parameters $script:BootstrapperReport.Parameters) `
                     -VaultName $foundation.VaultName `
                     -PublicIp $script:BootstrapperReport.PublicIp `
                     -Repository $script:BootstrapperReport.Parameters.parameters.prefix.metadata.bootstrap.githubRepository `
-                    -AppDisplayName $script:BootstrapperReport.Parameters.parameters.prefix.metadata.bootstrap.githubAppDisplayName `
+                    -AppDisplayName (Get-AMRLDefault 'githubAppDisplayName') `
                     -IncludeGitHub:$IncludeGitHub `
                     -DiagnosticOnly
             }
@@ -3443,10 +3818,34 @@ function Invoke-AMRLBootstrapper {
         }
     }
     finally {
-        try { Write-AMRLBootstrapperReport }
-        catch { Write-Warning "Could not complete the bootstrapper report: $($_.Exception.Message)" }
+        try {
+            if ([string]::IsNullOrWhiteSpace($ReportPath)) {
+                Write-AMRLBootstrapperReport
+            }
+            else {
+                $reportOutput = @(Write-AMRLBootstrapperReport 6>&1)
+                $reportLines = @($reportOutput | ForEach-Object {
+                    if ($_ -is [System.Management.Automation.InformationRecord]) { [string]$_.MessageData }
+                    else { [string]$_ }
+                })
+                foreach ($line in $reportLines) { Write-Host $line }
+                try {
+                    $resolvedReportPath = [System.IO.Path]::GetFullPath($ReportPath)
+                    [System.IO.File]::WriteAllLines($resolvedReportPath, $reportLines, [System.Text.UTF8Encoding]::new($false))
+                    Write-Host "Report saved to: $resolvedReportPath"
+                }
+                catch {
+                    $reportOutputFailed = $true
+                    Write-Warning "Could not write the bootstrapper report to '$ReportPath': $($_.Exception.Message)"
+                }
+            }
+        }
+        catch {
+            $reportOutputFailed = $true
+            Write-Warning "Could not complete the bootstrapper report: $($_.Exception.Message)"
+        }
     }
-    if ($null -ne $failure -or $script:BootstrapperReport.Status -eq 'Failed') {
+    if ($null -ne $failure -or $script:BootstrapperReport.Status -eq 'Failed' -or $reportOutputFailed) {
         $global:LASTEXITCODE = 1
         Write-Warning 'Bootstrapper finished with errors; see the completed report above.'
         return
@@ -3455,5 +3854,5 @@ function Invoke-AMRLBootstrapper {
 
 # Dot-sourcing loads helpers for local tests without starting setup.
 if ($MyInvocation.InvocationName -ne '.') {
-    Invoke-AMRLBootstrapper -Plan:$Plan -Prepare:$Prepare -Deploy:$Deploy
+    Invoke-AMRLBootstrapper -Plan:$Plan -Prepare:$Prepare -Deploy:$Deploy -ReportPath $ReportPath
 }

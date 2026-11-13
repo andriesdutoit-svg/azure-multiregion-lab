@@ -38,8 +38,10 @@ param tags object
 // VMs and existing network regions listed so subsequent deployments can reuse them.
 @description('Maps region names to their deployment order and address-space index.')
 param regionIndexMap object
+@minValue(1)
 @description('Number of regions included in this deployment.')
 param regionCount int
+@minValue(1)
 @description('Maximum number of VMs allowed in each region.')
 param maxVmsPerRegion int
 @description('Regions with existing VNet infrastructure where networking is reconciled. Route tables and standard subnet associations are deployed or updated; networking in other regions is created from scratch.')
@@ -70,8 +72,6 @@ param bastionSku string
 
 // Reconciliation validates and uses this identity only when cleanup is scheduled;
 // the parameter itself remains required even for deployments that do not run cleanup.
-@description('Resource ID of the User Assigned Managed Identity used by Deployment Scripts.')
-param automationManagedIdentityResourceId string
 
 @description('Maps subnet role names to address indexes within each regional VNet.')
 param subnetIndexMap object
@@ -94,27 +94,9 @@ param ubuntuImage object
 @description('Automatic deletion settings for VM-associated resources.')
 param vmAutoDeleteOptions object
 
-// Administrator credentials and SSH keys
-@description('Local administrator username for jumpbox VMs.')
-param jumpboxAdminUsername string
-@description('Local administrator password for jumpbox VMs.')
-@secure()
-param jumpboxAdminPassword string
-@description('Local administrator username for server and domain controller VMs.')
-param serverAdminUsername string
-@description('Local administrator password for server and domain controller VMs.')
-@secure()
-param serverAdminPassword string
-@description('Local administrator username for client VMs.')
-param clientAdminUsername string
-@description('Local administrator password for client VMs.')
-@secure()
-param clientAdminPassword string
-@description('Public SSH key used for Linux VM administration.')
-param sshPublicKey string
-@description('Private SSH key installed on jumpboxes for administrative hops to Linux VMs.')
-@secure()
-param sshPrivateKey string
+// KeyVault configuration
+param foundationResourceGroup string
+param keyVaultName string
 
 // Identity and directory management
 @description('Deploy Windows Admin Center on the selected management host.')
@@ -132,10 +114,6 @@ param departmentCount int
 @description('Number of users created for each configured department.')
 param usersPerDepartment int
 
-// File services
-@description('Enable departmental file shares, SMB shares, and share permissions.')
-param enableFileServices bool
-
 @description('Use a dedicated Windows server for departmental file shares.')
 param useDedicatedFileServer bool
 
@@ -147,12 +125,10 @@ var finalTags = union(tags, {
 
 // A new deployment name supplies a new rerun token to downstream guest automation.
 var reconciliationToken = deployment().name
-var gpoNames = {
-  serverAdministration: 'Server Administration'
-  clientAdministration: 'Client Administration'
-  windowsLaps: 'Windows LAPS'
-  domainControllerWinRM: 'Domain Controller WinRM'
-}
+
+var defaults = loadJsonContent('./config/amrl-defaults.json')
+
+var gpoNames = defaults.directory.gpoNames
 
 var deployNetwork = stage == 'network' || stage == 'all'
 var deployCompute = stage == 'compute' || stage == 'all'
@@ -161,6 +137,17 @@ var deployIdentity = stage == 'identity' || stage == 'all'
 // for domain join, but do not create missing control-plane DCs or jumpboxes.
 var deployControl = deployCompute
 var deployWorkload = deployCompute || deployIdentity
+
+var jumpboxAdminUsername = defaults.jumpboxAdminUsername
+var labAdminUsername = defaults.labAdminUsername
+var automationManagedIdentityName = defaults.automationManagedIdentityName
+var jumpboxAdminPasswordSecretName = defaults.jumpboxAdminPasswordSecretName
+var labAdminPasswordSecretName = defaults.labAdminPasswordSecretName
+var sshPublicKeySecretName = defaults.sshPublicKeySecretName
+var sshPrivateKeySecretName = defaults.sshPrivateKeySecretName
+
+var backupServicePasswordSecretName = defaults.directory.serviceAccounts.backup.passwordSecretName
+var monitoringServicePasswordSecretName = defaults.directory.serviceAccounts.monitoring.passwordSecretName
 
 // 3. Placement model
 // Placement is evaluated in the subscription-scope composition root because its results
@@ -491,7 +478,7 @@ var addressPrefixes = [
 ]
 
 // Each region gets its own /16 (10.<regionIndex>.0.0/16), and each role subnet is a /24 carved
-// out of that /16 using its octet from subnetIndexMap (e.g. subnetIndexMap.dc = 2 -> 10.x.2.0/24).
+// out of that /16 using its octet from subnetIndexMap (the defaults use dc = 3 -> 10.x.3.0/24).
 var subnetPrefixesArray = [
   for region in regionKeys: {
     firewall: '10.${regionIndexMap[region]}.${subnetIndexMap.firewall}.0/24'
@@ -594,10 +581,22 @@ var dnsCandidates = [
 // AMRL caps the ordered candidate list at three; this is not an Azure platform-limit claim.
 var dnsServers = take(dnsCandidates, 3)
 
-// 5. Module orchestration
+// 5. Existing resources
+
+resource adminVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+  scope: resourceGroup(foundationResourceGroup)
+}
+
+resource deploymentIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: automationManagedIdentityName
+  scope: resourceGroup(foundationResourceGroup)
+}
+
+// 6. Module orchestration
 // References and dependsOn establish execution dependencies; declaration order alone does not.
 
-// 5.1 Validation engine and enforcement gate
+// 6.1 Validation engine and enforcement gate
 // The engine reports configuration findings. The gate blocks dependent stages only
 // when enforcement is enabled and blocking findings exist; advisories do not block.
 
@@ -633,7 +632,7 @@ module validationEngine 'modules/logic/validation.bicep' = {
 
     networkMode: networkMode
     enableBastion: enableBastion
-    automationManagedIdentityResourceId: automationManagedIdentityResourceId
+    automationManagedIdentityResourceId: deploymentIdentity.id
     subnetIndexMap: subnetIndexMap
     jumpboxAllowedSources: jumpboxAllowedSources
 
@@ -646,7 +645,6 @@ module validationEngine 'modules/logic/validation.bicep' = {
 
     enableWindowsAdminCenter: enableWindowsAdminCenter
     useDedicatedWacHost: useDedicatedWacHost
-    enableFileServices: enableFileServices
     useDedicatedFileServer: useDedicatedFileServer
     fileServerVmAvailable: length(fileServerVmList) > 0
   }
@@ -661,7 +659,7 @@ module validationGate 'modules/logic/validation-gate.bicep' = {
   }
 }
 
-// 5.2 Network stage
+// 6.2 Network stage
 // Owns network creation and bounded peering/Bastion cleanup. Its subnetMap output
 // provides per-region subnet IDs for compute; existing network regions must be declared.
 
@@ -684,7 +682,7 @@ module networkStage 'modules/stages/network-stage.bicep' = {
     networkMode: networkMode
     enableBastion: enableBastion
     bastionSku: bastionSku
-    automationManagedIdentityResourceId: automationManagedIdentityResourceId
+    automationManagedIdentityResourceId: deploymentIdentity.id
 
     addressPrefixes: addressPrefixes
     subnetPrefixesArray: subnetPrefixesArray
@@ -695,7 +693,7 @@ module networkStage 'modules/stages/network-stage.bicep' = {
   }
 }
 
-// 5.3 Compute stage
+// 6.3 Compute stage
 // Referencing networkStage.outputs.subnetMap creates the network-to-compute dependency.
 // Stage flags select creation groups; retained jumpboxes remain eligible for SSH-key automation.
 
@@ -728,20 +726,17 @@ module computeStage 'modules/stages/compute-stage.bicep' = {
     vmAutoDeleteOptions: vmAutoDeleteOptions
 
     jumpboxAdminUsername: jumpboxAdminUsername
-    jumpboxAdminPassword: jumpboxAdminPassword
+    jumpboxAdminPassword: adminVault.getSecret(jumpboxAdminPasswordSecretName)
 
-    serverAdminUsername: serverAdminUsername
-    serverAdminPassword: serverAdminPassword
+    labAdminUsername: labAdminUsername
+    labAdminPassword: adminVault.getSecret(labAdminPasswordSecretName)
 
-    clientAdminUsername: clientAdminUsername
-    clientAdminPassword: clientAdminPassword
-
-    sshPublicKey: sshPublicKey
-    sshPrivateKey: sshPrivateKey
+    sshPublicKey: adminVault.getSecret(sshPublicKeySecretName)
+    sshPrivateKey: adminVault.getSecret(sshPrivateKeySecretName)
   }
 }
 
-// 5.4 Identity stage
+// 6.4 Identity stage
 // Wait for compute before guest configuration. Placement targets include retained
 // VMs so identity automation can reconcile selected guest state without recreating them.
 
@@ -758,7 +753,6 @@ module identityStage 'modules/stages/identity-stage.bicep' = {
     reconciliationToken: reconciliationToken
 
     deployIdentity: deployIdentity
-    enableFileServices: enableFileServices
     enableWindowsAdminCenter: enableWindowsAdminCenter
     wacHostVm: wacHostVm
 
@@ -769,21 +763,23 @@ module identityStage 'modules/stages/identity-stage.bicep' = {
     fileServerName: fileServerName
 
     domainName: domainName
-    gpoNames: gpoNames
 
     sysAdminDepartment: sysAdminDepartment
     additionalDepartments: additionalDepartments
     departmentCount: departmentCount
     usersPerDepartment: usersPerDepartment
 
-    serverAdminUsername: serverAdminUsername
-    serverAdminPassword: serverAdminPassword
+    labAdminUsername: labAdminUsername
+    labAdminPassword: adminVault.getSecret(labAdminPasswordSecretName)
+
+    backupServicePassword: adminVault.getSecret(backupServicePasswordSecretName)
+    monitoringServicePassword: adminVault.getSecret(monitoringServicePasswordSecretName)
   }
 }
 
-// 6. Deployment outputs
+// 7 Deployment outputs
 
-// 6.1 Validation and enforcement
+// 7.1 Validation and enforcement (outputs)
 // These outputs describe configuration findings and gate decisions, not live resource
 // health, guest readiness, or proof that all reconciliation actions succeeded.
 output validationFlags object = validationEngine.outputs.validationFlags
@@ -802,7 +798,7 @@ output blockingValidationDetails array = validationEngine.outputs.blockingValida
 output advisoryValidationFlags array = validationEngine.outputs.advisoryValidationFlags
 output advisoryValidationDetails array = validationEngine.outputs.advisoryValidationDetails
 
-// 6.2 Existing inventory and network coverage
+// 7.2 Existing inventory and network coverage
 // Distinguish invalid declared placements from network inventory missing for planned VMs.
 output invalidExistingVmPlacementDetails array = invalidExistingVmPlacements
 output invalidExistingVmPlacementCount int = validationEngine.outputs.invalidExistingVmPlacementCount
@@ -810,7 +806,7 @@ output hasInvalidExistingVmPlacements bool = validationEngine.outputs.hasInvalid
 output networkRegionsMissingFromInventory array = validationEngine.outputs.networkRegionsMissingFromInventory
 output newVmRegionsWithoutNetwork array = validationEngine.outputs.newVmRegionsWithoutNetwork
 
-// 6.3 Final placements and regional summaries
+// 7.3 Final placements and regional summaries
 // Report the combined model and selected-region order; these are not Azure discovery results.
 output vmPlacement array = finalVmPlacements
 output selectedRegionsOutput array = regionKeys
@@ -831,7 +827,7 @@ output regionSummary array = [
   }
 ]
 
-// 6.4 Capacity
+// 7.4 Capacity
 // Aggregate configured limits and remaining spoke workload slots are different checks;
 // use the detailed validation outputs alongside these summaries.
 output totalVmRequested int = validationEngine.outputs.totalVMs

@@ -1,0 +1,78 @@
+{
+  "jumpboxAdminUsername": "jmpadmin",
+  "labAdminUsername": "labadmin",
+
+  "automationManagedIdentityName": "amrl-deployment-mi",
+  "githubAppDisplayName": "AMRL-github-actions",
+
+  "jumpboxAdminPasswordSecretName": "jumpboxAdminPassword",
+  "labAdminPasswordSecretName": "labAdminPassword",
+
+  "sshPublicKeySecretName": "sshPublicKey",
+  "sshPrivateKeySecretName": "sshPrivateKey",
+
+  "directory": {
+    "rootOuName": "_ROOT",
+
+    "customOus": [
+      "Computers",
+      "Computers/Servers",
+      "Computers/Clients",
+      "Groups",
+      "Groups/GGS",
+      "Groups/DLGS",
+      "Users",
+      "Users/Disabled",
+      "ServiceAccounts"
+    ],
+
+    "computerOuMapping": {
+      "srvwin": "Computers/Servers",
+      "srvlin": "Computers/Servers",
+      "cliwin": "Computers/Clients",
+      "clilin": "Computers/Clients"
+    },
+
+    "groupOuMapping": {
+      "globalSecurity": "Groups/GGS",
+      "domainLocalSecurity": "Groups/DLGS"
+    },
+
+    "groupNaming": {
+      "globalSecurityPrefix": "GGS",
+      "domainLocalSecurityPrefix": "DLGS"
+    },
+
+    "platformAdminGroups": {
+      "windowsAdmins": "Windows_Admins",
+      "linuxAdmins": "Linux_Admins"
+    },
+
+    "shares": {
+      "root": {
+        "name": "Shares",
+        "path": "C:\\Shares"
+      }
+    },
+
+    "gpoNames": {
+      "serverAdministration": "Server Administration",
+      "clientAdministration": "Client Administration",
+      "windowsLaps": "Windows LAPS",
+      "domainControllerWinRM": "Domain Controller WinRM"
+    },
+
+    "serviceAccounts": {
+    "backup": {
+        "name": "svc_backup",
+        "group": "Backup_Operators",
+        "passwordSecretName": "svc-backup-password"
+    },
+    "monitoring": {
+        "name": "svc_monitoring",
+        "group": "Monitoring_Operators",
+        "passwordSecretName": "svc-monitoring-password"
+    }
+  }
+  }
+}

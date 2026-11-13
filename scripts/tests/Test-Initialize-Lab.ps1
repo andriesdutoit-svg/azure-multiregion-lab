@@ -1,5 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
+# This is a mock-based regression suite, not a live Azure test. Dot-sourcing loads the
+# bootstrapper helpers; each scenario replaces external commands with deterministic fakes,
+# checks observable calls/results, and restores script state or removes temporary files.
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $scriptPath = Join-Path $repoRoot 'scripts/Initialize-Lab.ps1'
 . $scriptPath
@@ -25,6 +28,7 @@ function Assert-Test {
     $script:checks++
 }
 
+# Deployment confirmation must accept only the literal token and keep cancellation in the report.
 & {
     $script:confirmationAnswers = [System.Collections.Generic.Queue[string]]::new()
     $script:confirmationPrompts = New-Object 'System.Collections.Generic.List[string]'
@@ -77,6 +81,8 @@ function Assert-Test {
     $script:BootstrapperReport = $previousReport
 }
 
+# Lock down the public command-line contract and the complete parameter-file schema before
+# exercising individual helpers. These checks also ensure service-account secrets stay inventoried.
 Assert-Test ($publicParameters -contains 'Plan') 'Plan switch is missing from the public interface.'
 Assert-Test ($publicParameters -contains 'Prepare') 'Prepare switch is missing from the public interface.'
 Assert-Test ('Configure' -notin $publicParameters) 'The old Configure switch remains in the public interface.'
@@ -89,6 +95,14 @@ Assert-Test ('Preview' -notin $publicParameters) 'The obsolete Preview switch re
 Assert-Test ('WhatIf' -notin $publicParameters -and 'Confirm' -notin $publicParameters) 'The ambiguous PowerShell common switches remain exposed.'
 Assert-Test ('ConfirmBootstrap' -notin $publicParameters) 'The removed ConfirmBootstrap switch remains in the public interface.'
 Assert-Test ($supportsShouldProcess.Count -eq 0) 'SupportsShouldProcess would reintroduce automatic -WhatIf/-Confirm switches.'
+$serviceAccountPasswordSecretNames = @(
+    [string]$script:AMRLDefaults.directory.serviceAccounts.backup.passwordSecretName
+    [string]$script:AMRLDefaults.directory.serviceAccounts.monitoring.passwordSecretName
+)
+foreach ($secretName in $serviceAccountPasswordSecretNames) {
+    Assert-Test ($secretName -in (Get-AMRLManagedSecretNames)) "Service-account secret '$secretName' is missing from the required Key Vault inventory."
+    Assert-Test ($secretName -in (Get-AMRLPasswordSecretNames)) "Service-account secret '$secretName' is missing from the bootstrapper password-creation inventory."
+}
 $wacModule = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'modules/identity/wac.bicep')
 Assert-Test ($wacModule -match '(?m)^\s*treatFailureAsDeploymentFailure:\s*false\s*$') 'WAC Run Command errors must be reported without failing the overall deployment.'
 $scriptSource = Get-Content -Raw -LiteralPath $scriptPath
@@ -113,10 +127,20 @@ foreach ($templatePath in @('main.parameters.example.json', 'main.parameters.dem
         $parameter = $template.parameters.PSObject.Properties[$parameterName]
         Assert-Test ($null -ne $parameter -and ($null -ne $parameter.Value.PSObject.Properties['value'] -or $null -ne $parameter.Value.PSObject.Properties['reference'])) "$templatePath omits a Bicep parameter value for '$parameterName'."
     }
-    foreach ($metadataName in @('azureTenantId', 'azureSubscriptionId', 'deploymentLocation', 'foundationResourceGroup', 'automationManagedIdentityName', 'foundationLocation', 'foundationLocationSource', 'githubRepository', 'githubAppDisplayName')) {
+    foreach ($metadataName in @('azureTenantId', 'azureSubscriptionId', 'githubRepository')) {
         Assert-Test ($null -ne $template.parameters.prefix.metadata.bootstrap.PSObject.Properties[$metadataName]) "$templatePath omits bootstrap metadata '$metadataName'."
     }
 }
+$mainBicepSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'main.bicep')
+$validationBicepSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'modules/logic/validation.bicep')
+$validationFlags = @([regex]::Matches($validationBicepSource, "(?m)^\s+flag:\s*'([^']+)'" ) | ForEach-Object { $_.Groups[1].Value })
+Assert-Test ($validationFlags.Count -eq @($validationFlags | Select-Object -Unique).Count) 'Validation flag catalog contains duplicate names.'
+Assert-Test ($mainBicepSource -match '(?s)@minValue\(1\)\s+@description\([^\r\n]+\)\s+param regionCount int') 'regionCount is not constrained to at least one before root expressions run.'
+Assert-Test ($mainBicepSource -match '(?s)@minValue\(1\)\s+@description\([^\r\n]+\)\s+param maxVmsPerRegion int') 'maxVmsPerRegion is not constrained to at least one before capacity division.'
+Assert-Test ($validationBicepSource -match "(?s)flag: 'hasUncoveredNewVmNetworks'\s+active: hasUncoveredNewVmNetworks\s+severity: 'block'") 'Missing networking for new VMs is not a blocking validation finding.'
+Assert-Test ($validationBicepSource -match "(?s)flag: 'hasMalformedDomainName'\s+active: deployIdentity && hasMalformedDomainName\s+severity: 'block'") 'Malformed domain names do not block identity deployment.'
+Assert-Test ($validationBicepSource -match "(?s)flag: 'hasInvalidGpoNames'\s+active: deployIdentity && hasInvalidGpoNames\s+severity: 'block'") 'Invalid GPO names do not block identity deployment.'
+Assert-Test ($validationBicepSource -match "(?s)flag: 'hasUnsafeJumpboxAllowedSources'\s+active: hasUnsafeJumpboxAllowedSources\s+severity: 'block'") 'World-open jumpbox access is not blocking in enforce mode.'
 $exampleTemplate = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'main.parameters.example.json') | ConvertFrom-Json
 Assert-Test (@($exampleTemplate.parameters.jumpboxAllowedSources.value) -contains '<YOUR_PUBLIC_IP>/32') 'Example parameter file does not define the replaceable jumpbox IPv4 source.'
 $incompleteParametersRejected = $false
@@ -138,6 +162,32 @@ ERROR:
 '@
 $resourceDeploymentSummary = Get-AMRLDeploymentFailureSummary -Message $resourceDeploymentError
 Assert-Test ($resourceDeploymentSummary -eq 'Deployment failed (QuotaExceeded): The requested VM family quota is unavailable. (Correlation ID: 11111111-2222-3333-4444-555555555555)') 'Non-gate ARM failure summary omitted the useful error code, message, or correlation ID.'
+$keyVaultRbacFailure = @'
+Key Vault secret access is not ready: Azure CLI failed (exit 1): az keyvault secret list --vault-name amrl-kv-dbdbac44-5
+ERROR: (Forbidden) Caller is not authorized to perform action on resource.
+System.Management.Automation.RemoteException
+Caller: appid=04b07795-8ddb-461a-bbee-02f9e1bf7b46;oid=bb206f5b-840f-46c4-8b07-55fdbbe46e3c
+Action: 'Microsoft.KeyVault/vaults/secrets/readMetadata/action'
+Resource: '/subscriptions/test/resourcegroups/alt-foundation-rg/providers/microsoft.keyvault/vaults/amrl-kv-dbdbac44-5'
+Inner error: { "code": "ForbiddenByRbac" }
+'@
+$keyVaultRbacSummary = Get-AMRLErrorSummary -Message $keyVaultRbacFailure
+Assert-Test ($keyVaultRbacSummary -eq "Key Vault 'amrl-kv-dbdbac44-5' denied secret access (ForbiddenByRbac). Verify the caller's Secrets Officer assignment at this vault scope; Azure RBAC may still be propagating.") 'Key Vault RBAC failure was not summarized with its vault and actionable cause.'
+Assert-Test ($keyVaultRbacSummary -notmatch 'Caller:|appid=|RemoteException|resourcegroups/') 'Key Vault RBAC summary retained caller or resource diagnostic noise.'
+$missingSecretFailure = @'
+ERROR: MultipleErrorsOccurred
+The secret of KeyVault parameter 'labAdminPassword' cannot be retrieved.
+The secret of KeyVault parameter 'backupServicePassword' cannot be retrieved.
+The secret of KeyVault parameter 'monitoringServicePassword' cannot be retrieved.
+'@
+$missingSecretSummary = Get-AMRLErrorSummary -Message $missingSecretFailure
+Assert-Test ($missingSecretSummary -eq 'Azure could not resolve Key Vault parameter secrets: labAdminPassword, backupServicePassword, monitoringServicePassword.') 'Missing Key Vault parameters were not reduced to a concise secret-name list.'
+$previousIssueReport = $script:BootstrapperReport
+Initialize-AMRLBootstrapperReport -Mode 'Duplicate Azure error summary test'
+Add-AMRLReportIssue -Phase 'Bicep build and validation' -Message $missingSecretFailure
+Add-AMRLReportIssue -Phase 'What-if preview' -Message "Azure CLI failed (exit 1): az deployment sub what-if`n$missingSecretFailure"
+Assert-Test ($script:BootstrapperReport.Issues.Count -eq 1 -and $script:BootstrapperReport.Issues[0].Message -eq $missingSecretSummary) 'Repeated missing-secret errors were not consolidated to one report issue.'
+$script:BootstrapperReport = $previousIssueReport
 $skuOperationError = @'
 {"status":"Failed","error":{"code":"InvalidTemplateDeployment","message":"The template deployment 'AMRL-dc02' is not valid. Tracking id is '6f9f8bcd-49e6-44f4-919b-152315888599'. See inner errors.","details":[{"code":"SkuNotAvailable","message":"The requested VM size 'Standard_B2ls_v2' is currently not available in location 'australiasoutheast' due to capacity restrictions. Try another size."}]}}
 '@ | ConvertFrom-Json
@@ -185,32 +235,40 @@ Assert-Test (
 $parameterJson = @'
 {
   "parameters": {
-        "prefix": { "value": "AMRL" },
+        "prefix": {
+            "value": "AMRL",
+            "metadata": {
+                "bootstrap": {
+                    "azureTenantId": "tenant",
+                    "azureSubscriptionId": "sub",
+                    "githubRepository": "owner/repository"
+                }
+            }
+        },
         "regionIndexMap": { "value": { "southafricanorth": 1 } },
-    "automationManagedIdentityResourceId": { "value": "<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>" },
-    "jumpboxAllowedSources": { "value": ["<YOUR_PUBLIC_IP>/32"] },
-    "jumpboxAdminPassword": { "reference": { "keyVault": { "id": "<KEYVAULT_ID>" }, "secretName": "jumpboxAdminPassword" } },
-    "sshPublicKey": { "reference": { "keyVault": { "id": "<KEYVAULT_ID>" }, "secretName": "sshPublicKey" } }
+        "foundationResourceGroup": { "value": "rg" },
+        "keyVaultName": { "value": "amrl-kv-test" },
+        "jumpboxAllowedSources": { "value": ["<YOUR_PUBLIC_IP>/32"] }
   }
 }
 '@
 $parameters = $parameterJson | ConvertFrom-Json
-$updated = Set-AMRLParameterReferences `
+$updated = Set-AMRLParameterValues `
     -Parameters $parameters `
-    -KeyVaultId '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/amrl-kv-test' `
-    -IdentityId '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/amrl-mi' `
+    -FoundationResourceGroup 'rg' `
+    -KeyVaultName 'amrl-kv-test' `
     -PublicIp '203.0.113.12'
-Assert-Test ($updated.parameters.jumpboxAdminPassword.reference.keyVault.id -like '*/vaults/amrl-kv-test') 'Key Vault references were not updated.'
-Assert-Test ($updated.parameters.sshPublicKey.reference.keyVault.id -like '*/vaults/amrl-kv-test') 'SSH Key Vault reference was not updated.'
-Assert-Test ($updated.parameters.automationManagedIdentityResourceId.value -like '*/userAssignedIdentities/amrl-mi') 'Managed identity reference was not updated.'
+
+Assert-Test ($updated.parameters.foundationResourceGroup.value -eq 'rg') 'foundationResourceGroup was not updated.'
+Assert-Test ($updated.parameters.keyVaultName.value -eq 'amrl-kv-test') 'keyVaultName was not updated.'
 Assert-Test ($updated.parameters.jumpboxAllowedSources.value[0] -eq '203.0.113.12/32') 'Public IP placeholder was not replaced.'
 
 $explicitParameters = $parameterJson | ConvertFrom-Json
 $explicitParameters.parameters.jumpboxAllowedSources.value = @('<YOUR_PUBLIC_IP>/32', '198.51.100.27/32', '192.0.2.0/24')
-$preserved = Set-AMRLParameterReferences `
+$preserved = Set-AMRLParameterValues `
     -Parameters $explicitParameters `
-    -KeyVaultId '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/amrl-kv-test' `
-    -IdentityId '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/amrl-mi' `
+    -FoundationResourceGroup 'rg' `
+    -KeyVaultName 'amrl-kv-test' `
     -PublicIp '203.0.113.12'
 Assert-Test ($preserved.parameters.jumpboxAllowedSources.value.Count -eq 3) 'Placeholder replacement dropped or merged explicit source ranges.'
 Assert-Test ($preserved.parameters.jumpboxAllowedSources.value[0] -eq '203.0.113.12/32') 'Public IP placeholder was not replaced in place.'
@@ -221,6 +279,8 @@ $script:promptCount = 0
 $script:promptMessages = New-Object 'System.Collections.Generic.List[string]'
 $script:useGitHubPromptValues = $false
 $script:wizardAnswers = @{}
+# Exercise wizard defaults, stage-specific prompts, invalid-answer retries, explicit-file behavior,
+# and JSON round-tripping without opening an interactive console or writing Azure resources.
 function Read-Host {
     param([string]$Prompt, [switch]$AsSecureString)
     $script:promptCount++
@@ -243,7 +303,7 @@ $script:PlanMode = $true
 $script:InteractiveConfiguration = $true
 try {
     $planDocument = Get-ParameterDocument -Path $planParameterPath
-    Assert-Test ($script:promptCount -eq 18) 'Parameter wizard did not prompt for the selected settings and six individual VM counts.'
+    Assert-Test ($script:promptCount -eq 17) 'Parameter wizard did not prompt for the selected settings and six individual VM counts.'
     $formattedParameterJson = ConvertTo-AMRLParameterJson -InputObject $planDocument
     $formattedLines = $formattedParameterJson -split "`r?`n"
     Assert-Test (@($formattedLines | Where-Object { (($_.Length - $_.TrimStart().Length) % 2) -ne 0 }).Count -eq 0) 'Parameter JSON indentation is not consistently two-space based.'
@@ -270,16 +330,16 @@ try {
         Assert-Test (@($script:promptMessages | Where-Object { $_ -like "VM count for $role (Allowed: whole number, minimum 1)*" }).Count -eq 1) "$role prompt did not indicate a minimum of 1."
     }
     Assert-Test (@($script:promptMessages | Where-Object { $_ -like '*Regions selected from regionIndexMap*' }).Count -eq 0) 'Wizard listed parameter-file regions before foundation location setup.'
-    Assert-Test (@($script:promptMessages | Where-Object { $_ -like '*(Allowed: y/N)*' }).Count -eq 4) 'Boolean prompts did not use the concise y/N hint.'
+    Assert-Test (@($script:promptMessages | Where-Object { $_ -like '*(Allowed: y/N)*' }).Count -eq 3) 'Boolean prompts did not use the concise y/N hint.'
     Assert-Test (-not (Test-Path -LiteralPath $planParameterPath)) 'Plan mode wrote the local parameter file.'
     Assert-Test ($planDocument.parameters.prefix.value -eq 'AMRL') 'Demo prefix default was changed.'
     Assert-Test ($planDocument.parameters.regionCount.value -eq 3) 'Demo region count was changed.'
     Assert-Test ($planDocument.parameters.networkMode.value -eq 'fullMesh') 'Demo network mode was changed.'
     Assert-Test ($planDocument.parameters.vmCounts.value.dc -eq 1) 'Demo VM counts were changed.'
     $firstMappedRegion = [string](@($planDocument.parameters.regionIndexMap.value.PSObject.Properties | Sort-Object { [int]$_.Value })[0].Name)
-    Assert-Test ($planDocument.parameters.prefix.metadata.bootstrap.foundationLocation -eq $firstMappedRegion) 'Foundation location did not default to the first regionIndexMap entry.'
-    Assert-Test ($planDocument.parameters.prefix.metadata.bootstrap.foundationLocationSource -eq 'regionIndexMap') 'Foundation location did not record its map-derived default source.'
-    foreach ($setting in @('maxVmsPerRegion', 'validationMode', 'departmentCount', 'usersPerDepartment', 'enableFileServices', 'useDedicatedFileServer', 'enableWindowsAdminCenter', 'useDedicatedWacHost')) {
+    Assert-Test ((Get-AMRLFoundationLocation -Parameters $planDocument) -eq $firstMappedRegion) 'Foundation location was not derived from the first regionIndexMap entry.'
+    Assert-Test ($null -eq $planDocument.parameters.prefix.metadata.bootstrap.PSObject.Properties['foundationLocation']) 'Derived foundation location was persisted in bootstrap metadata.'
+    foreach ($setting in @('maxVmsPerRegion', 'validationMode', 'departmentCount', 'usersPerDepartment', 'useDedicatedFileServer', 'enableWindowsAdminCenter', 'useDedicatedWacHost')) {
         $demoDocument = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'main.parameters.demo.json') | ConvertFrom-Json
         Assert-Test ($planDocument.parameters.$setting.value -ceq $demoDocument.parameters.$setting.value) "Accepting the default changed $setting."
     }
@@ -292,10 +352,9 @@ try {
     $explicitDocument = Get-ParameterDocument -Path $explicitParameterPath
     Assert-Test ($script:promptCount -eq $promptsBeforeExplicitFile) 'An explicit parameter file unexpectedly launched topology prompts.'
     Assert-Test ($explicitDocument.parameters.jumpboxAllowedSources.value[0] -eq '<YOUR_PUBLIC_IP>/32') 'Explicit parameter file values were not preserved.'
-    Assert-Test ($explicitDocument.parameters.prefix.metadata.bootstrap.foundationLocation -eq $firstMappedRegion) 'An explicit parameter file without a foundation-location override did not default from regionIndexMap.'
+    Assert-Test ((Get-AMRLFoundationLocation -Parameters $explicitDocument) -eq $firstMappedRegion) 'An explicit parameter file without a location override did not use the first regionIndexMap entry.'
 
     $explicitDocument.parameters.prefix.metadata.bootstrap.PSObject.Properties.Remove('githubRepository')
-    $explicitDocument.parameters.prefix.metadata.bootstrap.PSObject.Properties.Remove('githubAppDisplayName')
     [System.IO.File]::WriteAllText($explicitParameterPath, (ConvertTo-AMRLParameterJson -InputObject $explicitDocument))
     $promptsBeforeMissingGitHubValues = $script:promptCount
     $missingGitHubValuesRejected = $false
@@ -305,46 +364,39 @@ try {
     Assert-Test ($script:promptCount -eq $promptsBeforeMissingGitHubValues) 'Missing explicit GitHub values triggered an interactive prompt.'
 
     $explicitDocument.parameters.prefix.metadata.bootstrap | Add-Member -NotePropertyName githubRepository -NotePropertyValue 'file-owner/file-repository' -Force
-    $explicitDocument.parameters.prefix.metadata.bootstrap | Add-Member -NotePropertyName githubAppDisplayName -NotePropertyValue 'File-defined OIDC app' -Force
     $explicitDocument.parameters.prefix.metadata.bootstrap.githubRepository = 'file-owner/file-repository'
-    $explicitDocument.parameters.prefix.metadata.bootstrap.githubAppDisplayName = 'File-defined OIDC app'
     [System.IO.File]::WriteAllText($explicitParameterPath, (ConvertTo-AMRLParameterJson -InputObject $explicitDocument))
     $promptsBeforeExplicitGitHub = $script:promptCount
     $explicitGitHubDocument = Get-ParameterDocument -Path $explicitParameterPath -IncludeGitHub
     Assert-Test ($script:promptCount -eq $promptsBeforeExplicitGitHub) 'GitHub settings were prompted despite an explicit parameter file.'
     Assert-Test ($explicitGitHubDocument.parameters.prefix.metadata.bootstrap.githubRepository -eq 'file-owner/file-repository') 'Explicit GitHub repository value was not taken from the parameter file.'
-    Assert-Test ($explicitGitHubDocument.parameters.prefix.metadata.bootstrap.githubAppDisplayName -eq 'File-defined OIDC app') 'Explicit Entra app display name was not taken from the parameter file.'
+    Assert-Test ($null -eq $explicitGitHubDocument.parameters.prefix.metadata.bootstrap.PSObject.Properties['githubAppDisplayName']) 'GitHub app display name was persisted in bootstrap metadata.'
 
-    $explicitDocument.parameters.prefix.metadata.bootstrap | Add-Member -NotePropertyName foundationLocation -NotePropertyValue 'eastus' -Force
-    $explicitDocument.parameters.prefix.metadata.bootstrap.PSObject.Properties.Remove('foundationLocationSource')
-    [System.IO.File]::WriteAllText($explicitParameterPath, ($explicitDocument | ConvertTo-Json -Depth 100))
-    $explicitLocationDocument = Get-ParameterDocument -Path $explicitParameterPath
-    Assert-Test ($explicitLocationDocument.parameters.prefix.metadata.bootstrap.foundationLocation -eq 'eastus') 'An explicit foundation location was replaced by the region-map default.'
-    Assert-Test ($explicitLocationDocument.parameters.prefix.metadata.bootstrap.foundationLocationSource -eq 'explicit') 'An unmarked supplied foundation location was not classified as an explicit override.'
+    Assert-Test ((Get-AMRLFoundationLocation -Parameters $explicitGitHubDocument) -eq $firstMappedRegion) 'Foundation location did not remain derived from regionIndexMap.'
 
     $script:InteractiveConfiguration = $true
     $promptsBeforeGitHub = $script:promptCount
     $githubDocument = Get-ParameterDocument -Path $planParameterPath -IncludeGitHub
-    Assert-Test ($script:promptCount -eq ($promptsBeforeGitHub + 20)) 'GitHub settings were not prompted only when -IncludeGitHub was specified.'
+    Assert-Test ($script:promptCount -eq ($promptsBeforeGitHub + 18)) 'GitHub settings were not prompted only when -IncludeGitHub was specified.'
     Assert-Test (@($script:promptMessages | Where-Object { $_ -like 'GitHub repository (Allowed: exact full repository name)*' }).Count -gt 0) 'GitHub repository prompt did not use the concise exact-name hint.'
-    Assert-Test (@($script:promptMessages | Where-Object { $_ -like '*any non-empty name*' }).Count -gt 0) 'GitHub app display name prompt did not show its accepted values.'
     Assert-Test ($null -eq $githubDocument.PSObject.Properties['metadata']) 'Bootstrap metadata was added as an unsupported root property.'
     Assert-Test ($githubDocument.parameters.prefix.metadata.bootstrap.githubRepository -eq 'andriesdutoit-svg/azure-multiregion-lab') 'GitHub repository did not default from the parameter template.'
-    Assert-Test ($githubDocument.parameters.prefix.metadata.bootstrap.githubAppDisplayName -eq 'AMRL-github-actions') 'GitHub app display name did not default from the parameter template.'
+    Assert-Test ($null -eq $githubDocument.parameters.prefix.metadata.bootstrap.PSObject.Properties['githubAppDisplayName']) 'GitHub app display name was persisted in bootstrap metadata.'
+    Assert-Test ((Get-AMRLDefault 'githubAppDisplayName') -eq 'AMRL-github-actions') 'GitHub app display name did not come from AMRL defaults.'
 
     $script:useGitHubPromptValues = $true
     $promptsBeforeGitHubOverride = $script:promptCount
     $githubOverrideDocument = Get-ParameterDocument -Path $planParameterPath -IncludeGitHub
-    Assert-Test ($script:promptCount -eq ($promptsBeforeGitHubOverride + 20)) 'GitHub wizard did not ask for repository and app name.'
+    Assert-Test ($script:promptCount -eq ($promptsBeforeGitHubOverride + 18)) 'GitHub wizard did not ask for its repository setting.'
     Assert-Test ($githubOverrideDocument.parameters.prefix.metadata.bootstrap.githubRepository -eq 'owner/repository') 'Wizard repository choice did not override the template default.'
-    Assert-Test ($githubOverrideDocument.parameters.prefix.metadata.bootstrap.githubAppDisplayName -eq 'AMRL-test-github') 'Wizard app display name did not override the template default.'
+    Assert-Test ((Get-AMRLDefault 'githubAppDisplayName') -eq 'AMRL-github-actions') 'GitHub app display name did not remain sourced from AMRL defaults.'
 
     $script:PlanMode = $false
     $script:useGitHubPromptValues = $false
     $savedGitHubDocument = Get-ParameterDocument -Path $planParameterPath -IncludeGitHub
     $savedGitHubDocument = Get-Content -Raw -LiteralPath $planParameterPath | ConvertFrom-Json
     Assert-Test ($savedGitHubDocument.parameters.prefix.metadata.bootstrap.githubRepository -eq 'andriesdutoit-svg/azure-multiregion-lab') 'Template GitHub repository default was not saved to the local file.'
-    Assert-Test ($savedGitHubDocument.parameters.prefix.metadata.bootstrap.githubAppDisplayName -eq 'AMRL-github-actions') 'Template GitHub app default was not saved to the local file.'
+    Assert-Test ($null -eq $savedGitHubDocument.parameters.prefix.metadata.bootstrap.PSObject.Properties['githubAppDisplayName']) 'GitHub app display name was saved in bootstrap metadata.'
 
     $script:wizardAnswers = @{
         'Validation mode' = [System.Collections.Generic.Queue[string]]::new([string[]]@('invalid'))
@@ -353,7 +405,6 @@ try {
         'departmentCount ' = [System.Collections.Generic.Queue[string]]::new([string[]]@('-1', '12'))
         'usersPerDepartment ' = [System.Collections.Generic.Queue[string]]::new([string[]]@('-5', '0', '5'))
         'VM count for dc' = [System.Collections.Generic.Queue[string]]::new([string[]]@('-2', '1'))
-        'enableFileServices ' = [System.Collections.Generic.Queue[string]]::new([string[]]@('invalid', 'yes'))
         'useDedicatedFileServer ' = [System.Collections.Generic.Queue[string]]::new([string[]]@('N'))
         'enableWindowsAdminCenter ' = [System.Collections.Generic.Queue[string]]::new([string[]]@('y'))
         'useDedicatedWacHost ' = [System.Collections.Generic.Queue[string]]::new([string[]]@('yes'))
@@ -362,7 +413,7 @@ try {
     $customDocument = Get-ParameterDocument -Path $planParameterPath
     $savedDocument = Get-Content -Raw -LiteralPath $planParameterPath | ConvertFrom-Json
     Assert-Test ($customDocument.parameters.departmentCount.value -eq 12) 'Wizard output object did not retain the accepted department count.'
-    Assert-Test ($script:promptCount -eq ($promptsBeforeInvalidValues + 28)) 'Invalid numeric or boolean input did not repeat the prompt until an accepted value was entered.'
+    Assert-Test ($script:promptCount -eq ($promptsBeforeInvalidValues + 26)) 'Invalid numeric or boolean input did not repeat the prompt until an accepted value was entered.'
     Assert-Test ($savedDocument.parameters.regionCount.value -eq 3) 'Wizard did not retry a negative region count.'
     Assert-Test ($savedDocument.parameters.validationMode.value -ceq 'invalid') 'Wizard did not defer validation of the selected validation mode.'
     foreach ($setting in @('maxVmsPerRegion', 'departmentCount', 'usersPerDepartment')) {
@@ -371,7 +422,6 @@ try {
         Assert-Test ($savedDocument.parameters.$setting.value -is [int]) "Wizard saved $setting as a non-integer."
     }
     Assert-Test ($savedDocument.parameters.vmCounts.value.dc -eq 1) 'Wizard did not retry a negative VM count.'
-    Assert-Test ($savedDocument.parameters.enableFileServices.value -eq $true) 'Wizard did not retry an invalid boolean answer.'
     Assert-Test (-not $script:PasswordChoiceMade) 'Parameter parsing chose password handling before checking existing secrets.'
     Assert-Test ($savedDocument.parameters.useDedicatedFileServer.value -eq $false) 'Wizard did not accept N as a boolean answer.'
     foreach ($setting in @('enableWindowsAdminCenter', 'useDedicatedWacHost')) {
@@ -401,9 +451,10 @@ finally {
 
 $mismatchRejected = $false
 try {
-    Set-AMRLParameterReferences `
+    Set-AMRLParameterValues `
         -Parameters $explicitParameters `
-        -KeyVaultId '/subscriptions/other/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/other-kv' `
+        -FoundationResourceGroup 'rg' `
+        -KeyVaultName 'other-kv' `
         -IdentityId '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/amrl-mi' `
         -PublicIp '203.0.113.12' | Out-Null
 }
@@ -412,6 +463,8 @@ catch {
 }
 Assert-Test $mismatchRejected 'A mismatched existing Key Vault reference was not rejected.'
 
+# Mock Azure/GitHub calls for subscription planning and OIDC setup. The assertions verify the exact
+# operations and trust subjects while ensuring read-only readiness never creates credentials.
 $script:cliCalls = New-Object 'System.Collections.Generic.List[object]'
 $script:tsvCalls = New-Object 'System.Collections.Generic.List[object]'
 $script:roleAssignmentState = 'missing'
@@ -476,6 +529,8 @@ Set-AMRLRoleAssignmentIfMissing `
     -Scope '/subscriptions/test' | Out-Null
 Assert-Test ($script:cliCalls.Count -eq 1) 'A missing role assignment was not created.'
 Assert-Test (($script:cliCalls[0] -join ' ') -match 'role assignment create') 'Unexpected Azure CLI call for role assignment.'
+ $roleLookup = @($script:tsvCalls | Where-Object { $_[0] -eq 'role' -and $_[1] -eq 'assignment' -and $_[2] -eq 'list' })[-1]
+Assert-Test ($roleLookup -notcontains '--assignee' -and ($roleLookup -join ' ') -match "principalId=='11111111-1111-1111-1111-111111111111'") 'Role assignment lookup still depends on Entra Graph assignee resolution.'
 Assert-Test (@($script:tsvCalls | Where-Object { $_[0] -eq 'role' -and $_[1] -eq 'assignment' -and $_[2] -eq 'list' -and $_ -contains '--all' }).Count -eq 0) 'Scoped role-assignment lookup combined --scope with incompatible --all.'
 
 $script:cliCalls.Clear()
@@ -486,6 +541,86 @@ Set-AMRLRoleAssignmentIfMissing `
     -Role 'Network Contributor' `
     -Scope '/subscriptions/test' | Out-Null
 Assert-Test ($script:cliCalls.Count -eq 0) 'An existing role assignment was duplicated.'
+
+& {
+$vaultSelectionParameters = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'main.parameters.demo.json') | ConvertFrom-Json
+$vaultSelectionFoundation = [pscustomobject]@{
+    ResourceGroup = 'old-rg'
+    IdentityResourceGroup = 'old-rg'
+    VaultResourceGroup = 'old-rg'
+    IdentityId = '/subscriptions/test/resourceGroups/old-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/amrl-mi'
+    IdentityName = 'amrl-mi'
+    VaultId = '/subscriptions/test/resourceGroups/old-rg/providers/Microsoft.KeyVault/vaults/old-vault'
+    VaultName = 'old-vault'
+    RebuildFoundation = $false
+    RecoveryConfirmed = $false
+}
+$script:vaultSelectionActive = @([pscustomobject]@{
+    name = 'existing-vault'
+    id = '/subscriptions/test/resourceGroups/new-rg/providers/Microsoft.KeyVault/vaults/existing-vault'
+})
+$script:vaultSelectionDeleted = @()
+$script:vaultSelectionAnswers = [System.Collections.Generic.Queue[string]]::new([string[]]@('yes'))
+$script:vaultSelectionGeneratedNames = 0
+function Get-AzTsv {
+    param([string[]]$Arguments)
+    if ($Arguments[0] -eq 'group' -and $Arguments[1] -eq 'exists') { return 'true' }
+    return ''
+}
+function Get-AzJson {
+    param([string[]]$Arguments)
+    if ($Arguments[0] -eq 'keyvault' -and $Arguments[1] -eq 'list') { return @($script:vaultSelectionActive) }
+    if ($Arguments[0] -eq 'keyvault' -and $Arguments[1] -eq 'list-deleted') { return @($script:vaultSelectionDeleted) }
+    throw "Unexpected vault selection lookup: $($Arguments -join ' ')"
+}
+function Read-RequiredValue {
+    param([string]$Prompt, [string]$Hint, [string]$DefaultValue, [scriptblock]$Validator)
+    if ($script:vaultSelectionAnswers.Count -eq 0) { throw "Unexpected vault selection prompt: $Prompt" }
+    return $script:vaultSelectionAnswers.Dequeue()
+}
+function Get-AMRLAvailableVaultName {
+    param([string]$SubscriptionId)
+    $script:vaultSelectionGeneratedNames++
+    return 'generated-vault'
+}
+Set-AMRLFoundationResourceGroup -Parameters $vaultSelectionParameters -Foundation $vaultSelectionFoundation -ResourceGroupName 'new-rg' -SubscriptionId 'test'
+Assert-Test ($vaultSelectionFoundation.VaultName -eq 'existing-vault' -and $vaultSelectionFoundation.VaultId -like '*/new-rg/*') 'The selected foundation group did not reuse its confirmed active Key Vault.'
+Assert-Test ($vaultSelectionParameters.parameters.keyVaultName.value -eq 'existing-vault' -and $script:vaultSelectionGeneratedNames -eq 0) 'Active Key Vault reuse was not persisted or unnecessarily generated a new name.'
+
+$vaultSelectionParameters.parameters.keyVaultName.value = 'old-vault'
+$vaultSelectionFoundation.VaultName = 'old-vault'
+$vaultSelectionFoundation.VaultId = '/subscriptions/test/resourceGroups/old-rg/providers/Microsoft.KeyVault/vaults/old-vault'
+$script:vaultSelectionActive = @(
+    [pscustomobject]@{ name = 'vault-a'; id = '/subscriptions/test/resourceGroups/new-rg/providers/Microsoft.KeyVault/vaults/vault-a' }
+    [pscustomobject]@{ name = 'vault-b'; id = '/subscriptions/test/resourceGroups/new-rg/providers/Microsoft.KeyVault/vaults/vault-b' }
+)
+$script:vaultSelectionAnswers = [System.Collections.Generic.Queue[string]]::new([string[]]@('vault-b'))
+Set-AMRLFoundationResourceGroup -Parameters $vaultSelectionParameters -Foundation $vaultSelectionFoundation -ResourceGroupName 'new-rg' -SubscriptionId 'test'
+Assert-Test ($vaultSelectionFoundation.VaultName -eq 'vault-b' -and $vaultSelectionFoundation.VaultId -like '*/vault-b') 'The user could not select one of several active Key Vaults.'
+
+$vaultSelectionParameters.parameters.keyVaultName.value = 'old-vault'
+$vaultSelectionFoundation.VaultName = 'old-vault'
+$vaultSelectionFoundation.VaultId = '/subscriptions/test/resourceGroups/old-rg/providers/Microsoft.KeyVault/vaults/old-vault'
+$script:vaultSelectionActive = @()
+$script:vaultSelectionDeleted = @([pscustomobject]@{
+    name = 'deleted-vault'
+    properties = @{ vaultId = '/subscriptions/test/resourceGroups/new-rg/providers/Microsoft.KeyVault/vaults/deleted-vault'; location = 'westeurope' }
+})
+$script:vaultSelectionAnswers = [System.Collections.Generic.Queue[string]]::new([string[]]@('yes'))
+Set-AMRLFoundationResourceGroup -Parameters $vaultSelectionParameters -Foundation $vaultSelectionFoundation -ResourceGroupName 'new-rg' -SubscriptionId 'test'
+Assert-Test ($vaultSelectionFoundation.VaultName -eq 'deleted-vault' -and $vaultSelectionFoundation.VaultId -like '*/new-rg/*' -and $vaultSelectionFoundation.RecoveryConfirmed) 'A confirmed matching soft-deleted Key Vault was not selected for recovery.'
+
+$vaultSelectionParameters.parameters.keyVaultName.value = 'old-vault'
+$vaultSelectionFoundation.VaultName = 'old-vault'
+$vaultSelectionFoundation.VaultId = '/subscriptions/test/resourceGroups/old-rg/providers/Microsoft.KeyVault/vaults/old-vault'
+$script:vaultSelectionDeleted = @([pscustomobject]@{
+    name = 'deleted-vault'
+    properties = @{ vaultId = '/subscriptions/test/resourceGroups/other-rg/providers/Microsoft.KeyVault/vaults/deleted-vault'; location = 'westeurope' }
+})
+$script:vaultSelectionAnswers = [System.Collections.Generic.Queue[string]]::new([string[]]@())
+Set-AMRLFoundationResourceGroup -Parameters $vaultSelectionParameters -Foundation $vaultSelectionFoundation -ResourceGroupName 'new-rg' -SubscriptionId 'test'
+Assert-Test ($vaultSelectionFoundation.VaultName -eq 'generated-vault' -and $script:vaultSelectionGeneratedNames -eq 1) 'A deleted vault from another resource group was reused instead of generating a new name.'
+}
 
 $script:roleAssignmentState = 'missing'
 New-AMRLFederatedCredentialIfMissing `
@@ -527,8 +662,7 @@ function Invoke-GhCli {
             return (@('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID') | ForEach-Object { @{ name = $_ } } | ConvertTo-Json -Compress)
         }
         return (@(
-            @{ name = 'KEYVAULT_ID'; value = $githubSetupArguments.VaultId }
-            @{ name = 'AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID'; value = $githubSetupArguments.IdentityId }
+            @{ name = 'KEYVAULT_NAME'; value = $githubSetupArguments.VaultName }
             @{ name = 'YOUR_PUBLIC_IP'; value = '203.0.113.12' }
         ) | ConvertTo-Json -Compress)
     }
@@ -538,6 +672,7 @@ $githubSetupArguments = @{
     TenantId = 'tenant-id'
     SubscriptionId = 'subscription-id'
     VaultId = '/subscriptions/test/resourceGroups/foundation/providers/Microsoft.KeyVault/vaults/test'
+    VaultName = 'test'
     IdentityId = '/subscriptions/test/resourceGroups/foundation/providers/Microsoft.ManagedIdentity/userAssignedIdentities/test'
     Repository = 'owner/repository'
     AppDisplayName = 'AMRL-test-github'
@@ -551,6 +686,7 @@ $script:cliCalls.Clear()
 try {
     Set-AMRLGitHubConfiguration @githubSetupArguments
     Assert-Test (@($script:githubVariableSetCalls | Where-Object { $_[2] -eq 'YOUR_PUBLIC_IP' -and $_[4] -eq '203.0.113.12' }).Count -eq 1) 'GitHub setup did not set its missing IP variable from the parameter-file /32.'
+    Assert-Test (@($script:githubVariableSetCalls | Where-Object { $_[2] -eq 'KEYVAULT_NAME' -and $_[4] -eq 'test' }).Count -eq 1) 'GitHub setup did not set the Key Vault name variable.'
     $expectedSubjects = @(
         'repo:owner/repository:ref:refs/heads/main'
         'repo:owner/repository:ref:refs/heads/feature/test'
@@ -593,7 +729,7 @@ try {
     }
     $readiness = Get-AMRLGitHubReadiness -Repository $githubSetupArguments.Repository -AppDisplayName $githubSetupArguments.AppDisplayName -SubscriptionId $githubSetupArguments.SubscriptionId
     Assert-Test (@($readiness.Actions | Where-Object { $_ -like '*Actions secret*' }).Count -eq 3) 'GitHub readiness did not identify missing secret names.'
-    Assert-Test (@($readiness.Actions | Where-Object { $_ -like '*Actions variable*' }).Count -eq 3) 'GitHub readiness did not identify missing variables.'
+    Assert-Test (@($readiness.Actions | Where-Object { $_ -like '*Actions variable*' }).Count -eq 2) 'GitHub readiness did not identify the missing Key Vault name and public IP variables.'
 }
 finally {
     $script:mockMode = 'default'
@@ -603,6 +739,8 @@ finally {
     Set-Item Function:\Invoke-GhCli -Value $originalInvokeGhCli
 }
 
+# Validate extraction and display of root/nested validation outputs, including incomplete outputs,
+# report-only versus enforce decisions, and the rule that missing findings are not a clean pass.
 $sampleDeployment = [pscustomobject]@{
     name = 'amrl-20261028-120000'
     properties = [pscustomobject]@{
@@ -729,34 +867,23 @@ $script:validationLookupCalls.Clear()
 Show-AMRLValidationAfterFailure -Prefix 'AMRL' -RootDeploymentName 'amrl-test-deployment'
 Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs prevented nested validation recovery.'
 
+# Verify foundation IDs are derived from the parameter file and subscription, and vault-name
+# collisions are handled deterministically without purging or silently replacing explicit references.
 & {
     $foundationParameters = $parameterJson | ConvertFrom-Json
-    $foundation = Get-AMRLFoundationConfiguration -Parameters $foundationParameters -SubscriptionId 'sub'
-    Assert-Test ($foundation.ResourceGroup -eq 'amrl-foundation-rg') 'Placeholder references did not retain foundation defaults.'
-    $foundationParameters.parameters.automationManagedIdentityResourceId.value = '/subscriptions/sub/resourceGroups/custom-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/custom-mi'
-    $foundationParameters.parameters.jumpboxAdminPassword.reference.keyVault.id = '/subscriptions/sub/resourceGroups/vault-rg/providers/Microsoft.KeyVault/vaults/custom-vault'
-    $foundationParameters.parameters.sshPublicKey.reference.keyVault.id = $foundationParameters.parameters.jumpboxAdminPassword.reference.keyVault.id
+    $script:expectedIdentityId = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/amrl-deployment-mi'
+    $script:expectedVaultId = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/amrl-kv-test'
     function Get-AzJson {
         param([string[]]$Arguments)
-        if ($Arguments[0] -eq 'identity') { return [pscustomobject]@{ id = $foundationParameters.parameters.automationManagedIdentityResourceId.value } }
-        return [pscustomobject]@{ id = $foundationParameters.parameters.jumpboxAdminPassword.reference.keyVault.id }
+        if ($Arguments[0] -eq 'identity') { return [pscustomobject]@{ id = $script:expectedIdentityId; principalId = 'identity-principal' } }
+        if ($Arguments[0] -eq 'keyvault') { return [pscustomobject]@{ id = $script:expectedVaultId; name = 'amrl-kv-test' } }
+        throw "Unexpected foundation lookup: $($Arguments -join ' ')"
     }
     $foundation = Get-AMRLFoundationConfiguration -Parameters $foundationParameters -SubscriptionId 'sub'
-    Assert-Test ($foundation.IdentityName -eq 'custom-mi' -and $foundation.IdentityResourceGroup -eq 'custom-rg') 'Concrete identity reference was not reused.'
-    Assert-Test ($foundation.VaultName -eq 'custom-vault' -and $foundation.VaultResourceGroup -eq 'vault-rg') 'Concrete vault reference in a separate resource group was not reused.'
-    $crossSubscriptionRejected = $false
-    try { Get-AMRLFoundationConfiguration -Parameters $foundationParameters -SubscriptionId 'different-sub' | Out-Null }
-    catch { $crossSubscriptionRejected = $_.Exception.Message -like '*different subscription*' }
-    Assert-Test $crossSubscriptionRejected 'Cross-subscription foundation references were not rejected.'
-    function Get-AzJson { param([string[]]$Arguments) return $null }
-    $missingReferenceRejected = $false
-    try { Get-AMRLFoundationConfiguration -Parameters $foundationParameters -SubscriptionId 'sub' | Out-Null }
-    catch { $missingReferenceRejected = $_.Exception.Message -like '*explicitly referenced managed identity was not found*' }
-    Assert-Test $missingReferenceRejected 'A missing explicit identity was silently replaced.'
-    $externalReferenceRejected = $false
-    try { Get-AMRLFoundationConfiguration -Parameters $foundationParameters -SubscriptionId 'sub' -AllowMissingFoundation | Out-Null }
-    catch { $externalReferenceRejected = $_.Exception.Message -like '*explicitly referenced managed identity was not found*' }
-    Assert-Test $externalReferenceRejected 'Foundation rebuild handling replaced an unrelated external identity reference.'
+    Assert-Test ($foundation.ResourceGroup -eq 'rg') 'Foundation resource group was not taken from the top-level parameter.'
+    Assert-Test ($foundation.IdentityName -eq (Get-AMRLDefault 'automationManagedIdentityName')) 'Managed identity name did not come from AMRL defaults.'
+    Assert-Test ($foundation.IdentityId -eq $script:expectedIdentityId -and $foundation.IdentityResourceGroup -eq 'rg') 'Managed identity resource ID was not derived from subscription and foundation group.'
+    Assert-Test ($foundation.VaultName -eq 'amrl-kv-test' -and $foundation.VaultId -eq $script:expectedVaultId -and $foundation.VaultResourceGroup -eq 'rg') 'Key Vault identity was not derived from top-level parameter values.'
     $script:nameChecks = 0
     function Get-AzJson {
         param([string[]]$Arguments)
@@ -782,6 +909,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Assert-Test $invalidNameRejected 'Vault naming policy failures were treated as ordinary collisions.'
 }
 
+# Retry and prerequisite tests allow only transient RBAC propagation failures; firewall and other
+# permanent errors stop immediately. Missing tool checks are collected into one actionable error.
 & {
     $script:retryCalls = 0
     $retryResult = Invoke-AMRLRbacRetry -InitialDelaySeconds 0 -Operation {
@@ -790,6 +919,27 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         return 'ready'
     }
     Assert-Test ($retryResult -eq 'ready' -and $script:retryCalls -eq 3) 'RBAC retry did not recover from propagation errors.'
+    $script:retryCalls = 0
+    $retryResult = Invoke-AMRLRbacRetry -InitialDelaySeconds 0 -Operation {
+        $script:retryCalls++
+        if ($script:retryCalls -lt 3) { throw "Cannot find user or service principal in graph database for 'managed-identity-principal-id'." }
+        return 'ready'
+    }
+    Assert-Test ($retryResult -eq 'ready' -and $script:retryCalls -eq 3) 'Managed identity graph propagation was not retried.'
+    $script:retryCalls = 0
+    $retryResult = Invoke-AMRLRbacRetry -MaximumAttempts 23 -InitialDelaySeconds 0 -Operation {
+        $script:retryCalls++
+        if ($script:retryCalls -lt 12) { throw 'ForbiddenByRbac: assignment is propagating' }
+        return 'ready'
+    }
+    Assert-Test ($retryResult -eq 'ready' -and $script:retryCalls -eq 12) 'RBAC retry did not tolerate several minutes of delayed propagation.'
+    $script:retryCalls = 0
+    $retryResult = Invoke-AMRLRbacRetry -MaximumAttempts 3 -InitialDelaySeconds 0 -Operation {
+        $script:retryCalls++
+        if ($script:retryCalls -lt 3) { throw 'ForbiddenByRbac: access is propagating; DenyAssignmentId: null' }
+        return 'ready'
+    }
+    Assert-Test ($retryResult -eq 'ready' -and $script:retryCalls -eq 3) 'A null DenyAssignmentId incorrectly stopped RBAC propagation retries.'
     foreach ($failure in @('ForbiddenByFirewall', 'DenyAssignment', 'AuthenticationFailed', 'ResourceNotFound')) {
         $script:retryCalls = 0
         try {
@@ -798,6 +948,9 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         catch { Assert-Test ($_.Exception.Message -eq $failure) 'Retry obscured the original non-transient error.' }
         Assert-Test ($script:retryCalls -eq 1) "Retry repeated permanent error $failure."
     }
+    $script:retryCalls = 0
+    try { Invoke-AMRLRbacRetry -MaximumAttempts 3 -InitialDelaySeconds 0 -Operation { $script:retryCalls++; throw 'ForbiddenByRbac: denied by role assignment; DenyAssignmentId: 11111111-2222-3333-4444-555555555555' } | Out-Null }
+    catch { Assert-Test ($_.Exception.Message -match 'DenyAssignmentId: 11111111' -and $script:retryCalls -eq 1) 'A real deny assignment was retried or its error was obscured.' }
     $script:retryCalls = 0
     try { Invoke-AMRLRbacRetry -MaximumAttempts 3 -InitialDelaySeconds 0 -Operation { $script:retryCalls++; throw 'PrincipalNotFound' } }
     catch { Assert-Test ($script:retryCalls -eq 3) 'RBAC retries did not stop at the attempt limit.' }
@@ -809,6 +962,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Assert-Test $missingToolsRejected 'Prerequisites did not aggregate all missing commands.'
 }
 
+# Guest-result tests distinguish a successful Run Command resource from a successful guest script,
+# and confirm collection is read-only and quiet when results are destined for the final report.
 & {
     $script:guestCalls = New-Object 'System.Collections.Generic.List[object]'
     function Get-AzJson {
@@ -853,6 +1008,7 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Assert-Test ($emptyResults.Count -eq 1 -and $emptyResults[0].Result -eq 'No commands found') 'A VM with no Run Commands was silently treated as verified.'
 }
 
+# Windows MSI Azure CLI selects its bundled Python when available and otherwise uses the normal CLI.
 & {
     function Get-Command {
         param($Name, $ErrorAction)
@@ -866,6 +1022,7 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Assert-Test ($fallbackInvocation.Command -eq 'az' -and $fallbackInvocation.Prefix.Count -eq 0) 'Missing bundled Python did not preserve the normal Azure CLI path.'
 }
 
+# Exercise native Azure CLI UTF-8 setup/restoration on success, nonzero exit, and invocation errors.
 & {
     $previousPythonEncoding = [System.Environment]::GetEnvironmentVariable('PYTHONIOENCODING', 'Process')
     $previousConsoleEncoding = [Console]::OutputEncoding
@@ -906,13 +1063,17 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     }
 }
 
+# Verify the Azure CLI wrapper retries eligible Key Vault/role-assignment RBAC propagation failures,
+# but does not retry firewall denials or change Plan's single-attempt behavior.
 & {
     $script:cliProbeCalls = 0
     $script:cliProbeFailure = 'ForbiddenByRbac'
+    $script:cliProbeRetryAttempts = New-Object 'System.Collections.Generic.List[int]'
     $retryImplementation = (Get-Command Invoke-AMRLRbacRetry).ScriptBlock
     function Invoke-AMRLRbacRetry {
-        param([scriptblock]$Operation)
-        return (& $retryImplementation -Operation $Operation -InitialDelaySeconds 0)
+        param([scriptblock]$Operation, [int]$MaximumAttempts = 6, [int]$InitialDelaySeconds = 2)
+        $script:cliProbeRetryAttempts.Add($MaximumAttempts)
+        return (& $retryImplementation -Operation $Operation -MaximumAttempts $MaximumAttempts -InitialDelaySeconds 0)
     }
     function az {
         $script:cliProbeCalls++
@@ -928,6 +1089,12 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     try {
         $cliResult = & $originalInvokeAzCli -Arguments @('keyvault', 'secret', 'list', '--vault-name', 'mock-vault')
         Assert-Test ($cliResult -eq 'existing-secret' -and $script:cliProbeCalls -eq 3) 'Azure CLI wrapper did not retry Key Vault RBAC propagation.'
+        Assert-Test ($script:cliProbeRetryAttempts[-1] -eq 23) 'Key Vault data-plane calls did not receive the extended RBAC propagation window.'
+        $script:cliProbeCalls = 0
+        $script:cliProbeFailure = "Cannot find user or service principal in graph database for 'managed-identity-principal-id'."
+        $cliResult = & $originalInvokeAzCli -Arguments @('role', 'assignment', 'list', '--scope', '/subscriptions/mock', '--assignee', 'managed-identity-principal-id')
+        Assert-Test ($cliResult -eq 'existing-secret' -and $script:cliProbeCalls -eq 3) 'Azure CLI wrapper did not retry managed identity graph propagation during role lookup.'
+        Assert-Test ($script:cliProbeRetryAttempts[-1] -eq 6) 'Role assignment lookups unexpectedly received the long Key Vault data-plane retry window.'
         $script:cliProbeCalls = 0
         $script:cliProbeFailure = 'ForbiddenByFirewall'
         $firewallRejected = $false
@@ -938,6 +1105,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     finally { $script:PlanMode = $oldPlanMode }
 }
 
+# Existing-foundation orchestration uses mocked Azure/GitHub/host commands to cover Plan's no-write
+# guarantee, what-if gating, explicit confirmation, and preservation of the original deployment error.
 & {
     $script:setupCalls = New-Object 'System.Collections.Generic.List[object]'
     $script:setupPromptMessages = New-Object 'System.Collections.Generic.List[string]'
@@ -948,18 +1117,15 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     $script:setupDeploymentNameAnswers = [System.Collections.Generic.Queue[string]]::new()
     $script:setupSubscription = '12345678-0000-0000-0000-000000000000'
     $script:failWhatIf = $false
-    $script:setupIdentityId = "/subscriptions/$script:setupSubscription/resourceGroups/custom-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/custom-mi"
-    $script:setupVaultId = "/subscriptions/$script:setupSubscription/resourceGroups/vault-rg/providers/Microsoft.KeyVault/vaults/custom-vault"
+    $script:setupIdentityId = "/subscriptions/$script:setupSubscription/resourceGroups/custom-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/amrl-deployment-mi"
+    $script:setupVaultId = "/subscriptions/$script:setupSubscription/resourceGroups/custom-rg/providers/Microsoft.KeyVault/vaults/custom-vault"
     $fixturePath = Join-Path $env:TEMP ('amrl-setup-test-' + [guid]::NewGuid().ToString('N') + '.json')
     $fixture = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'main.parameters.demo.json') | ConvertFrom-Json
-    $fixture.parameters.automationManagedIdentityResourceId.value = $script:setupIdentityId
+    $fixture.parameters.foundationResourceGroup.value = 'custom-rg'
+    $fixture.parameters.keyVaultName.value = 'custom-vault'
     $fixture.parameters.prefix.metadata.bootstrap.azureSubscriptionId = $script:setupSubscription
     $fixture.parameters.prefix.metadata.bootstrap.azureTenantId = 'tenant'
-    $fixture.parameters.prefix.metadata.bootstrap | Add-Member -NotePropertyName foundationLocation -NotePropertyValue 'southafricanorth' -Force
     $fixture.parameters.jumpboxAllowedSources.value = @('203.0.113.12/32')
-    foreach ($entry in $fixture.parameters.PSObject.Properties) {
-        if ($null -ne $entry.Value.PSObject.Properties['reference']) { $entry.Value.reference.keyVault.id = $script:setupVaultId }
-    }
     [System.IO.File]::WriteAllText($fixturePath, ($fixture | ConvertTo-Json -Depth 100))
     $originalParameterPath = $script:ParameterFilePath
     $originalInteractive = $script:InteractiveConfiguration
@@ -996,6 +1162,12 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         if ($Arguments[0] -eq 'keyvault' -and $Arguments -contains 'show') { return 'ssh-ed25519 test-public-key' }
         return 'existing'
     }
+    function Invoke-AMRLTimedProcess {
+        param([string]$Command, [string[]]$Arguments, [int]$TimeoutSeconds)
+        $passphraseIndex = [Array]::IndexOf($Arguments, '-P') + 1
+        Assert-Test ($Arguments -contains '-y' -and $passphraseIndex -gt 0 -and $Arguments[$passphraseIndex] -ceq '') 'Preparation did not validate the local SSH key noninteractively with a blank passphrase.'
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ssh-ed25519 test-public-key'; ErrorOutput = '' }
+    }
     function Get-AzJson {
         param([string[]]$Arguments)
         $script:setupCalls.Add(@($Arguments))
@@ -1005,7 +1177,7 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
             return [pscustomobject]@{ id = $script:setupIdentityId; principalId = 'principal' }
         }
         if ($Arguments[0] -eq 'keyvault') {
-            if ($Arguments -contains 'secret') { return @('jumpboxAdminPassword', 'serverAdminPassword', 'clientAdminPassword', 'sshPublicKey', 'sshPrivateKey') }
+            if ($Arguments -contains 'secret') { return @(Get-AMRLManagedSecretNames) }
             return [pscustomobject]@{ id = $script:setupVaultId; name = 'custom-vault'; properties = @{ enableRbacAuthorization = $true; enabledForTemplateDeployment = $true; enablePurgeProtection = $true } }
         }
         if ($Arguments[0] -eq 'group') { return [pscustomobject]@{ location = 'westeurope' } }
@@ -1051,14 +1223,14 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         Assert-Test (-not $script:BootstrapperReport.Sources.Contains('Region readiness')) 'Report still includes the removed region readiness source.'
         Assert-Test (@($script:setupCalls | Where-Object { $_ -contains 'what-if' }).Count -eq 1) 'Normal setup did not reach what-if with explicit foundation references.'
         Assert-Test (-not $script:BootstrapperReport.Sources.Contains('Capacity availability')) 'Report still includes the removed capacity availability source.'
-        Assert-Test ($script:BootstrapperReport.FoundationConfiguration.ResourceGroup -eq 'custom-rg' -and $script:BootstrapperReport.FoundationConfiguration.VaultName -eq 'custom-vault' -and $script:BootstrapperReport.FoundationConfiguration.VaultResourceGroup -eq 'vault-rg') 'Preparation did not capture resolved foundation configuration.'
+        Assert-Test ($script:BootstrapperReport.FoundationConfiguration.ResourceGroup -eq 'custom-rg' -and $script:BootstrapperReport.FoundationConfiguration.IdentityName -eq 'amrl-deployment-mi' -and $script:BootstrapperReport.FoundationConfiguration.VaultName -eq 'custom-vault' -and $script:BootstrapperReport.FoundationConfiguration.VaultResourceGroup -eq 'custom-rg') 'Preparation did not capture defaults-derived identity and top-level foundation configuration.'
         Assert-Test (@($script:setupCalls | Where-Object { $_[0] -eq 'vm' -and $_[1] -in @('list-skus', 'list-sizes', 'list-usage') }).Count -eq 0) 'Bootstrapper queried or displayed VM SKU/quota availability.'
         Assert-Test (@($script:setupCalls | Where-Object { $_[0] -eq 'vm' -or ($_[0] -eq 'vm' -and $_[1] -eq 'image') }).Count -eq 0) 'Bootstrapper queried regional VM or image availability.'
         Assert-Test (@($script:setupPromptMessages | Where-Object { $_ -like 'Azure deployment name*' }).Count -eq 0) 'Non-deploy preparation unexpectedly prompted for a deployment name.'
         Assert-Test (-not $script:BootstrapperReport.Sources.Contains('Azure deployment name')) 'Non-deploy preparation reported an unrequested deployment name.'
         Assert-Test (@($script:setupPromptMessages | Where-Object { $_ -like '*location*' }).Count -eq 0) 'Setup prompted for a foundation location although the group, identity, and vault already exist.'
         Assert-Test (@($script:setupCalls | Where-Object { $_ -contains 'create' -or $_ -contains 'set' -or $_ -contains 'register' }).Count -eq 0) 'Normal setup recreated existing foundation resources or secrets.'
-        Assert-Test (@($script:setupCalls | Where-Object { $_ -contains 'vault-rg' -and $_[0] -eq 'lock' }).Count -eq 1) 'Setup did not inspect the vault resource group protection.'
+        Assert-Test (@($script:setupCalls | Where-Object { $_ -contains 'custom-rg' -and $_[0] -eq 'lock' }).Count -eq 1) 'Setup did not inspect the foundation resource group protection.'
         $stagedParameters = Microsoft.PowerShell.Management\Get-Content -Raw -LiteralPath $fixturePath | ConvertFrom-Json
         $stagedParameters.parameters.stage.value = 'compute'
         [System.IO.File]::WriteAllText($fixturePath, (ConvertTo-AMRLParameterJson -InputObject $stagedParameters))
@@ -1131,6 +1303,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     }
 }
 
+# Greenfield setup covers collision-free vault naming, generated password handling, temporary-file
+# cleanup, derived foundation location, and the no-purge rule.
 & {
     $script:freshCalls = New-Object 'System.Collections.Generic.List[object]'
     $script:freshSecretPaths = New-Object 'System.Collections.Generic.List[string]'
@@ -1138,6 +1312,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     $script:freshVaultConfirmed = $false
     $script:rejectFoundationLocation = $false
     $script:freshFoundationGroupExists = $false
+    $script:freshKeyVaultAccessDenied = $false
+    $script:freshKeyVaultSecretListCalls = 0
     $script:freshPrompts = New-Object 'System.Collections.Generic.List[string]'
     $script:freshHostMessages = New-Object 'System.Collections.Generic.List[string]'
     $script:freshSubscription = '12345678-0000-0000-0000-000000000000'
@@ -1175,6 +1351,11 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         if ($Arguments[0] -eq 'provider') { return 'Registered' }
         if ($Arguments[0] -eq 'group') { return ([string]$script:freshFoundationGroupExists).ToLowerInvariant() }
         if ($Arguments[0] -eq 'ad') { return 'operator-id' }
+        if ($Arguments[0] -eq 'keyvault' -and $Arguments[1] -eq 'secret' -and $Arguments[2] -eq 'list') {
+            $script:freshKeyVaultSecretListCalls++
+            if ($script:freshKeyVaultAccessDenied) { throw 'ForbiddenByRbac: access is still propagating.' }
+            return ''
+        }
         if ($Arguments[0] -eq 'vm') { return 'image-id' }
         return ''
     }
@@ -1191,8 +1372,10 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
             return [pscustomobject]@{ name = 'amrl-foundation-rg'; location = 'southafricanorth' }
         }
         if ($Arguments[0] -eq 'group' -and $Arguments -contains 'show') { return [pscustomobject]@{ location = 'westeurope' } }
+        if ($Arguments[0] -eq 'keyvault' -and $Arguments[1] -eq 'list-deleted') { return $null }
         if ($Arguments[0] -eq 'keyvault' -and $Arguments -contains 'show') { return [pscustomobject]@{ id = "/subscriptions/$script:freshSubscription/resourceGroups/amrl-foundation-rg/providers/Microsoft.KeyVault/vaults/amrl-kv-12345678-1"; properties = @{ enableRbacAuthorization = $true; enabledForTemplateDeployment = $true; enablePurgeProtection = $true } } }
         if ($Arguments[0] -eq 'identity' -and $Arguments -contains 'list') { return $null }
+        if ($Arguments[0] -eq 'identity' -and $Arguments -contains 'show') { return $null }
         if ($Arguments[0] -eq 'lock') { return $null }
         if ($Arguments[1] -eq 'create') {
             switch ($Arguments[0]) {
@@ -1224,30 +1407,36 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     try {
         Invoke-AMRLSubscriptionSetup
         $saved = Get-Content -Raw -LiteralPath $fixturePath | ConvertFrom-Json
-        Assert-Test ($saved.parameters.prefix.metadata.bootstrap.foundationResourceGroup -eq 'amrl-foundation-rg') 'Wizard did not save the selected foundation resource-group name.'
+        Assert-Test ($saved.parameters.foundationResourceGroup.value -eq 'amrl-foundation-rg') 'Wizard did not save the selected foundation resource-group name.'
         Assert-Test (@($script:freshPrompts | Where-Object { $_ -eq 'Foundation resource-group name (Allowed: 1-90 characters, no spaces) [amrl-foundation-rg]' }).Count -eq 1) 'A missing foundation resource group did not prompt with the requested label, hint, and default.'
         Assert-Test (@($script:freshCalls | Where-Object { $_[0] -eq 'group' -and $_ -contains 'create' }).Count -eq 1) 'Selected foundation resource group was not created.'
         Assert-Test ($saved.parameters.jumpboxAllowedSources.value[0] -eq '203.0.113.12/32') 'Pressing Enter did not accept the detected public IP as the default.'
         Assert-Test (@($script:freshPrompts | Where-Object { $_ -match '^Use this address for jumpbox access\? \(Allowed: y/n\) \[yes\]$' }).Count -eq 1) 'Jumpbox public-IP prompt did not display yes as the default.'
-        Assert-Test ($saved.parameters.prefix.metadata.bootstrap.foundationLocation -eq 'southafricanorth') 'Selected foundation resource location was not saved.'
-        Assert-Test (@($script:freshPrompts | Where-Object { $_ -like 'Foundation resource-group location*' }).Count -eq 1) 'New foundation resource group did not prompt for its creation location.'
-        Assert-Test (@($script:freshPrompts | Where-Object { $_ -like 'Location for new prerequisite resources*' }).Count -eq 0) 'New foundation resource group used the existing-group prerequisite location prompt.'
-        Assert-Test (@($script:freshPrompts | Where-Object { $_.StartsWith('Foundation resource-group location (Allowed: Azure region name)') }).Count -eq 1) 'Foundation-location prompt did not use the concise Azure region name hint.'
+        Assert-Test ((Get-AMRLFoundationLocation -Parameters $saved) -eq 'southafricanorth') 'Foundation location was not derived from the first regionIndexMap entry.'
+        Assert-Test ($null -eq $saved.parameters.prefix.metadata.bootstrap.PSObject.Properties['foundationLocation']) 'Derived foundation location was persisted in bootstrap metadata.'
+        Assert-Test (@($script:freshPrompts | Where-Object { $_ -like '*location*' }).Count -eq 0) 'Foundation setup prompted for a location instead of using regionIndexMap.'
         Assert-Test (@($script:freshHostMessages | Where-Object { $_ -like '*Azure-listed physical locations*' -or $_ -eq 'westeurope, southafricanorth, eastus' }).Count -eq 0) 'Foundation setup printed the available-region list.'
-        Assert-Test ($saved.parameters.jumpboxAdminPassword.reference.keyVault.id -like '*/amrl-kv-12345678-1') 'Collision-free vault ID was not persisted to parameters.'
-        Assert-Test ($script:freshSecretPaths.Count -eq 3) 'Greenfield setup did not create all administrator secrets.'
+        Assert-Test ($saved.parameters.keyVaultName.value -eq 'amrl-kv-12345678-1') 'Collision-free Key Vault name was not persisted to parameters.'
+        Assert-Test ($script:freshSecretPaths.Count -eq (Get-AMRLPasswordSecretNames).Count) 'Greenfield setup did not create all managed password secrets.'
         foreach ($secretPath in $script:freshSecretPaths) { Assert-Test (-not (Test-Path -LiteralPath $secretPath)) 'A temporary password file was not removed.' }
         Assert-Test (@($script:freshCalls | Where-Object { $_ -contains 'what-if' }).Count -eq 1) 'Greenfield setup did not reach what-if.'
         Assert-Test (@($script:freshCalls | Where-Object { $_[0] -eq 'group' -and $_ -contains 'create' }).Count -eq 1) 'Rerunning after foundation creation attempted to recreate its resource group.'
         Assert-Test (@($script:freshCalls | Where-Object { $_ -contains 'purge' -or $_ -contains 'delete' }).Count -eq 0) 'Greenfield collision handling performed destructive recovery.'
 
-        $saved.parameters.automationManagedIdentityResourceId.value = '<AUTOMATION_MANAGED_IDENTITY_RESOURCE_ID>'
-        [System.IO.File]::WriteAllText($fixturePath, ($saved | ConvertTo-Json -Depth 100))
+        $script:freshKeyVaultAccessDenied = $true
+        $script:freshKeyVaultSecretListCalls = 0
+        $script:freshCalls.Clear()
+        try { Invoke-AMRLSubscriptionSetup } catch { }
+        Assert-Test ($script:freshKeyVaultSecretListCalls -eq 1) 'Secret setup continued after the Key Vault access probe failed.'
+        Assert-Test ($script:BootstrapperReport.Sources['Key Vault access'].Status -eq 'Failed' -and $script:BootstrapperReport.Sources['Key Vault secrets'].Status -eq 'Skipped') 'The report marked Key Vault secret access ready after an authorization failure.'
+        Assert-Test (@($script:freshCalls | Where-Object { $_[0] -eq 'keyvault' -and $_[1] -eq 'secret' -and $_[2] -eq 'set' }).Count -eq 0) 'Secret writes ran without verified Key Vault data access.'
+        $script:freshKeyVaultAccessDenied = $false
+
         $script:rejectFoundationLocation = $true
         $eligibilityError = ''
         try { Invoke-AMRLSubscriptionSetup }
         catch { $eligibilityError = $_.Exception.Message }
-        Assert-Test ($eligibilityError -like "*foundation resource location 'southafricanorth'*" -and $eligibilityError -like '*Rerun the wizard, choose another*') 'Location-ineligibility error did not explain how to recover using the saved configuration.'
+        Assert-Test ($eligibilityError -like "*foundation resource location 'southafricanorth'*" -and $eligibilityError -like '*Use manual preparation*') "Location-ineligibility error did not explain how to recover using the saved configuration. Actual: $eligibilityError"
     }
     finally {
         $script:ParameterFilePath = $originalParameterPath
@@ -1258,6 +1447,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     }
 }
 
+# Brownfield foundation recovery covers Plan, exact vault-ID matching, interactive recovery/decline,
+# resumable partial rebuilds, and the distinction between missing resources and permission failures.
 & {
     $previousParameterPath = $script:ParameterFilePath
     $previousInteractive = $script:InteractiveConfiguration
@@ -1284,13 +1475,11 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     $script:foundationGroupNameAnswers = [System.Collections.Generic.Queue[string]]::new()
     $script:identityLookupError = 'ResourceNotFound'
     $fixture = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'main.parameters.demo.json') | ConvertFrom-Json
+    $fixture.parameters.foundationResourceGroup.value = 'amrl-foundation-rg'
+    $fixture.parameters.keyVaultName.value = 'amrl-kv-rebuild'
     $fixture.parameters.prefix.metadata.bootstrap.azureSubscriptionId = $script:rebuildSubscription
     $fixture.parameters.prefix.metadata.bootstrap.azureTenantId = 'rebuild-tenant'
-    $fixture.parameters.automationManagedIdentityResourceId.value = $script:rebuildIdentityId
     $fixture.parameters.jumpboxAllowedSources.value = @('203.0.113.12/32')
-    foreach ($entry in $fixture.parameters.PSObject.Properties) {
-        if ($null -ne $entry.Value.PSObject.Properties['reference']) { $entry.Value.reference.keyVault.id = $script:rebuildVaultId }
-    }
     [System.IO.File]::WriteAllText($fixturePath, (ConvertTo-AMRLParameterJson -InputObject $fixture))
     $script:ParameterFilePath = $fixturePath
     $script:InteractiveConfiguration = $false
@@ -1314,11 +1503,11 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         if ($Prompt -like 'Deployment stage*' -or $Prompt -like 'Lab prefix*' -or $Prompt -like 'Region count*' -or
             $Prompt -like 'Network mode*' -or $Prompt -like 'Validation mode*' -or $Prompt -like 'maxVmsPerRegion*' -or
             $Prompt -like 'departmentCount*' -or $Prompt -like 'usersPerDepartment*' -or $Prompt -like 'VM count for *' -or
-            $Prompt -like 'enableFileServices*' -or $Prompt -like 'useDedicatedFileServer*' -or
+            $Prompt -like 'useDedicatedFileServer*' -or
             $Prompt -like 'enableWindowsAdminCenter*' -or $Prompt -like 'useDedicatedWacHost*') { return '' }
         if ($Prompt -like 'Foundation resource-group location*' -or $Prompt -like 'Location for new prerequisite resources*') { return 'southafricanorth' }
         if ($Prompt -like 'Randomly generate missing administrator passwords*') { return '' }
-        if ($Prompt -like 'enableFileServices*' -or $Prompt -like 'useDedicatedFileServer*' -or $Prompt -like 'enableWindowsAdminCenter*' -or $Prompt -like 'useDedicatedWacHost*') { return '' }
+        if ($Prompt -like 'useDedicatedFileServer*' -or $Prompt -like 'enableWindowsAdminCenter*' -or $Prompt -like 'useDedicatedWacHost*') { return '' }
         if ($Prompt -like 'Create Key Vault*') { return 'yes' }
         if ($Prompt -eq 'Confirmation') { return 'DEPLOY' }
         if ($Prompt -like 'Azure deployment name*') { return '' }
@@ -1427,15 +1616,15 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         Assert-Test (@($script:rebuildCalls | Where-Object { $_[0] -eq 'deployment' -and $_ -contains 'create' }).Count -eq 1) 'Rebuilt foundation did not reach lab deployment.'
         Assert-Test (@($script:BootstrapperReport.FoundationChanges | Where-Object { $_.Action -eq 'Recover soft-deleted foundation vault' }).Count -eq 1) 'Report omitted completed foundation vault recovery.'
         $saved = Get-Content -Raw -LiteralPath $fixturePath | ConvertFrom-Json
-        Assert-Test ($saved.parameters.automationManagedIdentityResourceId.value -eq $script:rebuildIdentityId -and $saved.parameters.serverAdminPassword.reference.keyVault.id -eq $script:rebuildVaultId) 'Foundation rebuild replaced the saved identity or vault ID.'
+        Assert-Test ($saved.parameters.foundationResourceGroup.value -eq 'amrl-foundation-rg' -and $saved.parameters.keyVaultName.value -eq 'amrl-kv-rebuild') 'Foundation rebuild changed the top-level foundation resource group or Key Vault name.'
 
         $script:rebuildGroupExists = $true
         $script:rebuildIdentityExists = $true
         $script:rebuildIdentityResourceGroup = 'amrl-foundation-rg'
-        $script:rebuildIdentityId = [string]$saved.parameters.automationManagedIdentityResourceId.value
+        $script:rebuildIdentityId = "/subscriptions/$script:rebuildSubscription/resourceGroups/$script:rebuildIdentityResourceGroup/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$(Get-AMRLDefault 'automationManagedIdentityName')"
         $script:rebuildVaultExists = $false
         $script:rebuildVaultResourceGroup = 'amrl-foundation-rg'
-        $script:rebuildVaultId = [string]$saved.parameters.serverAdminPassword.reference.keyVault.id
+        $script:rebuildVaultId = "/subscriptions/$script:rebuildSubscription/resourceGroups/$script:rebuildVaultResourceGroup/providers/Microsoft.KeyVault/vaults/$($saved.parameters.keyVaultName.value)"
         $script:deletedVaultPresent = $true
         $script:deletedVaultId = $script:rebuildVaultId
         $script:recoveryAnswer = 'no'
@@ -1449,9 +1638,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         [System.IO.File]::WriteAllText($fixturePath, (ConvertTo-AMRLParameterJson -InputObject $saved))
         Invoke-AMRLBootstrapper -Prepare
         $replacementParameters = Get-Content -Raw -LiteralPath $fixturePath | ConvertFrom-Json
-        Assert-Test ($replacementParameters.parameters.prefix.metadata.bootstrap.foundationResourceGroup -eq $script:rebuildNewFoundationGroupName) 'Declining vault recovery did not save the selected new foundation group.'
-        Assert-Test ($replacementParameters.parameters.automationManagedIdentityResourceId.value -like "*/resourceGroups/$script:rebuildNewFoundationGroupName/*") 'Replacement group was selected without updating the managed identity reference.'
-        Assert-Test ($replacementParameters.parameters.serverAdminPassword.reference.keyVault.id -like "*/resourceGroups/$script:rebuildNewFoundationGroupName/*") 'Replacement group was selected without updating the Key Vault reference.'
+        Assert-Test ($replacementParameters.parameters.foundationResourceGroup.value -eq $script:rebuildNewFoundationGroupName) 'Declining vault recovery did not save the selected top-level foundation group.'
+        Assert-Test ($replacementParameters.parameters.keyVaultName.value -like 'amrl-kv-*') 'Replacement group was selected without saving the replacement Key Vault name.'
         Assert-Test (@($script:rebuildPrompts | Where-Object { $_ -like 'Recover soft-deleted Key Vault*' }).Count -eq 1 -and @($script:rebuildPrompts | Where-Object { $_ -like 'Foundation resource-group name*' }).Count -eq 2) 'The foundation group was not asked initially and again after recovery was declined.'
         $replacementNamePromptIndex = $script:rebuildEvents.FindLastIndex([Predicate[string]]{ param($eventText) $eventText -like 'Prompt:Foundation resource-group name*' })
         $replacementCreateIndex = $script:rebuildEvents.FindIndex([Predicate[string]]{ param($eventText) $eventText -like 'CreateGroup:*' })
@@ -1464,10 +1652,10 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         $script:rebuildGroupExists = $true
         $script:rebuildIdentityExists = $false
         $script:rebuildIdentityResourceGroup = 'amrl-foundation-rg'
-        $script:rebuildIdentityId = [string]$saved.parameters.automationManagedIdentityResourceId.value
+        $script:rebuildIdentityId = "/subscriptions/$script:rebuildSubscription/resourceGroups/$script:rebuildIdentityResourceGroup/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$(Get-AMRLDefault 'automationManagedIdentityName')"
         $script:rebuildVaultExists = $false
         $script:rebuildVaultResourceGroup = 'amrl-foundation-rg'
-        $script:rebuildVaultId = [string]$saved.parameters.serverAdminPassword.reference.keyVault.id
+        $script:rebuildVaultId = "/subscriptions/$script:rebuildSubscription/resourceGroups/$script:rebuildVaultResourceGroup/providers/Microsoft.KeyVault/vaults/$($saved.parameters.keyVaultName.value)"
         $script:deletedVaultPresent = $true
         $script:deletedVaultId = $script:rebuildVaultId
         $script:recoveryAnswer = 'yes'
@@ -1516,6 +1704,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     }
 }
 
+# Final-report tests ensure early failures, foundation changes, what-if results, and read-only checks
+# remain distinguishable without replacing the original failure.
 & {
     $script:failureReportLines = New-Object 'System.Collections.Generic.List[string]'
     $oldPhase = $script:BootstrapperPhase
@@ -1623,6 +1813,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     }
 }
 
+# Azure-context tests cover accepting the active subscription, selecting another saved subscription,
+# enforcing explicit parameter-file context, and signing into a tenant when no context is available.
 & {
     $script:contextSelectionCalls = New-Object 'System.Collections.Generic.List[object]'
     $script:contextSelectionSubscription = 'subscription-one'
@@ -1679,6 +1871,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Assert-Test ($contextMismatchRejected -and $script:contextSelectionPromptMessages.Count -eq 0) 'Mismatched parameter-file Azure context prompted instead of failing clearly.'
 }
 
+# The login fallback is tested separately from subscription selection: no current or saved context
+# triggers az login, after which the normal context confirmation resumes.
 & {
     $script:loginContextReady = $false
     $script:loginCalls = New-Object 'System.Collections.Generic.List[object]'
@@ -1710,6 +1904,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Assert-Test (@($script:loginCalls | Where-Object { $_[0] -eq 'login' -and $_[1] -eq '--tenant' -and $_[2] -eq 'new-tenant.example' }).Count -eq 1) 'Context chooser did not sign in to the supplied tenant.'
 }
 
+# Password-secret tests cover active-secret preservation, soft-delete recovery, random generation,
+# secure entry, and noninteractive creation when no active or recoverable value exists.
 & {
     $previousInteractive = $script:InteractiveConfiguration
     $previousPasswordChoiceMade = $script:PasswordChoiceMade
@@ -1717,16 +1913,30 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     $script:passwordChoicePrompts = New-Object 'System.Collections.Generic.List[string]'
     $script:passwordSecretsExist = $true
     $script:passwordChoiceAnswer = ''
+    $script:deletedPasswordSecrets = @()
     $script:securePasswordPromptCount = 0
     $script:passwordSecretWrites = 0
+    $script:secretRecoveryCalls = 0
+    $passwordSecretNames = @(Get-AMRLPasswordSecretNames)
+    $adminPasswordSecretNames = @(
+        (Get-AMRLDefault 'jumpboxAdminPasswordSecretName')
+        (Get-AMRLDefault 'labAdminPasswordSecretName')
+    )
     function Get-AzTsv {
         param([string[]]$Arguments)
+        if ($Arguments -contains 'list-deleted') {
+            $query = $Arguments[[Array]::IndexOf($Arguments, '--query') + 1]
+            $deletedName = [regex]::Match($query, "\[\?name=='([^']+)'\]").Groups[1].Value
+            if ($deletedName -in $script:deletedPasswordSecrets) { return $deletedName }
+            return ''
+        }
         if ($script:passwordSecretsExist) { return 'existing-secret' }
         return ''
     }
     function Invoke-AzCli {
         param([string[]]$Arguments)
-        $script:passwordSecretWrites++
+        if ($Arguments -contains 'recover') { $script:secretRecoveryCalls++ }
+        else { $script:passwordSecretWrites++ }
         return ''
     }
     function Read-Host {
@@ -1746,32 +1956,53 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         $script:InteractiveConfiguration = $true
         $script:PasswordChoiceMade = $false
         $script:PromptForPasswords = $false
-        foreach ($secretName in @('jumpboxAdminPassword', 'serverAdminPassword', 'clientAdminPassword')) {
+        foreach ($secretName in $passwordSecretNames) {
             Set-AMRLSecretIfMissing -VaultName 'test-vault' -SecretName $secretName -Password
         }
-        Assert-Test ($script:passwordChoicePrompts.Count -eq 0 -and $script:passwordSecretWrites -eq 0) 'Existing administrator passwords triggered a generation question or secret write.'
+        Assert-Test ($script:passwordChoicePrompts.Count -eq 0 -and $script:passwordSecretWrites -eq 0) 'Existing password secrets triggered a generation question or secret write.'
 
         $script:passwordSecretsExist = $false
-        foreach ($secretName in @('jumpboxAdminPassword', 'serverAdminPassword')) {
+        foreach ($secretName in $passwordSecretNames) {
             Set-AMRLSecretIfMissing -VaultName 'test-vault' -SecretName $secretName -Password -Prompt:$script:PromptForPasswords
         }
         Assert-Test ($script:passwordChoicePrompts.Count -eq 1) 'Missing passwords did not trigger exactly one generation question.'
-        Assert-Test ($script:passwordChoicePrompts[0] -eq 'Randomly generate missing administrator passwords? (Allowed: y/N) [yes]') 'Password generation question did not default to Yes.'
-        Assert-Test ($script:passwordSecretWrites -eq 2 -and $script:securePasswordPromptCount -eq 0) 'Default password handling did not generate missing passwords without secure prompts.'
+        Assert-Test ($script:passwordChoicePrompts[0] -eq 'Randomly generate missing passwords? (Allowed: y/N) [yes]') 'Password generation question did not default to Yes.'
+        Assert-Test ($script:passwordSecretWrites -eq $passwordSecretNames.Count -and $script:securePasswordPromptCount -eq 0) 'Default password handling did not generate missing passwords without secure prompts.'
 
         $script:PasswordChoiceMade = $false
         $script:passwordChoiceAnswer = 'no'
-        foreach ($secretName in @('jumpboxAdminPassword', 'serverAdminPassword')) {
+        foreach ($secretName in $passwordSecretNames) {
             Set-AMRLSecretIfMissing -VaultName 'test-vault' -SecretName $secretName -Password -Prompt:$script:PromptForPasswords
         }
         Assert-Test ($script:passwordChoicePrompts.Count -eq 2 -and $script:PromptForPasswords) 'Selecting No did not enable secure entry with a single question.'
-        Assert-Test ($script:securePasswordPromptCount -eq 4) 'Secure password entry and confirmation were not used for each missing password.'
+        Assert-Test ($script:securePasswordPromptCount -eq 2 * $passwordSecretNames.Count) 'Secure password entry and confirmation were not used for each missing password.'
+
+        $writesBeforeMissingServiceSecret = $script:passwordSecretWrites
+        Set-AMRLSecretIfMissing -VaultName 'test-vault' -SecretName $serviceAccountPasswordSecretNames[0] -Password
+        Assert-Test ($script:passwordSecretWrites -eq $writesBeforeMissingServiceSecret + 1) 'A missing service-account secret was not created when no deleted value was available.'
+
+        $script:deletedPasswordSecrets = $adminPasswordSecretNames
+        $recoveriesBeforeAdmin = $script:secretRecoveryCalls
+        $writesBeforeAdminRecovery = $script:passwordSecretWrites
+        foreach ($secretName in $adminPasswordSecretNames) {
+            Set-AMRLSecretIfMissing -VaultName 'test-vault' -SecretName $secretName -Password
+        }
+        Assert-Test ($script:secretRecoveryCalls -eq $recoveriesBeforeAdmin + $adminPasswordSecretNames.Count -and $script:passwordSecretWrites -eq $writesBeforeAdminRecovery) 'Soft-deleted admin password secrets were not recovered instead of replaced.'
+
+        $script:deletedPasswordSecrets = @($serviceAccountPasswordSecretNames[0])
+        $recoveriesBefore = $script:secretRecoveryCalls
+        Set-AMRLSecretIfMissing -VaultName 'test-vault' -SecretName $serviceAccountPasswordSecretNames[0] -Password
+        Assert-Test ($script:secretRecoveryCalls -eq $recoveriesBefore + 1) 'A soft-deleted service-account secret was not recovered before creating a replacement.'
 
         $script:InteractiveConfiguration = $false
         $script:PasswordChoiceMade = $false
         $script:PromptForPasswords = $false
-        Set-AMRLSecretIfMissing -VaultName 'test-vault' -SecretName 'clientAdminPassword' -Password
-        Assert-Test ($script:passwordChoicePrompts.Count -eq 2 -and $script:securePasswordPromptCount -eq 4) 'Noninteractive preparation unexpectedly prompted about missing passwords.'
+        $script:deletedPasswordSecrets = @()
+        $promptsBeforeNoninteractive = $script:passwordChoicePrompts.Count
+        $securePromptsBeforeNoninteractive = $script:securePasswordPromptCount
+        $writesBeforeNoninteractive = $script:passwordSecretWrites
+        Set-AMRLSecretIfMissing -VaultName 'test-vault' -SecretName $serviceAccountPasswordSecretNames[0] -Password
+        Assert-Test ($script:passwordChoicePrompts.Count -eq $promptsBeforeNoninteractive -and $script:securePasswordPromptCount -eq $securePromptsBeforeNoninteractive -and $script:passwordSecretWrites -eq $writesBeforeNoninteractive + 1) 'Noninteractive setup did not create a missing service-account secret without prompting.'
     }
     finally {
         $script:InteractiveConfiguration = $previousInteractive
@@ -1780,6 +2011,180 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     }
 }
 
+# SSH key tests verify Key Vault pair precedence, pairwise soft-delete recovery, safe handling of
+# incomplete pairs, and local pair generation only when Key Vault has neither key.
+& {
+    $script:sshPublicName = Get-AMRLDefault 'sshPublicKeySecretName'
+    $script:sshPrivateName = Get-AMRLDefault 'sshPrivateKeySecretName'
+    $script:sshActiveNames = @()
+    $script:sshDeletedNames = @()
+    $script:sshRecoveries = New-Object 'System.Collections.Generic.List[string]'
+    $script:sshWrites = New-Object 'System.Collections.Generic.List[string]'
+    $script:sshPrivateExists = $false
+    $script:sshPublicExists = $false
+    $script:sshDirectoryExists = $false
+    $script:sshLocalPublic = 'ssh-ed25519 test-public-key'
+    $script:sshDerivedPublic = 'ssh-ed25519 test-public-key'
+    $script:sshVaultPublic = 'ssh-ed25519 test-public-key'
+    $script:sshKeygenCalls = 0
+    $script:sshWarnings = New-Object 'System.Collections.Generic.List[string]'
+
+    function Get-AzJson {
+        param([string[]]$Arguments)
+        if ($Arguments[0] -eq 'keyvault' -and $Arguments[1] -eq 'secret' -and $Arguments[2] -eq 'list-deleted') { return @($script:sshDeletedNames) }
+        if ($Arguments[0] -eq 'keyvault' -and $Arguments[1] -eq 'secret' -and $Arguments[2] -eq 'list') { return @($script:sshActiveNames) }
+        throw "Unexpected SSH-key lookup: $($Arguments -join ' ')"
+    }
+    function Get-AzTsv {
+        param([string[]]$Arguments)
+        if ($Arguments[0] -eq 'keyvault' -and $Arguments[1] -eq 'secret' -and $Arguments[2] -eq 'show') { return $script:sshVaultPublic }
+        throw "Unexpected SSH-key scalar lookup: $($Arguments -join ' ')"
+    }
+    function Invoke-AzCli {
+        param([string[]]$Arguments)
+        $secretName = $Arguments[[Array]::IndexOf($Arguments, '--name') + 1]
+        if ($Arguments -contains 'recover') {
+            $script:sshRecoveries.Add($secretName)
+            $script:sshActiveNames += $secretName
+            $script:sshDeletedNames = @($script:sshDeletedNames | Where-Object { $_ -ne $secretName })
+            return ''
+        }
+        if ($Arguments -contains 'set') {
+            $script:sshWrites.Add($secretName)
+            $script:sshActiveNames += $secretName
+            return ''
+        }
+        throw "Unexpected SSH-key write: $($Arguments -join ' ')"
+    }
+    function Test-Path {
+        param([string]$LiteralPath)
+        if ($LiteralPath -eq (Join-Path $HOME '.ssh/amrl_ed25519')) { return $script:sshPrivateExists }
+        if ($LiteralPath -eq (Join-Path $HOME '.ssh/amrl_ed25519.pub')) { return $script:sshPublicExists }
+        if ($LiteralPath -eq (Join-Path $HOME '.ssh')) { return $script:sshDirectoryExists }
+        return $false
+    }
+    function Get-Content {
+        param([switch]$Raw, [string]$LiteralPath)
+        if ($LiteralPath -eq (Join-Path $HOME '.ssh/amrl_ed25519.pub')) { return $script:sshLocalPublic }
+        throw "Unexpected SSH-key file read: $LiteralPath"
+    }
+    function New-Item {
+        param($ItemType, $Path, [switch]$Force)
+        $script:sshDirectoryExists = $true
+    }
+    function Write-Warning {
+        param([string]$Message)
+        $script:sshWarnings.Add($Message)
+    }
+    function Invoke-AMRLTimedProcess {
+        param([string]$Command, [string[]]$Arguments, [int]$TimeoutSeconds)
+        Assert-Test ($TimeoutSeconds -eq 30) 'Fresh SSH key generation did not use a bounded process timeout.'
+        $script:sshKeygenCalls++
+        if ($Arguments -contains '-y') {
+            $passphraseIndex = [Array]::IndexOf($Arguments, '-P') + 1
+            Assert-Test ($passphraseIndex -gt 0 -and $Arguments[$passphraseIndex] -ceq '') 'SSH key validation did not pass an explicit blank passphrase and could prompt interactively.'
+            return [pscustomobject]@{ ExitCode = 0; Output = $script:sshDerivedPublic; ErrorOutput = '' }
+        }
+        $passphraseIndex = [Array]::IndexOf($Arguments, '-N') + 1
+        Assert-Test ($passphraseIndex -gt 0 -and $Arguments[$passphraseIndex] -ceq '') 'Fresh SSH key generation did not pass an explicit empty passphrase through the quoted process path.'
+        $script:sshPrivateExists = $true
+        $script:sshPublicExists = $true
+        return [pscustomobject]@{ ExitCode = 0; Output = ''; ErrorOutput = '' }
+    }
+    function Invoke-TestSshKeygen {
+        $arguments = @($args | ForEach-Object { [string]$_ })
+        $script:sshKeygenCalls++
+        $global:LASTEXITCODE = 0
+        if ($arguments -contains '-y') { return $script:sshDerivedPublic }
+        $script:sshPrivateExists = $true
+        $script:sshPublicExists = $true
+        return ''
+    }
+    Set-Alias -Name ssh-keygen -Value Invoke-TestSshKeygen -Scope Local
+
+    $sshVaultName = 'test-vault'
+    $sshSecretNames = @($script:sshPublicName, $script:sshPrivateName)
+
+    $script:sshActiveNames = @($sshSecretNames)
+    Set-AMRLKeySecretsIfMissing -VaultName $sshVaultName
+    Assert-Test ($script:sshWrites.Count -eq 0 -and $script:sshRecoveries.Count -eq 0 -and $script:sshKeygenCalls -eq 0) 'An existing Key Vault pair without local files was replaced or caused a new pair to be generated.'
+
+    $script:sshPrivateExists = $true
+    $script:sshPublicExists = $false
+    $script:sshWarnings.Clear()
+    Set-AMRLKeySecretsIfMissing -VaultName $sshVaultName
+    Assert-Test ($script:sshWrites.Count -eq 0 -and $script:sshWarnings.Count -eq 1) 'An incomplete local copy prevented reuse of a complete Key Vault pair or was silently overwritten.'
+
+    $script:sshActiveNames = @()
+    $script:sshDeletedNames = @($sshSecretNames)
+    $script:sshRecoveries.Clear()
+    $script:sshPrivateExists = $false
+    $script:sshPublicExists = $false
+    Set-AMRLKeySecretsIfMissing -VaultName $sshVaultName
+    Assert-Test (($script:sshRecoveries -join ',') -eq ($sshSecretNames -join ',') -and $script:sshWrites.Count -eq 0) 'A soft-deleted SSH pair was not recovered together without replacement.'
+
+    $script:sshActiveNames = @($script:sshPublicName)
+    $script:sshDeletedNames = @($script:sshPrivateName)
+    $script:sshRecoveries.Clear()
+    Set-AMRLKeySecretsIfMissing -VaultName $sshVaultName
+    Assert-Test (($script:sshRecoveries -join ',') -eq $script:sshPrivateName -and $script:sshWrites.Count -eq 0) 'A mixed active/soft-deleted SSH pair was not completed by recovering only the deleted half.'
+
+    $script:sshActiveNames = @()
+    $script:sshDeletedNames = @($script:sshPublicName)
+    $script:sshRecoveries.Clear()
+    $partialDeletedRejected = $false
+    try { Set-AMRLKeySecretsIfMissing -VaultName $sshVaultName }
+    catch { $partialDeletedRejected = $_.Exception.Message -like '*Key Vault is incomplete*' }
+    Assert-Test ($partialDeletedRejected -and $script:sshRecoveries.Count -eq 0 -and $script:sshWrites.Count -eq 0) 'A lone deleted SSH secret was recovered or replaced without its pair.'
+
+    $script:sshDeletedNames = @()
+    $script:sshActiveNames = @($script:sshPublicName)
+    $partialActiveRejected = $false
+    try { Set-AMRLKeySecretsIfMissing -VaultName $sshVaultName }
+    catch { $partialActiveRejected = $_.Exception.Message -like '*Key Vault is incomplete*' }
+    Assert-Test ($partialActiveRejected -and $script:sshWrites.Count -eq 0) 'An incomplete active Key Vault pair was silently completed or overwritten.'
+
+    $script:sshActiveNames = @()
+    $script:sshDeletedNames = @()
+    $script:sshPrivateExists = $true
+    $script:sshPublicExists = $true
+    $script:sshLocalPublic = 'ssh-ed25519 test-public-key'
+    $script:sshDerivedPublic = 'ssh-ed25519 test-public-key'
+    $script:sshWrites.Clear()
+    Set-AMRLKeySecretsIfMissing -VaultName $sshVaultName
+    Assert-Test (($script:sshWrites -join ',') -eq ($sshSecretNames -join ',')) 'A valid local SSH pair was not uploaded when Key Vault had no active or deleted pair.'
+
+    $script:sshActiveNames = @()
+    $script:sshDeletedNames = @()
+    $script:sshPrivateExists = $false
+    $script:sshPublicExists = $false
+    $script:sshDirectoryExists = $false
+    $script:sshWrites.Clear()
+    $script:sshKeygenCalls = 0
+    Set-AMRLKeySecretsIfMissing -VaultName $sshVaultName
+    Assert-Test ($script:sshKeygenCalls -eq 2 -and $script:sshWrites.Count -eq 2) 'A fresh key pair was not generated and uploaded when neither local nor Key Vault keys existed.'
+
+    $script:sshActiveNames = @($sshSecretNames)
+    $script:sshPrivateExists = $true
+    $script:sshPublicExists = $true
+    $script:sshLocalPublic = 'ssh-ed25519 test-public-key'
+    $script:sshDerivedPublic = 'ssh-ed25519 test-public-key'
+    $script:sshVaultPublic = 'ssh-ed25519 different-public-key'
+    $script:sshWrites.Clear()
+    $mismatchedVaultPairRejected = $false
+    try { Set-AMRLKeySecretsIfMissing -VaultName $sshVaultName }
+    catch { $mismatchedVaultPairRejected = $_.Exception.Message -like '*differs from the local key pair*' }
+    Assert-Test ($mismatchedVaultPairRejected -and $script:sshWrites.Count -eq 0) 'A Key Vault public-key mismatch was overwritten instead of failing safely.'
+
+    $script:sshVaultPublic = ''
+    $malformedVaultKeyRejected = $false
+    try { Set-AMRLKeySecretsIfMissing -VaultName $sshVaultName }
+    catch { $malformedVaultKeyRejected = $_.Exception.Message -like '*differs from the local key pair*' }
+    Assert-Test ($malformedVaultKeyRejected -and $script:sshWrites.Count -eq 0) 'An empty Key Vault public key caused an unhandled parsing error or pair replacement.'
+}
+
+# Stage-wizard tests verify which settings are asked for each stage and which parameter-file values
+# remain untouched when a stage is selected or an explicit file is used.
 & {
     $previousInteractive = $script:InteractiveConfiguration
     $previousPlanMode = $script:PlanMode
@@ -1808,14 +2213,14 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
             $stageDocument = Get-ParameterDocument -Path $stageParameterPath
             Assert-Test ($stageDocument.parameters.stage.value -eq $selectedStage) "Wizard did not select stage '$selectedStage'."
             Assert-Test ($script:stagePrompts[0] -eq 'Deployment stage (Allowed: all, network, compute, identity) [network]') 'Stage was not the first wizard question with all options and the saved default.'
-            $expectedPromptCounts = @{ network = 12; compute = 11; identity = 17; all = 18 }
+            $expectedPromptCounts = @{ network = 12; compute = 11; identity = 16; all = 17 }
             Assert-Test ($script:stagePrompts.Count -eq $expectedPromptCounts[$selectedStage]) "Stage '$selectedStage' prompted for unrelated settings or omitted required settings."
             $hasNetworkPrompt = @($script:stagePrompts | Where-Object { $_ -like 'Network mode*' }).Count -eq 1
             Assert-Test ($hasNetworkPrompt -eq ($selectedStage -in @('network', 'all'))) "Network mode prompt was incorrect for '$selectedStage'."
             $hasDirectoryPrompt = @($script:stagePrompts | Where-Object { $_ -like 'departmentCount *' }).Count -eq 1
             Assert-Test ($hasDirectoryPrompt -eq ($selectedStage -in @('identity', 'all'))) "Directory prompt was incorrect for '$selectedStage'."
             Assert-Test (@($script:stagePrompts | Where-Object { $_ -like 'VM count for *' }).Count -eq 6) "Stage '$selectedStage' omitted shared placement inputs."
-            foreach ($setting in @('networkMode', 'departmentCount', 'usersPerDepartment', 'enableFileServices', 'useDedicatedFileServer', 'enableWindowsAdminCenter', 'useDedicatedWacHost')) {
+            foreach ($setting in @('networkMode', 'departmentCount', 'usersPerDepartment', 'useDedicatedFileServer', 'enableWindowsAdminCenter', 'useDedicatedWacHost')) {
                 Assert-Test ($stageDocument.parameters.$setting.value -ceq $sourceDocument.parameters.$setting.value) "Stage '$selectedStage' changed preserved setting '$setting'."
             }
         }
@@ -1850,6 +2255,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     }
 }
 
+# Report-layout tests keep the human-readable summary useful while excluding raw ARM resource IDs
+# and avoiding duplicate validation findings.
 & {
     $script:reportLines = New-Object 'System.Collections.Generic.List[string]'
     Initialize-AMRLBootstrapperReport -Mode 'Report layout test'
@@ -1904,6 +2311,7 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Assert-Test ($sharedGroupConfiguration -notmatch 'Managed identity resource group:|Key Vault resource group:') 'Configuration displayed redundant resource-group labels.'
 }
 
+# Applied-operation summaries exclude read-only ARM operations and render concise resource names.
 & {
     Initialize-AMRLBootstrapperReport -Mode 'Applied operation test'
     function Get-AzJson {
@@ -1919,6 +2327,7 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Assert-Test ($appliedDetails -match 'Create \[Succeeded\]: example' -and $appliedDetails -notmatch '/subscriptions/|/providers/') "Applied deployment resource details were not summarized: $appliedDetails"
 }
 
+# Resource-name helpers strip ARM path prefixes and group Run Commands by their owning VM in what-if output.
 & {
     Assert-Test ((Get-AMRLResourceDisplayName -ResourceId '/subscriptions/test/resourceGroups/AMRL-rg-indonesiacentral/providers/Microsoft.Compute/virtualMachines/AMRL-cliwin01/runCommands/join-domain') -eq 'AMRL-cliwin01 / join-domain') 'Run Command label retained technical prefixes or lost its VM.'
     Assert-Test ((Get-AMRLResourceDisplayName -ResourceId '/subscriptions/test/providers/Microsoft.Resources/deployments/AMRL-identity-stage-test') -eq 'AMRL-identity-stage-test') 'Deployment label retained technical prefixes.'
@@ -1930,6 +2339,7 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Assert-Test ($planDetails.Count -eq 2 -and $planDetails[0] -match 'AMRL-cliwin01 \[indonesiacentral\].*install-tool, join-domain') 'Plan did not group commands under their VM and region.'
     Assert-Test ($planDetails[1] -match '^DELETE: 1 Virtual machines \[indonesiacentral\]: old-vm$') 'Plan deletion was not conspicuous or lost its type/region.'
 
+    # Nested deployment records are wrappers; keep leaf resources, latest state, and stage attribution.
     $script:partialNestedOperations = $false
     $script:nestedOperationCalls = New-Object 'System.Collections.Generic.List[object]'
     function New-TestDeploymentOperation {
@@ -2012,6 +2422,8 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     Assert-Test ($progressText -notmatch '/subscriptions/|/providers/|install-wac') 'Collection progress duplicated detailed resource results or technical IDs.'
 }
 
+# Live-polling behavior is simulated: a fake deployment transitions through Running to Succeeded,
+# and nested resource changes are emitted once with their owning stage.
 & {
     $script:liveDeploymentCalls = New-Object 'System.Collections.Generic.List[object]'
     $script:liveOperationCalls = New-Object 'System.Collections.Generic.List[object]'

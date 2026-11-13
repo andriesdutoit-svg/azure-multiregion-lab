@@ -8,7 +8,7 @@ targetScope = 'resourceGroup'
 param dcVmName string
 param domainName string
 @secure()
-param serverAdminPassword string
+param labAdminPassword string
 param reconciliationToken string
 
 // 2. Script content
@@ -38,8 +38,8 @@ resource forestBootstrap 'Microsoft.Compute/virtualMachines/runCommands@2023-09-
         value: domainName
       }
       {
-        name: 'ServerAdminPassword'
-        value: serverAdminPassword
+        name: 'labAdminPassword'
+        value: labAdminPassword
       }
       {
         name: 'ReconciliationToken'

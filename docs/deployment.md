@@ -22,7 +22,7 @@ Use [Bicep Setup](manual-preparation.md#bicep-setup) to prepare the parameter fi
 
 ## Deployment Workflow
 
-1. Choose regions, topology, VM counts, and optional file services/WAC in the [parameter file](configuration-parameters-reference.md).
+1. Choose regions, topology, VM counts, the file-server target, and optional WAC settings in the [parameter file](configuration-parameters-reference.md).
 2. Check [regional availability and quota](#preflight-checks), then [build, validate, and preview](ci-cd-validation.md#local-validation).
 3. Use the greenfield or brownfield path below and select the appropriate stage.
 4. Review [deployment outputs and guest results](validation-and-troubleshooting.md#post-deployment-review).
@@ -34,7 +34,7 @@ Use [Bicep Setup](manual-preparation.md#bicep-setup) to prepare the parameter fi
 |---|---|
 | `network` | Creates or reuses regional networking and peerings. |
 | `compute` | Creates missing DCs, jumpboxes, and workload VMs. Target VNets and role subnets must already exist. |
-| `identity` | Configures AD, GPOs, workload domain membership, enabled file/desktop services, and WAC when enabled. Can create missing workloads; control-plane DCs must exist. |
+| `identity` | Configures AD, GPOs, and workload domain membership; always provisions departmental file shares; installs Linux client desktops for modeled Linux clients; and installs WAC when enabled. Can create missing workloads; control-plane DCs must exist. |
 | `all` | Runs the complete workflow. |
 
 Use `stage=all` when both networking and VM creation are needed. For separate runs, use `network -> compute -> identity`, keeping declared inventory current between deployments. Stage flags select resources, but shared placement, validation, and module contracts are still evaluated.
@@ -54,9 +54,9 @@ Use a new deployment name when rerunning identity automation so Azure reapplies 
 
 The engine completes before the gate, so its nested deployment retains diagnostics after enforcement failure. See [Deployment Results and Troubleshooting](validation-and-troubleshooting.md#post-deployment-review).
 
-### Optional File Services
+### File Services
 
-Set `enableFileServices=true` and run `identity` or `all`. Shares use the primary DC unless `useDedicatedFileServer=true`, which selects the first `srvwin` VM in the final model. Request or inventory that server before enabling dedicated mode; [target reassignment is not data migration](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
+File services are provisioned whenever `identity` or `all` runs. Shares use the primary DC unless `useDedicatedFileServer=true`, which selects the first `srvwin` VM in the final model. Request or inventory that server before selecting dedicated mode; [target reassignment is not data migration](placement-and-reconciliation.md#file-server-reassignment-on-brownfield-expansion).
 
 ### Optional Windows Admin Center
 
@@ -141,13 +141,13 @@ Reconciliation uses `existingRegions` and framework naming conventions to identi
 
 ## RBAC Requirements for Network Reconciliation
 
-AMRL uses an Azure Deployment Script to attempt removal of candidate spoke-to-spoke VNet peerings and disabled framework-owned Bastion resources under the conditions above. The script's identity must be valid and authorized whenever the script is scheduled to run, even if no cleanup targets are found. `automationManagedIdentityResourceId` remains a required template input; its missing/malformed identity finding is active only when reconciliation is scheduled.
+AMRL uses an Azure Deployment Script to attempt removal of candidate spoke-to-spoke VNet peerings and disabled framework-owned Bastion resources under the conditions above. The script's identity must be valid and authorized whenever the script is scheduled to run, even if no cleanup targets are found. Bicep resolves the existing identity using the deployment subscription, `foundationResourceGroup`, and the identity name in [shared defaults](configuration-parameters-reference.md#shared-amrl-defaults); its resource ID is passed internally to the network modules.
 
-Create a User Assigned Managed Identity, grant it the **Network Contributor** role, and supply the identity resource ID through the `automationManagedIdentityResourceId` parameter.
+Create the User Assigned Managed Identity with the shared default name in `foundationResourceGroup` and grant it the **Network Contributor** role. No identity name or resource-ID deployment parameter is required.
 
 ### Managed Identity
 
-Follow [Managed Identity](manual-preparation.md#managed-identity) in subscription-level preparation to create or retrieve the identity. Pass its resource ID through `automationManagedIdentityResourceId` during Bicep setup.
+Follow [Managed Identity](manual-preparation.md#managed-identity) in subscription-level preparation to create or retrieve the identity. The bootstrapper reads the same defaults file as Bicep, so both resolve the same identity without duplicate naming configuration.
 
 ### Required Role Assignment
 

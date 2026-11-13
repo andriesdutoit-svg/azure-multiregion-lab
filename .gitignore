@@ -6,7 +6,7 @@
 
 # Test parameter file
 *.parameters.test.json
-main.parameters.local.json
+*.parameters.local.json
 
 # VS Code workspace settings
 .vscode/

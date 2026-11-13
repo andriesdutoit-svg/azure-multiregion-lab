@@ -21,19 +21,19 @@ Forest creation logic separated from AD population logic.
 # 1. Inputs and secure DSRM password preparation
 param(
     [string]$DomainName,
-    [string]$ServerAdminPassword,
+    [string]$labAdminPassword,
     [string]$ReconciliationToken
 )
 
 # Logs are surfaced by VM Run Command output.
 Write-Host "[Info] Requested Active Directory domain: $DomainName."
 
-if ([string]::IsNullOrWhiteSpace($ServerAdminPassword)) {
-    throw "ServerAdminPassword was not supplied"
+if ([string]::IsNullOrWhiteSpace($labAdminPassword)) {
+    throw "labAdminPassword was not supplied"
 }
 
 $DsrmPassword = ConvertTo-SecureString `
-    $ServerAdminPassword `
+    $labAdminPassword `
     -AsPlainText `
     -Force
 

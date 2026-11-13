@@ -2,8 +2,8 @@ targetScope = 'subscription'
 
 // Identity stage overview
 // Responsibilities:
-// - Bootstrap the primary forest, promote replicas, populate AD, and provision Group Policy.
-// - Join Windows/Linux workloads, configure Linux client desktops, and provision optional shares.
+// - Bootstrap the primary forest, promote replicas, populate AD, and provision Group Policy and file services.
+// - Join Windows/Linux workloads and configure Linux client desktops.
 // - Install optional Windows Admin Center after AD DNS is available.
 // Consumes:
 // - The root's primary/replica/file-server targets and combined retained/new VM placement model.
@@ -11,7 +11,8 @@ targetScope = 'subscription'
 // Prerequisites and workflow:
 // - main.bicep orders this stage after compute completion; identity-only runs require existing DCs.
 // - Forest/replicas precede population; population precedes GPO; GPO precedes domain joins.
-// - Linux joins also wait for desktop prerequisites; file services wait for Windows joins.
+// - Linux joins depend on the Linux-client desktop module collection; only modeled clients get desktops.
+// - File services wait for directory population and Windows workload joins.
 // Boundaries:
 // - deployIdentity gates guest-automation modules. Scripts own supported existing-state repair.
 // - No VMs are recreated here and no output values are exposed to downstream stages.
@@ -21,9 +22,8 @@ targetScope = 'subscription'
 param prefix string
 param reconciliationToken string
 
-// Stage and optional service activation
+// Stage and optional WAC activation
 param deployIdentity bool
-param enableFileServices bool
 param enableWindowsAdminCenter bool
 
 // Targets from the combined retained/new placement model
@@ -41,8 +41,6 @@ param wacHostVm object
 
 param domainName string
 
-param gpoNames object
-
 param sysAdminDepartment object
 
 param additionalDepartments object
@@ -52,10 +50,19 @@ param usersPerDepartment int
 
 // Domain administrator credentials
 
-param serverAdminUsername string
+param labAdminUsername string
 
 @secure()
-param serverAdminPassword string
+param labAdminPassword string
+
+@secure()
+param backupServicePassword string
+
+@secure()
+param monitoringServicePassword string
+
+var defaults = loadJsonContent('../../config/amrl-defaults.json')
+var directoryDefaults = defaults.directory
 
 // 2. Shared directory model
 // Serialized for every identity script to keep OU, group, GPO, and share configuration aligned.
@@ -63,54 +70,32 @@ param serverAdminPassword string
 var directoryModel = {
   preventOuDeletion: false
 
-  rootOuName: '_ROOT'
+  rootOuName: directoryDefaults.rootOuName
 
-  customOus: [
-    'Computers'
-    'Computers/Servers'
-    'Computers/Clients'
-    'Groups'
-    'Groups/GGS'
-    'Groups/DLGS'
-    'Users'
-    'Users/Disabled'
-  ]
+  customOus: directoryDefaults.customOus
 
-  computerOuMapping: {
-    srvwin: 'Computers/Servers'
-    srvlin: 'Computers/Servers'
-    cliwin: 'Computers/Clients'
-    clilin: 'Computers/Clients'
-  }
+  computerOuMapping: directoryDefaults.computerOuMapping
 
-  groupOuMapping: {
-    globalSecurity: 'Groups/GGS'
-    domainLocalSecurity: 'Groups/DLGS'
-  }
+  groupOuMapping: directoryDefaults.groupOuMapping
 
-  groupNaming: {
-    globalSecurityPrefix: 'GGS'
-    domainLocalSecurityPrefix: 'DLGS'
-  }
+  groupNaming: directoryDefaults.groupNaming
 
   platformAdminGroups: {
-    windowsAdmins: 'Windows_Admins'
-    linuxAdmins: 'Linux_Admins'
-    sourceDepartmentCode: first(items(sysAdminDepartment))!.value
+    windowsAdmins: directoryDefaults.platformAdminGroups.windowsAdmins
+    linuxAdmins: directoryDefaults.platformAdminGroups.linuxAdmins
+    sourceDepartmentCode: empty(items(sysAdminDepartment))
+      ? ''
+      : first(items(sysAdminDepartment))!.value
   }
 
-  gpoNames: {
-    serverAdministration: gpoNames.serverAdministration
-    clientAdministration: gpoNames.clientAdministration
-    windowsLaps: gpoNames.windowsLaps
-    domainControllerWinRM: gpoNames.domainControllerWinRM
-  }
+  serviceAccounts: directoryDefaults.serviceAccounts
 
+  gpoNames: directoryDefaults.gpoNames
 
   shares: {
     root: {
-      name: 'Shares'
-      path: 'C:\\Shares'
+      name: directoryDefaults.shares.root.name
+      path: directoryDefaults.shares.root.path
       host: fileServerName
     }
   }
@@ -134,7 +119,7 @@ module adForest '../identity/ad-forest.bicep' = if (deployIdentity) {
   params: {
     dcVmName: primaryDc!.name
     domainName: domainName
-    serverAdminPassword: serverAdminPassword
+    labAdminPassword: labAdminPassword
     reconciliationToken: reconciliationToken
   }
 }
@@ -152,8 +137,8 @@ module replicaDcs '../identity/ad-replicadc.bicep' = [
     params: {
       dcVmName: dc.name
       domainName: domainName
-      serverAdminUsername: serverAdminUsername
-      serverAdminPassword: serverAdminPassword
+      labAdminUsername: labAdminUsername
+      labAdminPassword: labAdminPassword
       reconciliationToken: reconciliationToken
     }
   }
@@ -177,12 +162,13 @@ module adPopulate '../identity/ad-populate.bicep' = if (deployIdentity) {
     dcVmName: primaryDc!.name
     domainName: domainName
     directoryModel: string(directoryModel)
+    backupServicePassword: backupServicePassword
+    monitoringServicePassword: monitoringServicePassword
     domainControllerNames: map(filter(finalVmPlacements, vm => vm.type == 'dc'), dc => dc.name)
     sysAdminDepartment: sysAdminDepartment
     additionalDepartments: additionalDepartments
     departmentCount: departmentCount
     usersPerDepartment: usersPerDepartment
-    enableFileServices: enableFileServices
     reconciliationToken: reconciliationToken
   }
 }
@@ -203,9 +189,9 @@ module adGpo '../identity/ad-gpo.bicep' = if (deployIdentity) {
   }
 }
 
-// 3.3 Optional file services
+// 3.3 File services are part of the identity platform.
 // The forward domainJoinWindows dependency ensures a dedicated server joins before share ACL setup.
-module fileServices '../identity/file-services.bicep' = if (deployIdentity && enableFileServices) {
+module fileServices '../identity/file-services.bicep' = if (deployIdentity) {
   name: '${prefix}-file-services'
 
   scope: resourceGroup('${prefix}-rg-${fileServerVm.regionKey}')
@@ -242,8 +228,8 @@ module domainJoinWindows '../identity/domain-join.bicep' = [
       domainName: domainName
       directoryModel: string(directoryModel)
       vmType: vm.type
-      serverAdminUsername: serverAdminUsername
-      serverAdminPassword: serverAdminPassword
+      labAdminUsername: labAdminUsername
+      labAdminPassword: labAdminPassword
       reconciliationToken: reconciliationToken
     }
   }
@@ -290,7 +276,7 @@ module windowsAdminCenter '../identity/wac.bicep' = if (deployIdentity && enable
   }
 }
 
-// 3.6 Linux domain membership and supported guest repair
+// 3.7 Linux domain membership and supported guest repair
 // Both GPO and Linux desktop prerequisites complete before these commands; the script
 // owns realm detection and selected configuration repair on retained endpoints.
 
@@ -310,14 +296,14 @@ module domainJoinLinux '../identity/domain-join-linux.bicep' = [
       domainName: domainName
       directoryModel: string(directoryModel)
       vmType: vm.type
-      serverAdminUsername: serverAdminUsername
-      serverAdminPassword: serverAdminPassword
+      labAdminUsername: labAdminUsername
+      labAdminPassword: labAdminPassword
       reconciliationToken: reconciliationToken
     }
   }
 ]
 
-// 3.7 Linux client desktop prerequisites
+// 3.8 Linux client desktop prerequisites
 // DomainJoinLinux references this collection even though it is declared later in the file.
 module linuxDesktop '../compute/linux-desktop.bicep' = [
   for vm in filter(finalVmPlacements, vm => vm.type == 'clilin'): if (deployIdentity) {

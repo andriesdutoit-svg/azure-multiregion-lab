@@ -50,14 +50,11 @@ param jumpboxAdminUsername string
 @secure()
 param jumpboxAdminPassword string
 
-param serverAdminUsername string
+param labAdminUsername string
 @secure()
-param serverAdminPassword string
+param labAdminPassword string
 
-param clientAdminUsername string
 @secure()
-param clientAdminPassword string
-
 param sshPublicKey string
 
 @secure()
@@ -139,15 +136,11 @@ module windowsVMs '../compute/vm-windows.bicep' = [
 
       adminUsername: vm.type == 'jmp'
         ? jumpboxAdminUsername
-        : (vm.type == 'dc' || vm.type == 'srvwin'
-          ? serverAdminUsername
-          : clientAdminUsername)
+        : labAdminUsername
 
       adminPassword: vm.type == 'jmp'
         ? jumpboxAdminPassword
-        : (vm.type == 'dc' || vm.type == 'srvwin'
-          ? serverAdminPassword
-          : clientAdminPassword)
+        : labAdminPassword
     }
   }
 ]
@@ -177,7 +170,7 @@ module linuxVMs '../compute/vm-linux.bicep' = [
       subnetId: getSubnetId(vm)
       assignPublicIp: false
 
-      adminUsername: vm.type == 'srvlin' ? serverAdminUsername : clientAdminUsername
+      adminUsername: labAdminUsername
       sshPublicKey: sshPublicKey
     }
   }

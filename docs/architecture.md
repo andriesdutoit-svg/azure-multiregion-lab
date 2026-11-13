@@ -19,8 +19,9 @@ flowchart LR
   F[Key Vault and automation identity] -.-> N
   F -.-> C
   I --> A[AD forest, groups, users, and domain membership]
-  I --> O[Optional shares and Linux desktops]
-  I --> W
+  I --> S[Departmental shares, always in identity stage]
+  I --> L[Linux client desktops, when modeled]
+  I --> W[Windows Admin Center, when enabled]
 ```
 
 Network outputs supply subnet IDs to compute. Compute creates missing VMs; identity configures guest services and can also activate missing workload creation when needed. Foundation resources hold credentials and authorize applicable automation. See [Deployment Stages](deployment.md#stages) for stage prerequisites.
@@ -31,9 +32,9 @@ Network outputs supply subnet IDs to compute. Compute creates missing VMs; ident
 | Jumpboxes | Provide the administration hop to private workload VMs; Bastion is an optional additional access path. |
 | Windows/Linux servers and clients | Exercise domain membership, administration policy, applications, and optional desktop access. |
 | Windows Admin Center | Optional gateway installation and configuration repair during identity-stage after AD/GPO and Windows domain joins, on the primary jumpbox or first modeled Windows server. The gateway UI uses HTTPS; current managed-server WinRM uses HTTP. AMRL does not configure inbound web access or automatically populate Shared Connections. |
-| Directory and file services | Provide the departmental user/group model, GPOs, and optional group-based share permissions. |
+| Directory and file services | Provide the departmental user/group model, GPOs, and group-based share permissions. |
 
-Region and VM counts, role-specific images/sizes/disks, and optional services are data-driven. New-VM creation uses missing identities only; identity automation can also target retained VMs. Detailed placement rules belong in [Placement and Reconciliation](placement-and-reconciliation.md), and guest configuration in [Identity and Domain Join](identity-and-domain-join.md).
+Region and VM counts, role-specific images/sizes/disks, and optional services such as Bastion and Windows Admin Center are data-driven. Departmental file shares are part of every identity-stage run; Linux client desktops are installed only when Linux client VMs are modeled. New-VM creation uses missing identities only; identity automation can also target retained VMs. Detailed placement rules belong in [Placement and Reconciliation](placement-and-reconciliation.md), and guest configuration in [Identity and Domain Join](identity-and-domain-join.md).
 
 ## Core Terminology
 
@@ -58,7 +59,7 @@ Region and VM counts, role-specific images/sizes/disks, and optional services ar
 
 The deployment is declarative. Bicep describes the desired resources, their configuration, scopes, and dependencies. Parameters provide the environment-specific inputs, including regions, VM counts, VM sizes, images, credentials references, and deployment stage.
 
-The root [main.bicep](../main.bicep) orchestrates the deployment. Reusable modules own specific resource types:
+The root [main.bicep](../main.bicep) orchestrates the deployment and resolves administrator passwords and SSH keys from Key Vault with `getSecret()`. The top-level `foundationResourceGroup` and `keyVaultName` parameters identify that vault; secret values are not stored in deployment parameter files. Reusable modules own specific resource types:
 
 - `modules/networking` owns VNets, role subnets, NSGs, firewalls, and route tables.
 - `modules/networking/peering.bicep` owns mode-specific hub-spoke or full-mesh peering.
@@ -70,6 +71,21 @@ The root [main.bicep](../main.bicep) orchestrates the deployment. Reusable modul
 ### Source Organization
 
 [main.bicep](../main.bicep) groups inputs, placement calculations, stage orchestration, and outputs by purpose. Module and script introductions explain ownership, prerequisites, and reconciliation boundaries. Bicep references and `dependsOn` determine deployment order; scripts retain dependency-sensitive execution order.
+
+### Reading The Deployment Code
+
+The templates use a few Bicep concepts repeatedly:
+
+| Bicep construct | Plain-language meaning |
+|---|---|
+| `param` | An input supplied by the parameter file or by the parent module. |
+| `var` and `func` | A value or calculation derived from those inputs; it does not create an Azure resource by itself. |
+| `module` | A call to another Bicep file that owns a stage or resource group of work. |
+| `resource ... existing` | A reference to a resource the operator says already exists; it is not a search of the subscription and does not recreate that resource. |
+| `if` and `for` on a resource/module | Conditions and loops that decide whether, or how many times, Azure resources are deployed. |
+| `dependsOn` and module outputs | Ordering and data links between deployments. File order alone does not determine execution order. |
+
+Guest scripts are PowerShell or shell programs embedded in Azure VM Run Command resources. Bicep sends the script and its inputs to the selected VM; the guest agent runs the script inside that VM. ARM reporting that the Run Command resource was deployed is not the same as the script succeeding. Use the VM Run Command instance view to check its execution state and exit code. This is why the deployment guides distinguish template validation, Azure provisioning, guest execution, and service readiness.
 
 ## Resource Scope
 
@@ -140,8 +156,8 @@ NSG rules are composed per role in `modules/networking/vnet.bicep` from shared r
 |---|---|---|
 | `dc` | `adRules` + `adAdvancedRules` + `rdpRules` | DNS (53), Kerberos (88), LDAP (389), NTP (123), Kerberos password change (464), SMB (445), Global Catalog (3268/3269), LDAPS (636), RPC endpoint mapper (135) and dynamic (49152–65535) from `10.0.0.0/8`; RDP (3389) from jumpbox subnets only |
 | `jumpbox` | Single rule | RDP (3389) from `jumpboxAllowedSources` only |
-| `server` | `sshRules` + `rdpRules` + `adRules` | SSH (22) and RDP (3389) from jumpbox subnets only; DNS/Kerberos/LDAP from `10.0.0.0/8` |
-| `client` | `sshRules` + `rdpRules` | SSH (22) and RDP (3389) from jumpbox subnets only |
+| `server` | `sshRules` + `rdpRules` + `adRules` + `winRmRules` | SSH (22) and RDP (3389) from jumpbox subnets only; DNS/Kerberos/LDAP from `10.0.0.0/8`; WinRM TCP 5985/5986 from `10.0.0.0/8` |
+| `client` | `sshRules` + `rdpRules` + `winRmRules` | SSH (22) and RDP (3389) from jumpbox subnets only; WinRM TCP 5985/5986 from `10.0.0.0/8` |
 | `AzureFirewallSubnet` (hub only) | No NSG | Azure Firewall manages its own rule collections directly |
 
 All rules use `protocol: '*'` and `sourcePortRange: '*'`, relying on Azure NSG stateful filtering to allow return traffic.
@@ -189,7 +205,7 @@ The template does not discover live Azure VM inventory. Brownfield users must ma
 
 ## File Services
 
-File services are part of the identity workflow and are controlled independently by `enableFileServices`. Directory population runs on the primary DC and, when file services are enabled, creates the domain-local share groups and nests department manager/user groups into them. The separate `file-services.bicep` module then runs `Set-Shares.ps1` on the selected host to create `C:\Shares`, one SMB share per selected department, and the corresponding NTFS access rules.
+File services are a standard part of the identity workflow. Directory population runs on the primary DC and creates the domain-local share groups and nests department manager/user groups into them. The separate `file-services.bicep` module then runs `Set-Shares.ps1` on the selected host to create `C:\Shares`, one SMB share per selected department, and the corresponding NTFS access rules.
 
 By default, the selected host is the primary DC. When `useDedicatedFileServer=true`, the first `srvwin` entry in `finalVmPlacements` is selected. The file-services module is scoped to that VM's resource group and depends on both AD population and Windows domain join, ensuring a dedicated server joins the domain before its AD-backed ACLs are applied.
 
