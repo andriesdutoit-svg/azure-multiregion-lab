@@ -131,6 +131,16 @@ foreach ($templatePath in @('main.parameters.example.json', 'main.parameters.dem
         Assert-Test ($null -ne $template.parameters.prefix.metadata.bootstrap.PSObject.Properties[$metadataName]) "$templatePath omits bootstrap metadata '$metadataName'."
     }
 }
+$mainBicepSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'main.bicep')
+$validationBicepSource = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'modules/logic/validation.bicep')
+$validationFlags = @([regex]::Matches($validationBicepSource, "(?m)^\s+flag:\s*'([^']+)'" ) | ForEach-Object { $_.Groups[1].Value })
+Assert-Test ($validationFlags.Count -eq @($validationFlags | Select-Object -Unique).Count) 'Validation flag catalog contains duplicate names.'
+Assert-Test ($mainBicepSource -match '(?s)@minValue\(1\)\s+@description\([^\r\n]+\)\s+param regionCount int') 'regionCount is not constrained to at least one before root expressions run.'
+Assert-Test ($mainBicepSource -match '(?s)@minValue\(1\)\s+@description\([^\r\n]+\)\s+param maxVmsPerRegion int') 'maxVmsPerRegion is not constrained to at least one before capacity division.'
+Assert-Test ($validationBicepSource -match "(?s)flag: 'hasUncoveredNewVmNetworks'\s+active: hasUncoveredNewVmNetworks\s+severity: 'block'") 'Missing networking for new VMs is not a blocking validation finding.'
+Assert-Test ($validationBicepSource -match "(?s)flag: 'hasMalformedDomainName'\s+active: deployIdentity && hasMalformedDomainName\s+severity: 'block'") 'Malformed domain names do not block identity deployment.'
+Assert-Test ($validationBicepSource -match "(?s)flag: 'hasInvalidGpoNames'\s+active: deployIdentity && hasInvalidGpoNames\s+severity: 'block'") 'Invalid GPO names do not block identity deployment.'
+Assert-Test ($validationBicepSource -match "(?s)flag: 'hasUnsafeJumpboxAllowedSources'\s+active: hasUnsafeJumpboxAllowedSources\s+severity: 'block'") 'World-open jumpbox access is not blocking in enforce mode.'
 $exampleTemplate = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'main.parameters.example.json') | ConvertFrom-Json
 Assert-Test (@($exampleTemplate.parameters.jumpboxAllowedSources.value) -contains '<YOUR_PUBLIC_IP>/32') 'Example parameter file does not define the replaceable jumpbox IPv4 source.'
 $incompleteParametersRejected = $false
@@ -152,6 +162,32 @@ ERROR:
 '@
 $resourceDeploymentSummary = Get-AMRLDeploymentFailureSummary -Message $resourceDeploymentError
 Assert-Test ($resourceDeploymentSummary -eq 'Deployment failed (QuotaExceeded): The requested VM family quota is unavailable. (Correlation ID: 11111111-2222-3333-4444-555555555555)') 'Non-gate ARM failure summary omitted the useful error code, message, or correlation ID.'
+$keyVaultRbacFailure = @'
+Key Vault secret access is not ready: Azure CLI failed (exit 1): az keyvault secret list --vault-name amrl-kv-dbdbac44-5
+ERROR: (Forbidden) Caller is not authorized to perform action on resource.
+System.Management.Automation.RemoteException
+Caller: appid=04b07795-8ddb-461a-bbee-02f9e1bf7b46;oid=bb206f5b-840f-46c4-8b07-55fdbbe46e3c
+Action: 'Microsoft.KeyVault/vaults/secrets/readMetadata/action'
+Resource: '/subscriptions/test/resourcegroups/alt-foundation-rg/providers/microsoft.keyvault/vaults/amrl-kv-dbdbac44-5'
+Inner error: { "code": "ForbiddenByRbac" }
+'@
+$keyVaultRbacSummary = Get-AMRLErrorSummary -Message $keyVaultRbacFailure
+Assert-Test ($keyVaultRbacSummary -eq "Key Vault 'amrl-kv-dbdbac44-5' denied secret access (ForbiddenByRbac). Verify the caller's Secrets Officer assignment at this vault scope; Azure RBAC may still be propagating.") 'Key Vault RBAC failure was not summarized with its vault and actionable cause.'
+Assert-Test ($keyVaultRbacSummary -notmatch 'Caller:|appid=|RemoteException|resourcegroups/') 'Key Vault RBAC summary retained caller or resource diagnostic noise.'
+$missingSecretFailure = @'
+ERROR: MultipleErrorsOccurred
+The secret of KeyVault parameter 'labAdminPassword' cannot be retrieved.
+The secret of KeyVault parameter 'backupServicePassword' cannot be retrieved.
+The secret of KeyVault parameter 'monitoringServicePassword' cannot be retrieved.
+'@
+$missingSecretSummary = Get-AMRLErrorSummary -Message $missingSecretFailure
+Assert-Test ($missingSecretSummary -eq 'Azure could not resolve Key Vault parameter secrets: labAdminPassword, backupServicePassword, monitoringServicePassword.') 'Missing Key Vault parameters were not reduced to a concise secret-name list.'
+$previousIssueReport = $script:BootstrapperReport
+Initialize-AMRLBootstrapperReport -Mode 'Duplicate Azure error summary test'
+Add-AMRLReportIssue -Phase 'Bicep build and validation' -Message $missingSecretFailure
+Add-AMRLReportIssue -Phase 'What-if preview' -Message "Azure CLI failed (exit 1): az deployment sub what-if`n$missingSecretFailure"
+Assert-Test ($script:BootstrapperReport.Issues.Count -eq 1 -and $script:BootstrapperReport.Issues[0].Message -eq $missingSecretSummary) 'Repeated missing-secret errors were not consolidated to one report issue.'
+$script:BootstrapperReport = $previousIssueReport
 $skuOperationError = @'
 {"status":"Failed","error":{"code":"InvalidTemplateDeployment","message":"The template deployment 'AMRL-dc02' is not valid. Tracking id is '6f9f8bcd-49e6-44f4-919b-152315888599'. See inner errors.","details":[{"code":"SkuNotAvailable","message":"The requested VM size 'Standard_B2ls_v2' is currently not available in location 'australiasoutheast' due to capacity restrictions. Try another size."}]}}
 '@ | ConvertFrom-Json
@@ -506,6 +542,86 @@ Set-AMRLRoleAssignmentIfMissing `
     -Scope '/subscriptions/test' | Out-Null
 Assert-Test ($script:cliCalls.Count -eq 0) 'An existing role assignment was duplicated.'
 
+& {
+$vaultSelectionParameters = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'main.parameters.demo.json') | ConvertFrom-Json
+$vaultSelectionFoundation = [pscustomobject]@{
+    ResourceGroup = 'old-rg'
+    IdentityResourceGroup = 'old-rg'
+    VaultResourceGroup = 'old-rg'
+    IdentityId = '/subscriptions/test/resourceGroups/old-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/amrl-mi'
+    IdentityName = 'amrl-mi'
+    VaultId = '/subscriptions/test/resourceGroups/old-rg/providers/Microsoft.KeyVault/vaults/old-vault'
+    VaultName = 'old-vault'
+    RebuildFoundation = $false
+    RecoveryConfirmed = $false
+}
+$script:vaultSelectionActive = @([pscustomobject]@{
+    name = 'existing-vault'
+    id = '/subscriptions/test/resourceGroups/new-rg/providers/Microsoft.KeyVault/vaults/existing-vault'
+})
+$script:vaultSelectionDeleted = @()
+$script:vaultSelectionAnswers = [System.Collections.Generic.Queue[string]]::new([string[]]@('yes'))
+$script:vaultSelectionGeneratedNames = 0
+function Get-AzTsv {
+    param([string[]]$Arguments)
+    if ($Arguments[0] -eq 'group' -and $Arguments[1] -eq 'exists') { return 'true' }
+    return ''
+}
+function Get-AzJson {
+    param([string[]]$Arguments)
+    if ($Arguments[0] -eq 'keyvault' -and $Arguments[1] -eq 'list') { return @($script:vaultSelectionActive) }
+    if ($Arguments[0] -eq 'keyvault' -and $Arguments[1] -eq 'list-deleted') { return @($script:vaultSelectionDeleted) }
+    throw "Unexpected vault selection lookup: $($Arguments -join ' ')"
+}
+function Read-RequiredValue {
+    param([string]$Prompt, [string]$Hint, [string]$DefaultValue, [scriptblock]$Validator)
+    if ($script:vaultSelectionAnswers.Count -eq 0) { throw "Unexpected vault selection prompt: $Prompt" }
+    return $script:vaultSelectionAnswers.Dequeue()
+}
+function Get-AMRLAvailableVaultName {
+    param([string]$SubscriptionId)
+    $script:vaultSelectionGeneratedNames++
+    return 'generated-vault'
+}
+Set-AMRLFoundationResourceGroup -Parameters $vaultSelectionParameters -Foundation $vaultSelectionFoundation -ResourceGroupName 'new-rg' -SubscriptionId 'test'
+Assert-Test ($vaultSelectionFoundation.VaultName -eq 'existing-vault' -and $vaultSelectionFoundation.VaultId -like '*/new-rg/*') 'The selected foundation group did not reuse its confirmed active Key Vault.'
+Assert-Test ($vaultSelectionParameters.parameters.keyVaultName.value -eq 'existing-vault' -and $script:vaultSelectionGeneratedNames -eq 0) 'Active Key Vault reuse was not persisted or unnecessarily generated a new name.'
+
+$vaultSelectionParameters.parameters.keyVaultName.value = 'old-vault'
+$vaultSelectionFoundation.VaultName = 'old-vault'
+$vaultSelectionFoundation.VaultId = '/subscriptions/test/resourceGroups/old-rg/providers/Microsoft.KeyVault/vaults/old-vault'
+$script:vaultSelectionActive = @(
+    [pscustomobject]@{ name = 'vault-a'; id = '/subscriptions/test/resourceGroups/new-rg/providers/Microsoft.KeyVault/vaults/vault-a' }
+    [pscustomobject]@{ name = 'vault-b'; id = '/subscriptions/test/resourceGroups/new-rg/providers/Microsoft.KeyVault/vaults/vault-b' }
+)
+$script:vaultSelectionAnswers = [System.Collections.Generic.Queue[string]]::new([string[]]@('vault-b'))
+Set-AMRLFoundationResourceGroup -Parameters $vaultSelectionParameters -Foundation $vaultSelectionFoundation -ResourceGroupName 'new-rg' -SubscriptionId 'test'
+Assert-Test ($vaultSelectionFoundation.VaultName -eq 'vault-b' -and $vaultSelectionFoundation.VaultId -like '*/vault-b') 'The user could not select one of several active Key Vaults.'
+
+$vaultSelectionParameters.parameters.keyVaultName.value = 'old-vault'
+$vaultSelectionFoundation.VaultName = 'old-vault'
+$vaultSelectionFoundation.VaultId = '/subscriptions/test/resourceGroups/old-rg/providers/Microsoft.KeyVault/vaults/old-vault'
+$script:vaultSelectionActive = @()
+$script:vaultSelectionDeleted = @([pscustomobject]@{
+    name = 'deleted-vault'
+    properties = @{ vaultId = '/subscriptions/test/resourceGroups/new-rg/providers/Microsoft.KeyVault/vaults/deleted-vault'; location = 'westeurope' }
+})
+$script:vaultSelectionAnswers = [System.Collections.Generic.Queue[string]]::new([string[]]@('yes'))
+Set-AMRLFoundationResourceGroup -Parameters $vaultSelectionParameters -Foundation $vaultSelectionFoundation -ResourceGroupName 'new-rg' -SubscriptionId 'test'
+Assert-Test ($vaultSelectionFoundation.VaultName -eq 'deleted-vault' -and $vaultSelectionFoundation.VaultId -like '*/new-rg/*' -and $vaultSelectionFoundation.RecoveryConfirmed) 'A confirmed matching soft-deleted Key Vault was not selected for recovery.'
+
+$vaultSelectionParameters.parameters.keyVaultName.value = 'old-vault'
+$vaultSelectionFoundation.VaultName = 'old-vault'
+$vaultSelectionFoundation.VaultId = '/subscriptions/test/resourceGroups/old-rg/providers/Microsoft.KeyVault/vaults/old-vault'
+$script:vaultSelectionDeleted = @([pscustomobject]@{
+    name = 'deleted-vault'
+    properties = @{ vaultId = '/subscriptions/test/resourceGroups/other-rg/providers/Microsoft.KeyVault/vaults/deleted-vault'; location = 'westeurope' }
+})
+$script:vaultSelectionAnswers = [System.Collections.Generic.Queue[string]]::new([string[]]@())
+Set-AMRLFoundationResourceGroup -Parameters $vaultSelectionParameters -Foundation $vaultSelectionFoundation -ResourceGroupName 'new-rg' -SubscriptionId 'test'
+Assert-Test ($vaultSelectionFoundation.VaultName -eq 'generated-vault' -and $script:vaultSelectionGeneratedNames -eq 1) 'A deleted vault from another resource group was reused instead of generating a new name.'
+}
+
 $script:roleAssignmentState = 'missing'
 New-AMRLFederatedCredentialIfMissing `
     -AppObjectId '22222222-2222-2222-2222-222222222222' `
@@ -810,6 +926,20 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         return 'ready'
     }
     Assert-Test ($retryResult -eq 'ready' -and $script:retryCalls -eq 3) 'Managed identity graph propagation was not retried.'
+    $script:retryCalls = 0
+    $retryResult = Invoke-AMRLRbacRetry -MaximumAttempts 23 -InitialDelaySeconds 0 -Operation {
+        $script:retryCalls++
+        if ($script:retryCalls -lt 12) { throw 'ForbiddenByRbac: assignment is propagating' }
+        return 'ready'
+    }
+    Assert-Test ($retryResult -eq 'ready' -and $script:retryCalls -eq 12) 'RBAC retry did not tolerate several minutes of delayed propagation.'
+    $script:retryCalls = 0
+    $retryResult = Invoke-AMRLRbacRetry -MaximumAttempts 3 -InitialDelaySeconds 0 -Operation {
+        $script:retryCalls++
+        if ($script:retryCalls -lt 3) { throw 'ForbiddenByRbac: access is propagating; DenyAssignmentId: null' }
+        return 'ready'
+    }
+    Assert-Test ($retryResult -eq 'ready' -and $script:retryCalls -eq 3) 'A null DenyAssignmentId incorrectly stopped RBAC propagation retries.'
     foreach ($failure in @('ForbiddenByFirewall', 'DenyAssignment', 'AuthenticationFailed', 'ResourceNotFound')) {
         $script:retryCalls = 0
         try {
@@ -818,6 +948,9 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         catch { Assert-Test ($_.Exception.Message -eq $failure) 'Retry obscured the original non-transient error.' }
         Assert-Test ($script:retryCalls -eq 1) "Retry repeated permanent error $failure."
     }
+    $script:retryCalls = 0
+    try { Invoke-AMRLRbacRetry -MaximumAttempts 3 -InitialDelaySeconds 0 -Operation { $script:retryCalls++; throw 'ForbiddenByRbac: denied by role assignment; DenyAssignmentId: 11111111-2222-3333-4444-555555555555' } | Out-Null }
+    catch { Assert-Test ($_.Exception.Message -match 'DenyAssignmentId: 11111111' -and $script:retryCalls -eq 1) 'A real deny assignment was retried or its error was obscured.' }
     $script:retryCalls = 0
     try { Invoke-AMRLRbacRetry -MaximumAttempts 3 -InitialDelaySeconds 0 -Operation { $script:retryCalls++; throw 'PrincipalNotFound' } }
     catch { Assert-Test ($script:retryCalls -eq 3) 'RBAC retries did not stop at the attempt limit.' }
@@ -935,10 +1068,12 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
 & {
     $script:cliProbeCalls = 0
     $script:cliProbeFailure = 'ForbiddenByRbac'
+    $script:cliProbeRetryAttempts = New-Object 'System.Collections.Generic.List[int]'
     $retryImplementation = (Get-Command Invoke-AMRLRbacRetry).ScriptBlock
     function Invoke-AMRLRbacRetry {
-        param([scriptblock]$Operation)
-        return (& $retryImplementation -Operation $Operation -InitialDelaySeconds 0)
+        param([scriptblock]$Operation, [int]$MaximumAttempts = 6, [int]$InitialDelaySeconds = 2)
+        $script:cliProbeRetryAttempts.Add($MaximumAttempts)
+        return (& $retryImplementation -Operation $Operation -MaximumAttempts $MaximumAttempts -InitialDelaySeconds 0)
     }
     function az {
         $script:cliProbeCalls++
@@ -954,10 +1089,12 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     try {
         $cliResult = & $originalInvokeAzCli -Arguments @('keyvault', 'secret', 'list', '--vault-name', 'mock-vault')
         Assert-Test ($cliResult -eq 'existing-secret' -and $script:cliProbeCalls -eq 3) 'Azure CLI wrapper did not retry Key Vault RBAC propagation.'
+        Assert-Test ($script:cliProbeRetryAttempts[-1] -eq 23) 'Key Vault data-plane calls did not receive the extended RBAC propagation window.'
         $script:cliProbeCalls = 0
         $script:cliProbeFailure = "Cannot find user or service principal in graph database for 'managed-identity-principal-id'."
         $cliResult = & $originalInvokeAzCli -Arguments @('role', 'assignment', 'list', '--scope', '/subscriptions/mock', '--assignee', 'managed-identity-principal-id')
         Assert-Test ($cliResult -eq 'existing-secret' -and $script:cliProbeCalls -eq 3) 'Azure CLI wrapper did not retry managed identity graph propagation during role lookup.'
+        Assert-Test ($script:cliProbeRetryAttempts[-1] -eq 6) 'Role assignment lookups unexpectedly received the long Key Vault data-plane retry window.'
         $script:cliProbeCalls = 0
         $script:cliProbeFailure = 'ForbiddenByFirewall'
         $firewallRejected = $false
@@ -1024,6 +1161,12 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
         if ($Arguments[0] -eq 'group') { return 'true' }
         if ($Arguments[0] -eq 'keyvault' -and $Arguments -contains 'show') { return 'ssh-ed25519 test-public-key' }
         return 'existing'
+    }
+    function Invoke-AMRLTimedProcess {
+        param([string]$Command, [string[]]$Arguments, [int]$TimeoutSeconds)
+        $passphraseIndex = [Array]::IndexOf($Arguments, '-P') + 1
+        Assert-Test ($Arguments -contains '-y' -and $passphraseIndex -gt 0 -and $Arguments[$passphraseIndex] -ceq '') 'Preparation did not validate the local SSH key noninteractively with a blank passphrase.'
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ssh-ed25519 test-public-key'; ErrorOutput = '' }
     }
     function Get-AzJson {
         param([string[]]$Arguments)
@@ -1935,10 +2078,15 @@ Assert-Test ($script:validationLookupCalls.Count -eq 2) 'Missing root outputs pr
     }
     function Invoke-AMRLTimedProcess {
         param([string]$Command, [string[]]$Arguments, [int]$TimeoutSeconds)
-        $passphraseIndex = [Array]::IndexOf($Arguments, '-N') + 1
-        Assert-Test ($passphraseIndex -gt 0 -and $Arguments[$passphraseIndex] -ceq '') 'Fresh SSH key generation did not pass an explicit empty passphrase through the quoted process path.'
         Assert-Test ($TimeoutSeconds -eq 30) 'Fresh SSH key generation did not use a bounded process timeout.'
         $script:sshKeygenCalls++
+        if ($Arguments -contains '-y') {
+            $passphraseIndex = [Array]::IndexOf($Arguments, '-P') + 1
+            Assert-Test ($passphraseIndex -gt 0 -and $Arguments[$passphraseIndex] -ceq '') 'SSH key validation did not pass an explicit blank passphrase and could prompt interactively.'
+            return [pscustomobject]@{ ExitCode = 0; Output = $script:sshDerivedPublic; ErrorOutput = '' }
+        }
+        $passphraseIndex = [Array]::IndexOf($Arguments, '-N') + 1
+        Assert-Test ($passphraseIndex -gt 0 -and $Arguments[$passphraseIndex] -ceq '') 'Fresh SSH key generation did not pass an explicit empty passphrase through the quoted process path.'
         $script:sshPrivateExists = $true
         $script:sshPublicExists = $true
         return [pscustomobject]@{ ExitCode = 0; Output = ''; ErrorOutput = '' }

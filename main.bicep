@@ -38,8 +38,10 @@ param tags object
 // VMs and existing network regions listed so subsequent deployments can reuse them.
 @description('Maps region names to their deployment order and address-space index.')
 param regionIndexMap object
+@minValue(1)
 @description('Number of regions included in this deployment.')
 param regionCount int
+@minValue(1)
 @description('Maximum number of VMs allowed in each region.')
 param maxVmsPerRegion int
 @description('Regions with existing VNet infrastructure where networking is reconciled. Route tables and standard subnet associations are deployed or updated; networking in other regions is created from scratch.')

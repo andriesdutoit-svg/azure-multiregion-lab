@@ -84,7 +84,7 @@ var hasRegionOverflow = contains(regionOverflowFlags, true)
 var hasNoDomainControllers = empty(filter(vmPlacements, vm => vm.type == 'dc'))
 var hasNoJumpboxes = empty(filter(vmPlacements, vm => vm.type == 'jmp'))
 var invalidMinimums = vmCounts.dc < 1 || vmCounts.jumpbox < 1
-var invalidRegionCount = regionCount > length(regionIndexMap)
+var invalidRegionCount = regionCount < 1 || regionCount > length(regionIndexMap)
 var hasInvalidExistingVmPlacements = invalidExistingVmPlacementCount > 0
 var missingPinnedDc = empty(filter(vmPlacements, vm => vm.type == 'dc' && vm.index == 0 && vm.regionKey == primaryRegion))
 var missingPinnedJumpbox = empty(filter(vmPlacements, vm => vm.type == 'jmp' && vm.index == 0 && vm.regionKey == primaryRegion))
@@ -169,7 +169,7 @@ var hasInvalidExistingVmIndex = contains(invalidExistingVmIndexFlags, true)
 
 // 2.4 Administrator ingress and scheduled cleanup identity
 // Empty or public-wide jumpbox access is advisory, not a deployment blocker.
-var hasUnsafeJumpboxAllowedSources = empty(jumpboxAllowedSources) || contains(jumpboxAllowedSources, '0.0.0.0/0')
+var hasUnsafeJumpboxAllowedSources = contains(jumpboxAllowedSources, '0.0.0.0/0')
 
 // Keep this scheduling predicate aligned with network-stage. Identity shape is checked
 // when cleanup is scheduled, even if no obsolete resources are found; RBAC is not queried here.
@@ -573,6 +573,38 @@ var blockingValidationFindings = [
     message: 'useDedicatedWacHost cannot be true when enableWindowsAdminCenter is false.'
     remediation: 'Enable Windows Admin Center or set useDedicatedWacHost to false.'
   }
+  {
+    flag: 'hasUncoveredNewVmNetworks'
+    active: hasUncoveredNewVmNetworks
+    severity: 'block'
+    category: 'Networking'
+    message: 'One or more new VMs target regions without declared existing networking while the network stage is skipped.'
+    remediation: 'Run stage=network or stage=all, or add each target region to existingRegions only after confirming its required VNet and subnets exist.'
+  }
+  {
+    flag: 'hasMalformedDomainName'
+    active: deployIdentity && hasMalformedDomainName
+    severity: 'block'
+    category: 'GroupPolicy'
+    message: 'domainName must be a multi-label DNS name without spaces, slashes, or @.'
+    remediation: 'Set domainName to a valid multi-label DNS name such as amrl.lab before running the identity stage.'
+  }
+  {
+    flag: 'hasInvalidGpoNames'
+    active: deployIdentity && hasInvalidGpoNames
+    severity: 'block'
+    category: 'GroupPolicy'
+    message: 'GPO names must define non-empty serverAdministration, clientAdministration, windowsLaps, and domainControllerWinRM values.'
+    remediation: 'Review config/amrl-defaults.json and provide non-empty GPO display names before running the identity stage.'
+  }
+  {
+    flag: 'hasUnsafeJumpboxAllowedSources'
+    active: hasUnsafeJumpboxAllowedSources
+    severity: 'block'
+    category: 'Security'
+    message: 'jumpboxAllowedSources contains 0.0.0.0/0, exposing RDP or SSH to all IPv4 sources.'
+    remediation: 'Replace 0.0.0.0/0 with trusted source CIDRs before deployment.'
+  }
 ]
 
 // 3.2 Advisory findings
@@ -692,14 +724,6 @@ var advisoryValidationFindings = [
     remediation: 'Provide the resource ID of a User Assigned Managed Identity with the required subscription-scope Network Contributor role.'
   }
   {
-    flag: 'hasMalformedDomainName'
-    active: hasMalformedDomainName
-    severity: 'advisory'
-    category: 'GroupPolicy'
-    message: 'domainName must be a multi-label DNS name (for example amrl.lab) without spaces, slashes, or @. Group Policy provisioning derives the domain DN and the SYSVOL path to Groups.xml from this value.'
-    remediation: 'Set domainName to a valid multi-label DNS name such as amrl.lab.'
-  }
-  {
     flag: 'hasEmptySysAdminDepartmentCode'
     active: hasEmptySysAdminDepartmentCode
     severity: 'block'
@@ -714,30 +738,6 @@ var advisoryValidationFindings = [
     category: 'GroupPolicy'
     message: 'Group Policy provisioning runs on the primary domain controller, which is not placed in the primary region. Correct dc01 placement before running the identity stage.'
     remediation: 'Pin dc01 to the primary region in existingVmPlacements, or enable identity only when a primary-DC target is available.'
-  }
-  {
-    flag: 'hasInvalidGpoNames'
-    active: hasInvalidGpoNames
-    severity: 'advisory'
-    category: 'GroupPolicy'
-    message: 'GPO names must define non-empty serverAdministration, clientAdministration, windowsLaps, and domainControllerWinRM values.'
-    remediation: format('Review config/amrl-defaults.json and provide non-empty GPO display names. Current values: serverAdministration="{0}", clientAdministration="{1}", windowsLaps="{2}", domainControllerWinRM="{3}".', gpoNames.serverAdministration, gpoNames.clientAdministration, gpoNames.windowsLaps, gpoNames.domainControllerWinRM)
-  }
-  {
-    flag: 'hasUnsafeJumpboxAllowedSources'
-    active: hasUnsafeJumpboxAllowedSources
-    severity: 'advisory'
-    category: 'Security'
-    message: 'jumpboxAllowedSources is empty or contains 0.0.0.0/0. Remote access is broadly exposed and should be reviewed.'
-    remediation: 'Specify trusted source CIDRs and remove 0.0.0.0/0.'
-  }
-  {
-    flag: 'hasUncoveredNewVmNetworks'
-    active: hasUncoveredNewVmNetworks
-    severity: 'advisory'
-    category: 'Networking'
-    message: 'One or more virtual machines are assigned to regions that do not have corresponding network resources.'
-    remediation: 'Run stage=network before creating the VMs, or include the regions in existingRegions only if their required networking already exists.'
   }
 ]
 

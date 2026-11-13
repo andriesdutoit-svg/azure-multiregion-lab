@@ -17,8 +17,8 @@ All parameters are defined in parameter files (`main.parameters.demo.json`, `mai
 | `foundationResourceGroup` | string | Resource group containing the Key Vault and the deployment identity named by the shared defaults, in the deployment subscription. | `"amrl-foundation-rg"` |
 | `keyVaultName` | string | Key Vault name; Bicep resolves required secret values directly with `getSecret()`. | `"amrl-kv-example"` |
 | `tags` | object | Resource tags for organisation and billing | `{"environment": "lab"}` |
-| `regionCount` | integer | Number of regions to deploy across | `2` |
-| `maxVmsPerRegion` | integer | Maximum VMs allowed per region | `2` |
+| `regionCount` | integer | Number of regions to deploy across; minimum `1` | `2` |
+| `maxVmsPerRegion` | integer | Maximum VMs allowed per region; minimum `1` | `2` |
 
 In JSON parameter files, `parameters.prefix.value` supplies the resource naming prefix to Bicep. The sibling `parameters.prefix.metadata.bootstrap` object stores bootstrapper settings for Azure context and optional GitHub integration; these are not additional Bicep parameters and do not change the prefix value. Foundation resource group and Key Vault name are top-level Bicep parameters. Bootstrapper foundation and subscription deployment locations are derived from `regionIndexMap`, not metadata. See [Using `-ParameterFile`](bootstrapper.md#using-parameterfile) and [Subscription-Level Setup Values](bootstrapper.md#subscription-level-setup-values) for field requirements and behavior.
 

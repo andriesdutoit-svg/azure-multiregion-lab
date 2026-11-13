@@ -131,6 +131,8 @@ The current template requires `vmCounts.dc >= 1` for every deployment. It evalua
 
 `hasNoDomainControllers` and `hasNoJumpboxes` are evaluated from the final VM placement model, which combines declared existing VM placements with planned placements. They distinguish the loss of the AD control plane from the loss of the supported jumpbox remote-access path; they do not query Azure to confirm that an inventoried VM exists. A zero-DC model can still fail earlier during root-template evaluation as described above, before validation outputs are returned.
 
+`regionCount` and `maxVmsPerRegion` must both be at least `1`; Bicep parameter constraints reject zero before placement expressions are evaluated. When networking is skipped, `hasUncoveredNewVmNetworks` is blocking in `enforce` if a planned VM targets a region absent from `existingRegions`. `hasMissingNetworkPrerequisites` remains an advisory inventory reminder for other selected regions.
+
 ## Useful Outputs
 
 - `validationSummary`: Short status for quick review.
@@ -164,27 +166,29 @@ A healthy result has `validationSummary` set to `All validation checks passed.` 
 
 - `hasRegionOverflow`: A region, including the hub, exceeds `maxVmsPerRegion`.
 - `invalidCapacity`: The total requested VM count exceeds `regionCount * maxVmsPerRegion`.
+- `invalidRegionCount`: `regionCount` exceeds the number of mapped regions. Values below `1` are rejected by the Bicep parameter constraint before expressions are evaluated.
 - `invalidMinimumDepartments` (blocking): `departmentCount` is less than the number of mandatory system-administration departments. At least one department must be selected for file-service groups and shares.
 - `hasNoDomainControllers`: The final placement model contains no DC, so the AD control plane will be unavailable. A jumpbox may still be present and accessible.
 - `hasNoJumpboxes`: The final placement model contains no jumpbox, so the supported remote-access path into the environment is unavailable.
 - `hasNonControlInHub`: A workload VM was placed in the hub.
 - `hasInsufficientWorkloadCapacity`: Control-plane placement left too few spoke slots for workloads.
-- `hasMissingNetworkPrerequisites`: Compute/identity is selected while networking is skipped and one or more selected regions are absent from `existingRegions`. Review `networkRegionsMissingFromInventory`; run `stage=network` first, or list a region only if its networking already exists.
-- `hasUncoveredNewVmNetworks`: A compute or identity deployment would create VMs in regions not declared as having existing networking. Run `stage=network` or `stage=all`, or correct `existingRegions` if that networking already exists.
+- `hasMissingNetworkPrerequisites`: Advisory reminder when compute/identity is selected while networking is skipped and selected regions are absent from `existingRegions`. Review `networkRegionsMissingFromInventory`.
+- `hasUncoveredNewVmNetworks`: Blocking in `enforce` when compute would create a VM in a region without declared existing networking while networking is skipped. Run `stage=network` or `stage=all`, or add the region to `existingRegions` only after confirming its required VNet and subnets exist.
 - `missingDedicatedFileServer`: `useDedicatedFileServer` is `true` but no `srvwin` VM exists. Target selection falls back to the primary DC so template evaluation can continue, but the configuration is invalid and should be corrected.
 - `invalidDedicatedWacHostConfiguration`: blocking; `useDedicatedWacHost` is `true` while `enableWindowsAdminCenter` is `false`.
+- `hasUnsafeJumpboxAllowedSources`: blocking when `jumpboxAllowedSources` contains `0.0.0.0/0`. An empty list remains allowed for deployments that intentionally provide no public jumpbox ingress.
 - `missingDedicatedWacHost`: advisory; WAC and dedicated-host mode are enabled, but the final placement model has no `srvwin`. WAC falls back to the primary jumpbox; add or retain a Windows server, or disable dedicated-host preference.
 - `windowsAdminCenterSkippedForStage`: advisory; WAC and identity are enabled, but the selected stage is not `identity` or `all`, so WAC will not be installed in this deployment. Run `stage=identity` or `stage=all` when ready.
-- `hasMalformedDomainName`: `domainName` is blank, single-label, or contains a space, backslash, forward slash, or `@`. Group Policy provisioning builds the domain DN and SYSVOL path to `Groups.xml` from this value. AD configuration checks remain active for every stage; findings do not by themselves block deployment.
+- `hasMalformedDomainName`: blocking during the identity stage if `domainName` is blank, single-label, or contains a space, backslash, forward slash, or `@`. Group Policy provisioning builds the domain DN and SYSVOL path to `Groups.xml` from this value.
 - `hasEmptySysAdminDepartmentCode` (blocking): `sysAdminDepartment` is empty or its department code is blank. The directory model requires this code for the platform administrator groups.
 - `hasNoGpoTargetDc`: `dc01` is not pinned to the primary region. Correct placement before running Group Policy provisioning on the primary domain controller.
-- `hasInvalidGpoNames`: one or more of `serverAdministration`, `clientAdministration`, `windowsLaps`, or `domainControllerWinRM` is empty. These names are used to create and link the four GPOs.
+- `hasInvalidGpoNames`: blocking during the identity stage if one or more of `serverAdministration`, `clientAdministration`, `windowsLaps`, or `domainControllerWinRM` is empty. These names are used to create and link the four GPOs.
 
 The template findings cover configuration it can evaluate; they do not replace guest-side checks. Failures inside the Group Policy Run Command itself are reported by the deployment because `ad-gpo.bicep` sets `treatFailureAsDeploymentFailure`. `Set-GPOs.ps1` fails fast when `directoryModel.gpoNames` is incomplete, the admin group cannot be resolved, a target OU is missing, or a managed policy setting cannot be written to its GPO.
 
 `validationFlags` reports each finding independently. `validationMessage` contains only the first active finding in catalog order, with blocking findings listed before advisory findings. In `reportOnly` mode, findings do not block deployment. In `enforce` mode, active blocking findings fail the validation gate before stage modules execute; advisory findings remain non-blocking. This gate does not roll back resources from earlier successful deployments. Some invalid configurations can still fail earlier during template evaluation, such as `vmCounts.dc=0` when the root template requires a primary DC. Also inspect VM Run Command results separately.
 
-The stage network check uses the declared `existingRegions` inventory; it does not discover VNets, confirm role subnets, or verify live connectivity. It checks every selected region because the current subnet contract is produced for the full region set, even when no VM is newly placed there. Network-prerequisite findings are advisory and do not block enforcement mode; confirm that every required VNet and role subnet actually exists before deploying VMs when networking is skipped.
+The stage network check uses the declared `existingRegions` inventory; it does not discover VNets, confirm role subnets, or verify live connectivity. It checks every selected region because the current subnet contract is produced for the full region set, even when no VM is newly placed there. `hasMissingNetworkPrerequisites` remains advisory; `hasUncoveredNewVmNetworks` blocks `enforce` when compute would create a VM in a region without declared existing networking. Confirm that every required VNet and role subnet actually exists before deploying VMs when networking is skipped.
 
 ## DNS and Domain Connectivity
 

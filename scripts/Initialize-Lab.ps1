@@ -206,7 +206,11 @@ function Invoke-AzCli {
 
     # Retry only eligible setup calls; Plan uses single-attempt, read-only checks.
     $commandPath = ($Arguments | Select-Object -First 3) -join ' '
-    if (-not $script:PlanMode -and ($commandPath -like 'keyvault secret *' -or $commandPath -eq 'role assignment create' -or $commandPath -eq 'role assignment list')) {
+    if (-not $script:PlanMode -and $commandPath -like 'keyvault secret *') {
+        # Key Vault data-plane RBAC can lag management-plane assignment by several minutes.
+        return Invoke-AMRLRbacRetry -Operation $operation -MaximumAttempts 23 -InitialDelaySeconds 5
+    }
+    if (-not $script:PlanMode -and ($commandPath -eq 'role assignment create' -or $commandPath -eq 'role assignment list')) {
         return Invoke-AMRLRbacRetry -Operation $operation
     }
     return (& $operation)
@@ -215,7 +219,7 @@ function Invoke-AzCli {
 function Invoke-AMRLRbacRetry {
     param(
         [Parameter(Mandatory = $true)][scriptblock]$Operation,
-        [ValidateRange(1, 8)][int]$MaximumAttempts = 6,
+        [ValidateRange(1, 32)][int]$MaximumAttempts = 6,
         [ValidateRange(0, 30)][int]$InitialDelaySeconds = 2
     )
 
@@ -223,7 +227,9 @@ function Invoke-AMRLRbacRetry {
         try { return (& $Operation) }
         catch {
             $message = $_.Exception.Message
-            if ($message -match 'ForbiddenByFirewall|ForbiddenByConnection|DenyAssignment' -or
+            $explicitDenyAssignment = $message -match '(?i)\bDenyAssignment(?:AuthorizationFailed|Denied|Blocked)\b' -or
+                $message -match '(?i)\bDenyAssignmentId:\s*(?!null\b)[^\s]+'
+            if ($message -match 'ForbiddenByFirewall|ForbiddenByConnection' -or $explicitDenyAssignment -or
                 $message -notmatch 'ForbiddenByRbac|PrincipalNotFound|Cannot find user or service principal in graph database|RBAC.*propagat' -or
                 $attempt -eq $MaximumAttempts) {
                 throw
@@ -495,6 +501,68 @@ function Set-AMRLReportPhase {
     if ($PSBoundParameters.ContainsKey('Summary')) { $phase[0].Summary = $Summary }
 }
 
+function Get-AMRLErrorSummary {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message)
+
+    if ([string]::IsNullOrWhiteSpace($Message)) { return 'An unspecified error occurred.' }
+
+    $missingSecrets = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($match in [regex]::Matches($Message, "KeyVault parameter '([^']+)' cannot be retrieved", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+        $secretName = $match.Groups[1].Value
+        if ($secretName -notin $missingSecrets) { $missingSecrets.Add($secretName) }
+    }
+    if ($missingSecrets.Count -gt 0) {
+        return "Azure could not resolve Key Vault parameter secrets: $($missingSecrets -join ', ')."
+    }
+
+    if ($Message -match '(?i)ForbiddenByRbac' -and $Message -match '(?i)KeyVault|Microsoft\.KeyVault|keyvault') {
+        $vaultMatch = [regex]::Match($Message, '(?im)^\s*Resource:\s*[^/\r\n]*/vaults/(?<name>[^/''"\s]+)')
+        if (-not $vaultMatch.Success) { $vaultMatch = [regex]::Match($Message, '(?i)--vault-name\s+(?<name>[^\s]+)') }
+        $vaultName = if ($vaultMatch.Success) { " '$($vaultMatch.Groups['name'].Value)'" } else { '' }
+        return "Key Vault$vaultName denied secret access (ForbiddenByRbac). Verify the caller's Secrets Officer assignment at this vault scope; Azure RBAC may still be propagating."
+    }
+
+    if ($Message -match '(?i)QuotaExceeded') {
+        $familyMatch = [regex]::Match($Message, '(?i)approved\s+(?<family>[A-Za-z0-9]+)\s+Cores quota')
+        $locations = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($match in [regex]::Matches($Message, '(?i)Location:\s*(?<location>[^,]+),\s*Current Limit:\s*(?<limit>\d+),\s*Current Usage:\s*(?<usage>\d+),\s*Additional Required:\s*(?<required>\d+)')) {
+            $location = $match.Groups['location'].Value.Trim()
+            if ($location -notin $locations) { $locations.Add($location) }
+        }
+        if ($familyMatch.Success -and $locations.Count -gt 0) {
+            return "VM quota exceeded: $($familyMatch.Groups['family'].Value) family has insufficient cores in $($locations -join ', ')."
+        }
+        return 'Azure VM quota was exceeded. Check the requested VM family and region quota.'
+    }
+
+    if ($Message -match '(?i)BCP091' -and $Message -match '(?i)names\.csv') {
+        return 'Bicep could not read modules/identity/data/names.csv because another process has the file open. Close the process or sync operation and retry.'
+    }
+
+    $cleanLines = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($line in ($Message -split "`r?`n")) {
+        $candidate = ([string]$line).Trim()
+        if ([string]::IsNullOrWhiteSpace($candidate) -or
+            $candidate -match '^(?i:System\.Management\.Automation\.RemoteException|Azure CLI failed \(exit \d+\):|Inner Errors?:|Code:|Vault:|Caller:|Action:|Resource:|Assignment:|DenyAssignmentId:|DecisionReason:)') {
+            continue
+        }
+        if ($candidate -match '^ERROR:\s*(?<error>.+)$') { $candidate = $Matches.error.Trim() }
+        if ($candidate.StartsWith('{')) {
+            try {
+                $payload = $candidate | ConvertFrom-Json -ErrorAction Stop
+                if ($null -ne $payload.error.message) { $candidate = [string]$payload.error.message }
+                elseif ($null -ne $payload.message) { $candidate = [string]$payload.message }
+            }
+            catch { }
+        }
+        if ($candidate -notin $cleanLines) { $cleanLines.Add($candidate) }
+    }
+    if ($cleanLines.Count -eq 0) { return 'The operation failed. See the Azure operation record for details.' }
+    $summary = $cleanLines[0]
+    if ($summary.Length -gt 320) { $summary = $summary.Substring(0, 317) + '...' }
+    return $summary
+}
+
 function Add-AMRLReportIssue {
     param(
         [Parameter(Mandatory = $true)][string]$Phase,
@@ -504,11 +572,21 @@ function Add-AMRLReportIssue {
     )
 
     if ($null -eq $script:BootstrapperReport) { return }
+    $summary = Get-AMRLErrorSummary -Message $Message
+    $duplicate = @($script:BootstrapperReport.Issues | Where-Object {
+        $_.Severity -eq $Severity -and $_.Message -ceq $summary
+    } | Select-Object -First 1)
+    if ($duplicate.Count -gt 0) {
+        if (-not [string]::IsNullOrWhiteSpace($NextStep) -and [string]::IsNullOrWhiteSpace([string]$duplicate[0].NextStep)) {
+            $duplicate[0].NextStep = $NextStep
+        }
+        return
+    }
     $script:BootstrapperReport.Issues.Add([pscustomobject]@{
         Time = Get-Date
         Phase = $Phase
         Severity = $Severity
-        Message = $Message
+        Message = $summary
         NextStep = $NextStep
     })
 }
@@ -665,9 +743,9 @@ function Invoke-AMRLObservedCommand {
     }
     catch {
         $message = $_.Exception.Message
-        Set-AMRLReportSource -Name $Name -Status 'Failed' -Summary 'Azure CLI command failed.' -Details $message
-        Add-AMRLReportIssue -Phase $script:BootstrapperPhase -Message "$Name failed: $message"
-        Write-Warning "$Name failed; continuing with independent checks where possible. Details will appear in the final report."
+        Set-AMRLReportSource -Name $Name -Status 'Failed' -Summary 'Failed; see Warnings and errors below.'
+        Add-AMRLReportIssue -Phase $script:BootstrapperPhase -Message $message
+        Write-Verbose "$Name failed; details are consolidated in the final report."
         return [pscustomobject]@{ Succeeded = $false; Output = ''; Error = $message }
     }
 }
@@ -1395,15 +1473,89 @@ function Set-AMRLFoundationResourceGroup {
     )
 
     Assert-AMRLParameterDocumentCurrent -Parameters $Parameters
+    $configuredVaultName = [string]$Parameters.parameters.keyVaultName.value
     $Foundation.ResourceGroup = $ResourceGroupName
     $Foundation.IdentityResourceGroup = $ResourceGroupName
     $Foundation.VaultResourceGroup = $ResourceGroupName
     $Foundation.IdentityId = ''
     $Foundation.VaultId = ''
     $Foundation.IdentityName = Get-AMRLDefault 'automationManagedIdentityName'
-    $Foundation.VaultName = Get-AMRLAvailableVaultName -SubscriptionId $SubscriptionId
     $Foundation.RebuildFoundation = $true
     $Foundation.RecoveryConfirmed = $false
+
+    $activeVaults = @()
+    if ((Get-AzTsv -Arguments @('group', 'exists', '--name', $ResourceGroupName)) -eq 'true') {
+        $activeVaults = @(Get-AzJson -Arguments @('keyvault', 'list', '--resource-group', $ResourceGroupName) | Where-Object {
+            -not [string]::IsNullOrWhiteSpace([string]$_.name) -and
+            -not [string]::IsNullOrWhiteSpace([string]$_.id)
+        })
+    }
+    $selectedVault = $null
+    if ($activeVaults.Count -eq 1) {
+        $candidate = $activeVaults[0]
+        $reuseDefault = if ([string]$candidate.name -ieq $configuredVaultName) { 'yes' } else { 'no' }
+        $reuseAnswer = Read-RequiredValue -Prompt "Reuse existing Key Vault '$($candidate.name)' in '$ResourceGroupName'?" -Hint 'y/N' -DefaultValue $reuseDefault -Validator {
+            param($Value) $Value -in @('yes', 'no', 'y', 'n')
+        }
+        if ($reuseAnswer -in @('yes', 'y')) { $selectedVault = $candidate }
+    }
+    elseif ($activeVaults.Count -gt 1) {
+        $vaultChoices = @($activeVaults | ForEach-Object { [string]$_.name }) + 'Create new Key Vault'
+        $choiceDefault = if ($configuredVaultName -in $vaultChoices) { $configuredVaultName } else { '' }
+        $selectedVaultName = Read-RequiredValue -Prompt "Choose an existing Key Vault in '$ResourceGroupName' or create a new one" -Hint ($vaultChoices -join ', ') -DefaultValue $choiceDefault -Validator {
+            param($Value) $Value -in $vaultChoices
+        }
+        if ($selectedVaultName -ne 'Create new Key Vault') {
+            $selectedVault = $activeVaults | Where-Object { $_.name -ceq $selectedVaultName } | Select-Object -First 1
+        }
+    }
+
+    if ($null -ne $selectedVault) {
+        $Foundation.VaultName = [string]$selectedVault.name
+        $Foundation.VaultId = [string]$selectedVault.id
+        Write-Host "Reusing Key Vault '$($Foundation.VaultName)' in '$ResourceGroupName'."
+    }
+    else {
+        $escapedResourceGroup = [regex]::Escape($ResourceGroupName)
+        $deletedVaults = @(Get-AzJson -Arguments @('keyvault', 'list-deleted', '--resource-type', 'vault', '--subscription', $SubscriptionId) | Where-Object {
+            $deletedVaultId = [string]$_.properties.vaultId
+            -not [string]::IsNullOrWhiteSpace([string]$_.name) -and
+            $deletedVaultId -match "(?i)/resourceGroups/$escapedResourceGroup/providers/Microsoft\.KeyVault/vaults/[^/]+$"
+        })
+        $selectedDeletedVault = $null
+        if ($deletedVaults.Count -eq 1) {
+            $candidate = $deletedVaults[0]
+            $recoverDefault = if ([string]$candidate.name -ieq $configuredVaultName) { 'yes' } else { 'no' }
+            $recoverAnswer = Read-RequiredValue -Prompt "Recover soft-deleted Key Vault '$($candidate.name)' into '$ResourceGroupName' and preserve its secrets?" -Hint 'y/N' -DefaultValue $recoverDefault -Validator {
+                param($Value) $Value -in @('yes', 'no', 'y', 'n')
+            }
+            if ($recoverAnswer -in @('yes', 'y')) { $selectedDeletedVault = $candidate }
+        }
+        elseif ($deletedVaults.Count -gt 1) {
+            $deletedVaultChoices = @($deletedVaults | ForEach-Object { [string]$_.name }) + 'Create new Key Vault'
+            $choiceDefault = if ($configuredVaultName -in $deletedVaultChoices) { $configuredVaultName } else { '' }
+            $selectedDeletedName = Read-RequiredValue -Prompt "Choose a soft-deleted Key Vault in '$ResourceGroupName' or create a new one" -Hint ($deletedVaultChoices -join ', ') -DefaultValue $choiceDefault -Validator {
+                param($Value) $Value -in $deletedVaultChoices
+            }
+            if ($selectedDeletedName -ne 'Create new Key Vault') {
+                $candidate = $deletedVaults | Where-Object { $_.name -ceq $selectedDeletedName } | Select-Object -First 1
+                $recoverAnswer = Read-RequiredValue -Prompt "Recover soft-deleted Key Vault '$selectedDeletedName' into '$ResourceGroupName' and preserve its secrets?" -Hint 'y/N' -DefaultValue 'no' -Validator {
+                    param($Value) $Value -in @('yes', 'no', 'y', 'n')
+                }
+                if ($recoverAnswer -in @('yes', 'y')) { $selectedDeletedVault = $candidate }
+            }
+        }
+
+        if ($null -ne $selectedDeletedVault) {
+            $Foundation.VaultName = [string]$selectedDeletedVault.name
+            $Foundation.VaultId = [string]$selectedDeletedVault.properties.vaultId
+            $Foundation.RecoveryConfirmed = $true
+            Write-Host "Selected soft-deleted Key Vault '$($Foundation.VaultName)' for recovery into '$ResourceGroupName'."
+        }
+        else {
+            $Foundation.VaultName = Get-AMRLAvailableVaultName -SubscriptionId $SubscriptionId
+        }
+    }
 
     $foundationResourceGroupParameter = $Parameters.parameters.PSObject.Properties['foundationResourceGroup']
     $keyVaultNameParameter = $Parameters.parameters.PSObject.Properties['keyVaultName']
@@ -1819,9 +1971,15 @@ function Invoke-AMRLSSHKeygen {
     $result = Invoke-AMRLTimedProcess -Command $command.Source -Arguments $Arguments -TimeoutSeconds 30
     if ($result.ExitCode -ne 0) {
         $details = if ([string]::IsNullOrWhiteSpace($result.ErrorOutput)) { $result.Output.Trim() } else { $result.ErrorOutput.Trim() }
-        throw "SSH key generation failed (exit $($result.ExitCode)): $details"
+        throw "SSH key operation failed (exit $($result.ExitCode)): $details"
     }
     return $result.Output.Trim()
+}
+
+function Get-AMRLSSHKeyPublicText {
+    param([Parameter(Mandatory = $true)][string]$PrivateKeyPath)
+
+    return Invoke-AMRLSSHKeygen -Arguments @('-y', '-P', '', '-f', $PrivateKeyPath)
 }
 
 function Set-AMRLKeySecretsIfMissing {
@@ -1871,10 +2029,10 @@ function Set-AMRLKeySecretsIfMissing {
     if ($hasVaultPair) {
         if ($privateExists -and $publicExists) {
             $publicKey = (Get-Content -Raw -LiteralPath $publicPath).Trim()
-            $derivedPublicKey = (& ssh-keygen -y -f $keyPath 2>$null | Out-String).Trim()
+            $derivedPublicKey = Get-AMRLSSHKeyPublicText -PrivateKeyPath $keyPath
             $localPublicIdentity = @($publicKey -split '\s+' | Select-Object -First 2)
             $derivedPublicIdentity = @($derivedPublicKey -split '\s+' | Select-Object -First 2)
-            if ($LASTEXITCODE -ne 0 -or $localPublicIdentity.Count -lt 2 -or $derivedPublicIdentity.Count -lt 2 -or
+            if ($localPublicIdentity.Count -lt 2 -or $derivedPublicIdentity.Count -lt 2 -or
                 (($derivedPublicIdentity -join ' ') -ne ($localPublicIdentity -join ' '))) {
                 throw 'The local public and private SSH keys do not match. The script will not overwrite the valid Key Vault pair.'
             }
@@ -1907,10 +2065,10 @@ function Set-AMRLKeySecretsIfMissing {
     }
 
     $publicKey = (Get-Content -Raw -LiteralPath $publicPath).Trim()
-    $derivedPublicKey = (& ssh-keygen -y -f $keyPath 2>$null | Out-String).Trim()
+    $derivedPublicKey = Get-AMRLSSHKeyPublicText -PrivateKeyPath $keyPath
     $localPublicIdentity = @($publicKey -split '\s+' | Select-Object -First 2)
     $derivedPublicIdentity = @($derivedPublicKey -split '\s+' | Select-Object -First 2)
-    if ($LASTEXITCODE -ne 0 -or $localPublicIdentity.Count -lt 2 -or $derivedPublicIdentity.Count -lt 2 -or
+    if ($localPublicIdentity.Count -lt 2 -or $derivedPublicIdentity.Count -lt 2 -or
         (($derivedPublicIdentity -join ' ') -ne ($localPublicIdentity -join ' '))) {
         throw 'The public and private SSH keys do not match. The script will not upload either key.'
     }
@@ -2274,17 +2432,22 @@ function Invoke-AMRLPlan {
     }
     elseif ($null -ne $vault) {
         $localPublicText = (Get-Content -Raw -LiteralPath $localPublicKey).Trim()
-        $derivedPublicText = (& ssh-keygen -y -f $localPrivateKey 2>$null | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or (($derivedPublicText -split '\s+')[0..1] -join ' ') -ne (($localPublicText -split '\s+')[0..1] -join ' ')) {
-            $blockers.Add('The local SSH public/private key files do not match.')
-        }
-        else {
-            if ((Get-AMRLDefault 'sshPublicKeySecretName') -in $existingSecrets) {
-                $vaultPublicText = Get-AzTsv -Arguments @('keyvault', 'secret', 'show', '--vault-name', $VaultName, '--name', (Get-AMRLDefault 'sshPublicKeySecretName'), '--query', 'value')
-                if (-not [string]::IsNullOrWhiteSpace($vaultPublicText) -and $vaultPublicText.Trim() -ne $localPublicText) {
-                    $blockers.Add('The local SSH public key differs from the Key Vault copy; resolve the mismatch manually.')
+        try {
+            $derivedPublicText = Get-AMRLSSHKeyPublicText -PrivateKeyPath $localPrivateKey
+            if ((@($derivedPublicText -split '\s+' | Select-Object -First 2) -join ' ') -ne (@($localPublicText -split '\s+' | Select-Object -First 2) -join ' ')) {
+                $blockers.Add('The local SSH public/private key files do not match.')
+            }
+            else {
+                if ((Get-AMRLDefault 'sshPublicKeySecretName') -in $existingSecrets) {
+                    $vaultPublicText = Get-AzTsv -Arguments @('keyvault', 'secret', 'show', '--vault-name', $VaultName, '--name', (Get-AMRLDefault 'sshPublicKeySecretName'), '--query', 'value')
+                    if (-not [string]::IsNullOrWhiteSpace($vaultPublicText) -and $vaultPublicText.Trim() -ne $localPublicText) {
+                        $blockers.Add('The local SSH public key differs from the Key Vault copy; resolve the mismatch manually.')
+                    }
                 }
             }
+        }
+        catch {
+            $blockers.Add("The local SSH private key could not be opened with the configured blank passphrase: $($_.Exception.Message)")
         }
     }
 
@@ -2915,7 +3078,7 @@ function Invoke-AMRLSubscriptionSetup {
             $message = "Key Vault secret access is not ready: $($_.Exception.Message)"
             $foundationErrors.Add($message)
             Add-AMRLReportIssue -Phase 'Azure readiness and foundation' -Message $message
-            Set-AMRLReportSource -Name 'Key Vault access' -Status 'Failed' -Summary $message
+            Set-AMRLReportSource -Name 'Key Vault access' -Status 'Failed' -Summary 'Secret data-plane access was not verified; see Warnings and errors.'
             Write-Warning 'Key Vault secret access was not verified; skipping secret setup.'
         }
 
@@ -2978,7 +3141,7 @@ function Invoke-AMRLSubscriptionSetup {
     }
     if ($script:FoundationSetupFailed) {
         Set-AMRLReportPhase -Name 'Azure readiness and foundation' -Status 'Issues found' -Summary "$($foundationErrors.Count) prerequisite issues recorded; read-only Bicep checks can continue, deployment will be skipped."
-        Set-AMRLReportSource -Name 'Foundation prerequisites' -Status 'Issues found' -Summary "$($foundationErrors.Count) issue(s) found." -Details ($foundationErrors -join [Environment]::NewLine)
+        Set-AMRLReportSource -Name 'Foundation prerequisites' -Status 'Issues found' -Summary "$($foundationErrors.Count) issue(s) found; see Warnings and errors."
     }
     else {
         Complete-AMRLRunPhase -Name 'Azure readiness and foundation' -Summary 'Foundation resources, credentials, RBAC, and locks are ready.'
