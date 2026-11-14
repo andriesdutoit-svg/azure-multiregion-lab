@@ -26,11 +26,11 @@
 - **v2.7**: Windows/Linux endpoint administration and configuration reconciliation.
 - **v2.8**: Blocking/advisory validation findings, `reportOnly`/`enforce` modes, pre-stage deployment gating, and remediation details.
 - **v2.8.1**: Engineering hardening for deployment logging, retained-jumpbox SSH-key targeting, and network-coverage validation.
-- **v2.9 (completed)**: Optional hub-region Azure Bastion, independently gated peering/Bastion cleanup without a separate execution flag, and reconciliation-identity validation. Completion covers the delivered scope, not exhaustive live-transition verification.
-- **v2.10 (completed)**: Windows Admin Center gateway integration and repair in the identity stage, Active Directory discovery support, and cross-region WinRM-over-HTTP management with explicit credentials. Completion covers this delivered scope; Windows-account delegation, PKI-backed WinRM HTTPS, automated Shared Connection onboarding, and Azure Arc onboarding remain deferred.
-- **v2.11 (completed)**: Programmatic creation and reconciliation of modeled Group Policy settings, replacing the GPO backup-import workflow. Live policy application and effective guest settings were validated on fresh and retained Windows VMs.
-- **v2.12 (completed)**: Guided subscription bootstrapper with read-only Plan, prerequisite/configuration Prepare, and explicitly confirmed Deploy modes; brownfield parameter-file support; nested deployment progress and concise final reports; resilient failure diagnostics; UTF-8 Azure CLI output handling on Windows; workgroup WAC gateway support for explicitly trusted modeled Windows targets; and bounded post-reboot WinRM HTTP SPN reconciliation for Windows workloads. The delivered scope is complete; live deployment can still be blocked by Azure capacity or Deployment Script container provisioning.
-- **v2.13 (completed)**: Backup and monitoring AD service-account provisioning, configured group-membership reconciliation, and Key Vault password-secret preservation/recovery/creation. Bootstrapper hardening covers active and soft-deleted vault selection after foundation-group changes, verified Key Vault data access with bounded RBAC-propagation retries, noninteractive blank-passphrase SSH key handling, and concise failure reports. Validation enforces critical network, identity, and public-ingress prerequisites. Existing account passwords are not reset to match newly created or recovered secrets; password rotation and broader account lifecycle management are outside this release scope.
+- **v2.9**: Optional hub-region Azure Bastion and independently gated peering/Bastion cleanup.
+- **v2.10**: Windows Admin Center gateway integration with AD discovery and cross-region WinRM management.
+- **v2.11**: Programmatic Group Policy creation and reconciliation with live Windows guest validation.
+- **v2.12**: Guided subscription bootstrapper, brownfield deployment support, and clearer deployment progress and diagnostics.
+- **v2.13**: AD service-account provisioning, Key Vault secret lifecycle handling, bootstrapper hardening, and stricter deployment validation.
 
 ## Roadmap
 

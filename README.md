@@ -1,13 +1,13 @@
 # Azure Multi-Region Lab (AMRL)
 
-AMRL is an educational, hands-on Azure lab for exploring multi-region infrastructure, Active Directory automation, and Bicep-based deployment. It deploys Windows and Linux machines and connected networks; parameter files control the lab's size, placement, topology, and enabled services, supporting both new environments and expansion of existing AMRL labs. It is intended for learning and experimentation, not production deployment.
+**AMRL is an open-source Azure Bicep project for deploying and evolving multi-region Active Directory lab environments.** It provides an educational platform for exploring Infrastructure as Code, staged deployments, validation-driven automation, brownfield expansion, and desired-state reconciliation in Azure. The project is intended for learning, experimentation, and architectural exploration rather than production use.
 
 ## What You Deploy
 
 - Regional VNets, role subnets, and NSGs, with full-mesh or hub-spoke connectivity and optional Azure Firewall routing.
 - Domain-controller and jumpbox VMs in the primary region, with additional DCs, jumpboxes, and Windows/Linux workloads placed according to capacity.
 - AD forest and replica promotion, directory population, Group Policy, workload domain joining, and departmental file services in the identity stage.
-- Jumpbox-based administration, optional Azure Bastion, departmental file shares during identity setup, and Linux client desktops for modeled Linux clients.
+- Jumpbox-based administration, optional Azure Bastion and Windows Admin Center, and Linux client desktops for modeled Linux clients.
 
 The project demonstrates modular Infrastructure as Code, staged deployment, declared-inventory reconciliation, and configuration validation. See [Architecture](docs/architecture.md) for how these parts fit together.
 
@@ -22,7 +22,7 @@ Choose a deployment method, whether your subscription is new or already in use:
 | **Bootstrapper (recommended)** | [Bootstrapper Guide](docs/bootstrapper.md): create or reuse prerequisites, configure Bicep, review `what-if`, and deploy. |
 | **Manual** | [Manual Preparation](docs/manual-preparation.md): subscription-level setup, then Bicep setup. Continue with [Bicep Deployment](docs/deployment.md). |
 
-The bootstrapper covers both setup areas below. You do not need to create the Key Vault, secrets, or deployment identity beforehand; existing resources can be reused through the parameter file's foundation resource group and Key Vault name. Bicep and the bootstrapper read the identity name, administrator usernames, and secret names from [shared defaults](config/amrl-defaults.json). The default foundation resource location is the first `regionIndexMap` entry; this is separate from the VM regions the lab deploys into. Azure's listed regions may still be restricted for new resources in a particular subscription.
+The bootstrapper can prepare both the subscription prerequisites and Bicep settings described below. It creates or reuses the Key Vault, required secrets, and deployment identity; to reuse an existing foundation, provide its resource group and vault name in the parameter file. The identity name, administrator usernames, and secret names come from [shared defaults](config/amrl-defaults.json). The foundation resource location is derived from the first `regionIndexMap` entry, independently of the VM regions. Azure may still restrict resource or VM availability by subscription and region.
 
 With the [prerequisites](#prerequisites) installed, sign Azure CLI into the intended subscription, then run Prepare mode from the repository root in Windows PowerShell 5.1:
 
@@ -56,8 +56,7 @@ Run the bootstrapper from Windows PowerShell 5.1 with Azure CLI, Bicep, and `ssh
 ### Bicep Setup
 
 - A configured parameter file using the foundation resource group and Key Vault name; the wizard can prepare this for a new lab. The deployment identity uses the shared default name in that same group.
-- Valid VM sizes and images for the target regions.
-- Sufficient regional vCPU quota.
+- Default VM size: `Standard_D2as_v7` (2 vCPU, 8 GiB), a general-purpose starting point used by the demo and example files. Check image and SKU availability and regional and family vCPU quotas for your subscription and selected regions; available SKUs do not guarantee deployment-time capacity. See [Validation and Troubleshooting](docs/validation-and-troubleshooting.md).
 - At least one domain controller requested with `vmCounts.dc >= 1`; AD is the lab's control plane, even when identity setup is deferred to a later stage.
 
 Trial and Student subscriptions may restrict regions, VM sizes, images, or quota. Check availability before deployment using the commands in [Validation and Troubleshooting](docs/validation-and-troubleshooting.md).
